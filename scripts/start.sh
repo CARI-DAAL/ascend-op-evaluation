@@ -27,7 +27,9 @@ set +a
 # Optionally source the CANN toolkit env so torch_npu and the skill scripts resolve
 if [[ -n "${CANN_SET_ENV_PATH:-}" && -r "${CANN_SET_ENV_PATH}" ]]; then
   # shellcheck disable=SC1090
+  set +u
   source "${CANN_SET_ENV_PATH}"
+  set -u
 fi
 
 # CANN's set_env.sh adds <toolkit>/lib64, but on this install libhccl.so (loaded by

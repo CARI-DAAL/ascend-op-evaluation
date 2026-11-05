@@ -29,6 +29,7 @@ DIGEST_ENV = "TRITON_EVAL_PROFILER_RUNTIME_SHA256"
 RUNTIME_ENV_KEYS = frozenset({MANIFEST_ENV, DIGEST_ENV})
 _ENV_LOCK = threading.Lock()
 SHA_PATTERN = r"^[0-9a-f]{64}$"
+_MSPROF_PY_RELATIVE = Path("tools/profiler/profiler_tool/analysis/msprof/msprof.py")
 CANN_ENV_KEYS = frozenset(
     {
         "ASCEND_AICPU_PATH",
@@ -222,6 +223,47 @@ def capture_cann_environment(
             "imports_npu": False,
         },
     )
+
+
+def _torch_npu_msprof_script(msprof_path: str) -> Path | None:
+    """Companion script path used by torch_npu CANNExportParser."""
+    prefix = os.path.realpath(msprof_path.strip()).split("tools")[0]
+    script = Path(prefix) / _MSPROF_PY_RELATIVE
+    return script if script.is_file() else None
+
+
+def _uid_exportable(path: Path, current_uid: int) -> bool:
+    return os.stat(path).st_uid in (0, current_uid)
+
+
+def check_msprof_export_permission() -> None:
+    """Refuse before capture when torch_npu would fail ERR04012 and emit no CSV."""
+    found = shutil.which("msprof")
+    if found is None:
+        raise ValueError("msprof is not on PATH; profiler export cannot produce kernel_details.csv")
+    current_uid = os.getuid()
+    binary = Path(found)
+    if not _uid_exportable(binary, current_uid):
+        raise ValueError(
+            "msprof owner must be root or the current user; "
+            f"torch_npu cannot export kernel_details.csv ({binary})"
+        )
+    script = _torch_npu_msprof_script(found)
+    resolved = Path(os.path.realpath(found))
+    vendor_layout = (
+        resolved.name == "msprof" and "tools" in resolved.parts and "profiler" in resolved.parts
+    )
+    if vendor_layout and script is None:
+        raise ValueError("msprof.py is missing next to the resolved CANN profiler")
+    if script is None:
+        return
+    if not _uid_exportable(script, current_uid):
+        raise ValueError(
+            "msprof.py owner must be root or the current user; "
+            f"torch_npu cannot export kernel_details.csv ({script})"
+        )
+    if os.stat(script).st_mode & 0o022:
+        raise ValueError(f"msprof.py must not be group/other-writable ({script})")
 
 
 def read_cann_environment(model: ProfilerRuntimeManifest) -> CannRuntimeEnvironment | None:
@@ -674,6 +716,7 @@ def read_runtime(
         resolved_msprof = shutil.which("msprof")
         if resolved_msprof is None or Path(resolved_msprof).resolve() != model.msprof_path:
             raise ValueError("Actual msprof resolution differs from the pinned CANN tool")
+        check_msprof_export_permission()
         actual_cann_environment(model)
     return model
 

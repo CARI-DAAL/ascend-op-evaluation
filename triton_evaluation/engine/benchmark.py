@@ -466,6 +466,7 @@ def run_profiler_with_config(test_fn: callable, warmup: int, repeats: int, profi
     from triton_evaluation.runtime.profiler_runtime import (
         load_runtime as _load_profiler_runtime,
         check_synchronous_handler as _check_profiler_sync,
+        check_msprof_export_permission as _check_msprof_export_permission,
         profiler_export_runtime as _profiler_export_runtime,
     )
 
@@ -473,6 +474,7 @@ def run_profiler_with_config(test_fn: callable, warmup: int, repeats: int, profi
     # process. Keep the original synchronous torch_npu callback and formula.
     if _load_profiler_runtime() is not None:
         _check_profiler_sync(torch_npu.profiler.tensorboard_trace_handler)
+    _check_msprof_export_permission()
 
     # 手动 warmup（执行一次）
     test_fn()
@@ -784,6 +786,7 @@ def run_single_benchmark(
     if (not config.skip_framework and framework_latency_ms is None) or impl_latency_ms is None:
         raise RuntimeError(
             f"[用例 {case_idx}/{total_cases}] 无法从 profiler 提取有效时延数据"
+            "（未得到可解析的 kernel_details.csv）"
         )
 
     speedup = _compute_speedup(framework_latency_ms, impl_latency_ms)
