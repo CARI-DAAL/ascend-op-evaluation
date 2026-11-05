@@ -81,7 +81,11 @@ def idempotency_conflict() -> ApiError:
 
 
 def limit_exceeded(message: str) -> ApiError:
-    return ApiError(413, _error("LIMIT_EXCEEDED", "request", False, message))
+    # Inflight/quota 413s are wait-and-retry; the body-size 413 in middleware
+    # stays non-retryable (a too-large kernel cannot become smaller by waiting).
+    return ApiError(
+        413, _error("LIMIT_EXCEEDED", "request", True, message), RETRY_AFTER_ONE
+    )
 
 
 def rate_limited() -> ApiError:
