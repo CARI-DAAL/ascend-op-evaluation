@@ -841,3 +841,47 @@ def test_invoke_model_count_mismatch_falls_through_naturally():
 
     with _pytest.raises(TypeError):
         invoke_model(_KwOnlyModel(), [1, 2, 3, 4, 5])
+
+
+def test_engine_recursion_limit_restored_after_candidate_import_side_effect(
+    tmp_path, monkeypatch,
+):
+    """候选 import 期的 sys.setrecursionlimit 副作用不得抬升引擎自身上限。
+
+    候选与本引擎同进程执行；若上限被抬高，候选深递归会击穿 C 栈
+    （SIGSEGV 杀死引擎、记为 infra 失败）而不是可归因的 RecursionError。
+    """
+    reference = SimpleNamespace(
+        Model=object,
+        get_init_inputs=lambda: [],
+    )
+    hostile = ModuleType("histc_triton_ascend_impl")
+    hostile.ModelNew = object
+
+    def fake_import_module(name):
+        if name == "histc_torch":
+            return reference
+        if name == "histc_triton_ascend_impl":
+            sys.setrecursionlimit(sys.getrecursionlimit() + 5000)
+            return hostile
+        raise AssertionError(f"unexpected module import: {name}")
+
+    monkeypatch.setattr(verify.importlib, "import_module", fake_import_module)
+    monkeypatch.setattr(verify.sys, "path", list(verify.sys.path))
+
+    hostile_limit = sys.getrecursionlimit() + 5000
+    verify._load_verify_modules("histc", str(tmp_path), "triton_ascend_impl")
+    assert sys.getrecursionlimit() == verify._ENGINE_RECURSION_LIMIT
+    assert sys.getrecursionlimit() < hostile_limit
+
+
+def test_restore_engine_recursion_limit_is_idempotent():
+    original = verify._ENGINE_RECURSION_LIMIT
+    try:
+        verify._restore_engine_recursion_limit()
+        assert sys.getrecursionlimit() == original
+        sys.setrecursionlimit(original + 1234)
+        verify._restore_engine_recursion_limit()
+        assert sys.getrecursionlimit() == original
+    finally:
+        sys.setrecursionlimit(original)
