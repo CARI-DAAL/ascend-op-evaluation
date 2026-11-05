@@ -46,6 +46,22 @@ if [[ -n "${CANN_SET_ENV_PATH:-}" ]]; then
 fi
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+
+# The CANN profiler's analysis stage spawns a bare ``python3`` resolved from
+# PATH (it needs pandas/sqlite for the CSV export). A stack started from a
+# shell whose PATH lacks this interpreter's bin dir silently loses every
+# benchmark to INTERNAL "no parseable kernel_details.csv" — the workers run,
+# but msprof's export subprocesses die before logging. Pin the interpreter's
+# bin dir at the front of PATH so the stack is independent of the launching
+# shell.
+case "${PYTHON_BIN}" in
+  */*) PYTHON_BIN_DIR="$(cd "$(dirname "${PYTHON_BIN}")" && pwd)"
+       case ":${PATH}:" in
+         *":${PYTHON_BIN_DIR}:"*) ;;
+         *) export PATH="${PYTHON_BIN_DIR}:${PATH}" ;;
+       esac ;;
+esac
+
 API_HOST="${TRITON_EVAL_API_HOST:-127.0.0.1}"
 API_PORT="${TRITON_EVAL_API_PORT:-11907}"
 CARDS="${TRITON_EVAL_CARDS:-0}"
