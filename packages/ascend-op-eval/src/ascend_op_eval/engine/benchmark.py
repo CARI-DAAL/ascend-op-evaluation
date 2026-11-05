@@ -346,6 +346,7 @@ def prepare_model_fn(model: Any, inputs: List[Any], device: Any) -> callable:
     import torch
     import torch_npu  # noqa: F401
 
+    _restore_engine_recursion_limit()
     with torch.no_grad():
         _ = _invoke_model_shared(model, inputs)
     torch.npu.synchronize()
@@ -981,12 +982,28 @@ def compute_overall(results: List[SingleShapeResult]) -> OverallAggregate:
     )
 
 
+# 候选模块与本引擎同进程执行：候选在 import 期或构造期执行的
+# ``sys.setrecursionlimit(...)`` 会同时抬高引擎自身的 C 栈上限，把候选的
+# 深递归变成击穿 C 栈的 SIGSEGV（引擎整体被杀、记成 infra 失败），而不是
+# 可归因的 RecursionError。引擎在候选 import、构造与正式计时前的预热
+# 调用处把递归上限恢复为引擎自身的值；计时回调本身保持零额外开销。
+_ENGINE_RECURSION_LIMIT = sys.getrecursionlimit()
+
+
+def _restore_engine_recursion_limit() -> None:
+    if sys.getrecursionlimit() != _ENGINE_RECURSION_LIMIT:
+        sys.setrecursionlimit(_ENGINE_RECURSION_LIMIT)
+
+
 def _load_benchmark_modules(config: BenchmarkConfig):
     """导入 framework / impl 模块；返回三元组 (FrameworkModel, ModelNew, get_init_inputs)。"""
     sys.path.insert(0, config.verify_dir)
-    torch_module = importlib.import_module(f"{config.op_name}_torch")
-    impl_module = importlib.import_module(f"{config.op_name}_{config.triton_impl_name}")
-    return torch_module.Model, impl_module.ModelNew, torch_module.get_init_inputs
+    try:
+        torch_module = importlib.import_module(f"{config.op_name}_torch")
+        impl_module = importlib.import_module(f"{config.op_name}_{config.triton_impl_name}")
+        return torch_module.Model, impl_module.ModelNew, torch_module.get_init_inputs
+    finally:
+        _restore_engine_recursion_limit()
 
 
 def _instantiate_bench_models(framework_cls, impl_cls, get_init_inputs, device, skip_framework=False):
@@ -998,6 +1015,7 @@ def _instantiate_bench_models(framework_cls, impl_cls, get_init_inputs, device, 
     framework_model = None if skip_framework else framework_cls(*init_params).to(device)
     torch.manual_seed(0)
     torch.npu.manual_seed(0)
+    _restore_engine_recursion_limit()
     impl_model = impl_cls(*init_params).to(device)
     return framework_model, impl_model
 

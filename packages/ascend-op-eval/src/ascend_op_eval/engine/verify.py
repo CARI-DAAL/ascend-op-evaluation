@@ -1123,12 +1123,26 @@ def _subject_alarm_handler(signum, frame):
     )
 
 
+# 候选模块与本引擎同进程执行：候选在 import 期或构造期执行的
+# ``sys.setrecursionlimit(...)`` 会同时抬高引擎自身的 C 栈上限，把候选的
+# 深递归从可捕获、可归因的 RecursionError 变成击穿 C 栈的 SIGSEGV——引擎
+# 整体被杀，只能记成不可归因的 infra 失败。引擎在候选 import、构造与
+# 每次 forward 调用前把递归上限恢复为引擎自身的值。
+_ENGINE_RECURSION_LIMIT = sys.getrecursionlimit()
+
+
+def _restore_engine_recursion_limit() -> None:
+    if sys.getrecursionlimit() != _ENGINE_RECURSION_LIMIT:
+        sys.setrecursionlimit(_ENGINE_RECURSION_LIMIT)
+
+
 def _run_candidate_forward(impl_model, inputs, subject_budget_seconds):
     """执行候选 forward；可选 per-subject 预算（SIGALRM）内未完成即归因超时。
 
     预算只包裹候选调用本身：harness 存活且候选未在预算内返回时，engine
     可以权威地把超时归因给 candidate execute 阶段。
     """
+    _restore_engine_recursion_limit()
     if not subject_budget_seconds:
         try:
             return _invoke_model_shared(impl_model, inputs)
@@ -1284,6 +1298,8 @@ def _load_verify_modules(op_name, verify_dir, triton_impl_name):
             truncate_error(traceback.format_exc()),
             type(exc).__name__,
         ) from exc
+    finally:
+        _restore_engine_recursion_limit()
     return {
         "torch_module": torch_module,
         "framework_cls": framework_cls,
@@ -1307,6 +1323,7 @@ def _instantiate_models(framework_cls, impl_cls, get_init_inputs, device,
     torch.manual_seed(0)
     torch.npu.manual_seed(0)
     try:
+        _restore_engine_recursion_limit()
         impl_model = impl_cls(*init_params).to(device)
     except Exception as exc:
         raise _CandidateInitializeError(
