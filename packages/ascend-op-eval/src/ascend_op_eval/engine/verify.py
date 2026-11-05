@@ -1743,6 +1743,57 @@ def _terminate_expired_subprocess(proc, waited_seconds: int) -> None:
     logger.error("验证超时（%d秒），已终止子进程", waited_seconds)
     sys.exit(3)
 
+# ---------------------------------------------------------------------------
+# 官方 cannbench.com 判定对齐（cannbench-a3-2.0 分支，2026-11-05）
+#
+# 官网 runner 的正确性判定 = MERE/MARE 双阈值 + 小值域/相消兜底 + 整数精确
+# 路径（compare.py vendored 自官方评测镜像 /opt/cann-bench，CANN OSL 2.0
+# 头保留）。服务端先行官方判定：官方过 → 过（对齐官网口径，避免本地过/
+# 官网挂的假阳性，如 selective_scan fp32 长序列近零输出 MARE 爆炸）；
+# 官方挂 → 落回原有三项判定出结构化诊断。校准证据见 cannbench-evo 仓
+# experiments/notes/cov40-20261101/（selective {9,14,17} 双向复现）。
+# ---------------------------------------------------------------------------
+
+def _official_judge_ok(golden, actual, data_type):
+    """先跑官方 compare；返回 (verdict, metrics) 或 (None, {}) 当引擎不可用。"""
+    try:
+        from ascend_op_eval.engine.official_judge.compare import compare_tensors
+    except Exception as exc:  # 引擎缺失不改变原有行为
+        logger.info(f"  [官方对齐] official_judge 引擎不可用（{exc}），回落三项判定")
+        return None, {}
+    try:
+        dtype_str = str(data_type).replace("torch.", "")
+        res = compare_tensors(actual, golden, dtype=dtype_str)
+        d = res.to_dict()
+        metrics = {k: d.get(k) for k in ("mere", "mare", "threshold", "passed",
+                                          "cancel_passed", "small_value_passed",
+                                          "normal_passed")}
+        logger.info(
+            f"  [官方对齐] passed={metrics['passed']} mere={metrics['mere']:.3e} "
+            f"mare={metrics['mare']:.3e} thr={metrics['threshold']:.3e} "
+            f"cancel={metrics['cancel_passed']} sv={metrics['small_value_passed']}"
+        )
+        return bool(metrics["passed"]), metrics
+    except Exception as exc:
+        logger.info(f"  [官方对齐] compare 异常（{exc}），回落三项判定")
+        return None, {}
+
+
+def _compare_with_official(golden, actual, data_type, legacy_fn):
+    """官方优先 + 三项判定的组合判定入口。"""
+    verdict, metrics = _official_judge_ok(golden, actual, data_type)
+    if verdict is True:
+        return
+    legacy_fn(golden, actual, data_type)
+    if verdict is False:
+        # 官方挂而三项过：以官方为准报错（防本地过/官网挂）
+        raise AccuracyError(
+            f"官方判定未通过（MERE={metrics.get('mere')}, MARE={metrics.get('mare')}, "
+            f"threshold={metrics.get('threshold')}, cancel_passed={metrics.get('cancel_passed')}, "
+            f"small_value_passed={metrics.get('small_value_passed')}），三项判定仅供参考",
+            metrics,
+        )
+
 
 if __name__ == "__main__":
     from ascend_op_eval.execution.process_title import set_stage
@@ -1848,54 +1899,3 @@ if __name__ == "__main__":
         except subprocess.TimeoutExpired:
             _terminate_expired_subprocess(proc, args.timeout + OUTER_GRACE_SECONDS)
 
-
-# ---------------------------------------------------------------------------
-# 官方 cannbench.com 判定对齐（cannbench-a3-2.0 分支，2026-11-05）
-#
-# 官网 runner 的正确性判定 = MERE/MARE 双阈值 + 小值域/相消兜底 + 整数精确
-# 路径（compare.py vendored 自官方评测镜像 /opt/cann-bench，CANN OSL 2.0
-# 头保留）。服务端先行官方判定：官方过 → 过（对齐官网口径，避免本地过/
-# 官网挂的假阳性，如 selective_scan fp32 长序列近零输出 MARE 爆炸）；
-# 官方挂 → 落回原有三项判定出结构化诊断。校准证据见 cannbench-evo 仓
-# experiments/notes/cov40-20261101/（selective {9,14,17} 双向复现）。
-# ---------------------------------------------------------------------------
-
-def _official_judge_ok(golden, actual, data_type):
-    """先跑官方 compare；返回 (verdict, metrics) 或 (None, {}) 当引擎不可用。"""
-    try:
-        from ascend_op_eval.engine.official_judge.compare import compare_tensors
-    except Exception as exc:  # 引擎缺失不改变原有行为
-        logger.info(f"  [官方对齐] official_judge 引擎不可用（{exc}），回落三项判定")
-        return None, {}
-    try:
-        dtype_str = str(data_type).replace("torch.", "")
-        res = compare_tensors(actual, golden, dtype=dtype_str)
-        d = res.to_dict()
-        metrics = {k: d.get(k) for k in ("mere", "mare", "threshold", "passed",
-                                          "cancel_passed", "small_value_passed",
-                                          "normal_passed")}
-        logger.info(
-            f"  [官方对齐] passed={metrics['passed']} mere={metrics['mere']:.3e} "
-            f"mare={metrics['mare']:.3e} thr={metrics['threshold']:.3e} "
-            f"cancel={metrics['cancel_passed']} sv={metrics['small_value_passed']}"
-        )
-        return bool(metrics["passed"]), metrics
-    except Exception as exc:
-        logger.info(f"  [官方对齐] compare 异常（{exc}），回落三项判定")
-        return None, {}
-
-
-def _compare_with_official(golden, actual, data_type, legacy_fn):
-    """官方优先 + 三项判定的组合判定入口。"""
-    verdict, metrics = _official_judge_ok(golden, actual, data_type)
-    if verdict is True:
-        return
-    legacy_fn(golden, actual, data_type)
-    if verdict is False:
-        # 官方挂而三项过：以官方为准报错（防本地过/官网挂）
-        raise AccuracyError(
-            f"官方判定未通过（MERE={metrics.get('mere')}, MARE={metrics.get('mare')}, "
-            f"threshold={metrics.get('threshold')}, cancel_passed={metrics.get('cancel_passed')}, "
-            f"small_value_passed={metrics.get('small_value_passed')}），三项判定仅供参考",
-            metrics,
-        )
