@@ -602,7 +602,7 @@ def measure_single(
         state = {}
 
         def prepare():
-            state["inputs"] = copy_inputs(ctx.inputs, ctx.device)
+            state["inputs"] = copy_inputs(ctx.inputs, ctx.device, reference_model=ctx.model)
 
         def test_fn():
             with torch.no_grad():
@@ -643,6 +643,14 @@ def measure_single(
 # ============================================================================
 # 主测试逻辑
 # ============================================================================
+
+def prepare_measurement_inputs(inputs, device, *, native=False, reference_model=None):
+    """Transfer an input tree without losing native alias/omission semantics."""
+    if native:
+        from triton_evaluation.engine.native_support import copy_inputs
+        return copy_inputs(inputs, device, reference_model=reference_model)
+    return _move_inputs_to_device(inputs, device)
+
 
 def _move_inputs_to_device(inputs: List[Any], device: Any) -> List[Any]:
     """把张量类输入搬到目标 device，标量原样透传。"""
@@ -694,7 +702,10 @@ def _measure_framework(
         logger.info("    跳过 Framework 测试，使用参考延迟: %.4f ms", config.framework_latency_ms)
         return {}, config.framework_latency_ms, 0.0, None
 
-    inputs_framework = _move_inputs_to_device(inputs, device)
+    inputs_framework = prepare_measurement_inputs(
+        inputs, device, native=getattr(config, "native_profile", False),
+        reference_model=framework_model,
+    )
     logger.info("    测试 Framework (warmup=%d, active=%d)...", config.warmup, config.repeats)
     measurement = measure_single(
         MeasureContext(
@@ -813,7 +824,9 @@ def run_single_benchmark(
     candidate_inputs = _prepare_candidate_inputs_shared(
         models.reference_input_model or models.framework, inputs,
     )
-    inputs_impl = _move_inputs_to_device(candidate_inputs, device)
+    inputs_impl = prepare_measurement_inputs(
+        candidate_inputs, device, native=getattr(config, "native_profile", False)
+    )
 
     framework_operators, framework_latency_ms, framework_peak_memory, reference_evidence = _measure_framework(
         models.framework, inputs, config, device, case_idx,
@@ -831,7 +844,7 @@ def run_single_benchmark(
     speedup = _compute_speedup(framework_latency_ms, impl_latency_ms)
     fw_perf, impl_perf = _build_perf_pair(
         Measurement(framework_operators, framework_latency_ms, framework_peak_memory,
-                    measurement_samples_ms=config.native_reference_samples.get(case_idx)),
+                    measurement_samples_ms=getattr(config, "native_reference_samples", {}).get(case_idx)),
         Measurement(impl_operators, impl_latency_ms, impl_peak_memory,
                     getattr(impl_measurement, "kernel_metrics", None),
                     getattr(impl_measurement, "measurement_samples_ms", None)),

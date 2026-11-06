@@ -56,6 +56,7 @@ from triton_evaluation.api.contract import (
     EvaluationRequest,
     EvaluationResource,
     EvaluationResult,
+    NativeBuildEvidence,
     dump_contract,
 )
 from triton_evaluation.config import Settings
@@ -337,6 +338,10 @@ class EvaluationStore:
             "updated_at_ms": str(accepted_ms),
             "deadline_ms": str(deadline_ms),
         }
+        if payload.get("native_candidate") is not None:
+            mapping["native_reference_device_policy"] = (
+                payload.get("reference_device_policy") or self._s.reference_device_policy
+            )
         if payload.get("correctness_from") is not None:
             mapping["correctness_from"] = payload["correctness_from"]
         return resource, mapping, deadline_ms
@@ -749,6 +754,7 @@ class EvaluationStore:
                 "replacement_pending": "0",
                 "active_check": "",
                 "check_outcomes": canonical_json_bytes({}),
+                "native_build": "",
                 # Empty means this attempt has no published card provenance.
                 "attempt_card": "",
             },
@@ -854,6 +860,20 @@ class EvaluationStore:
             expiry_ms = now_ms + self._s.lease_seconds * 1000
             pipeline.hset(resource_key, "lease_deadline_ms", str(expiry_ms))
             pipeline.zadd(leases_key, {lease.evaluation_id: expiry_ms})
+
+        return self._fenced_write(lease, mutate)
+
+    def save_native_build(self, lease: AttemptLease, evidence: NativeBuildEvidence) -> bool:
+        """Persist build observations under the attempt fence for later recovery."""
+        evidence = NativeBuildEvidence.model_validate(evidence)
+        resource_key = self._key(f"resource:{lease.evaluation_id}")
+
+        def mutate(pipeline, stored, now_ms):
+            if not stored.get(b"native_reference_device_policy"):
+                raise ValueError("native build evidence requires a native request")
+            pipeline.hset(resource_key, "native_build", canonical_json_bytes(
+                evidence.model_dump(mode="json")
+            ))
 
         return self._fenced_write(lease, mutate)
 
@@ -1306,11 +1326,22 @@ class EvaluationStore:
                 code="SUSPECTED_POISON_CANDIDATE" if failure == "poison" else "WORKER_LOST",
                 phase="execution", check=None, retryable=failure != "poison", message=message,
             ))
+        native_build = None
+        native_policy = stored.get(b"native_reference_device_policy", b"").decode("utf-8")
+        if native_policy:
+            try:
+                native_build = NativeBuildEvidence.model_validate_json(
+                    stored.get(b"native_build", b"")
+                )
+            except (ValueError, TypeError):
+                pass
         return complete_evaluation(
             requested_checks=json.loads(stored[b"requested_checks"]),
             outcomes=persisted_check_outcomes(stored[b"check_outcomes"]),
             failure=ending,
-            pinned=self._stored_pinned(stored),
+            pinned=self._stored_pinned(stored), native_build=native_build,
+            **({"correctness_algorithm_override": f"native_tensor_v1:{native_policy}",
+                "reference_device_policy": native_policy} if native_policy else {}),
         )
 
     # ------------------------------------------------------------------

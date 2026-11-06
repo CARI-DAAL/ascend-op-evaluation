@@ -276,7 +276,11 @@ def build_runner_source() -> str:
             from _common_utils import invoke_model, prepare_candidate_inputs
             raw_inputs = groups[index]
             model_inputs = raw_inputs if args.implementation == "torch" else prepare_candidate_inputs(getattr(reference, "Model", None), raw_inputs)
-            inputs = [to_npu(value, torch) for value in model_inputs]
+            if getattr(model_type, "_native_candidate", False):
+                from triton_evaluation.engine.native_support import copy_inputs
+                inputs = copy_inputs(model_inputs, "npu:0")
+            else:
+                inputs = [to_npu(value, torch) for value in model_inputs]
             with torch.no_grad():
                 invoke_model(model, inputs)
             if hasattr(torch, "npu"):

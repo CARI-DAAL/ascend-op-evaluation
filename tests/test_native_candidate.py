@@ -189,3 +189,85 @@ def test_native_wrapper_refuses_preloaded_external_entrypoint(tmp_path):
                             cwd=tmp_path, capture_output=True, text=True, timeout=20)
     assert result.returncode != 0
     assert "native entry module resolved outside the project" in result.stderr
+
+
+def test_native_digest_rejects_fifo_replacement_without_blocking(tmp_path):
+    import subprocess
+    import sys
+    import textwrap
+
+    root = tmp_path / "tree"
+    root.mkdir()
+    (root / "victim").write_text("old")
+    script = textwrap.dedent('''
+        import os, sys
+        from pathlib import Path
+        from triton_evaluation.runtime.native_candidate import project_digest
+        root = Path(sys.argv[1])
+        real_open = os.open
+        def swap(path, flags, *args, **kwargs):
+            if path == 'victim':
+                (root / 'victim').unlink()
+                os.mkfifo(root / 'victim')
+            return real_open(path, flags, *args, **kwargs)
+        os.open = swap
+        try:
+            project_digest(root)
+        except ValueError:
+            print('rejected nonregular replacement')
+        else:
+            raise AssertionError('accepted FIFO')
+    ''')
+    result = subprocess.run([sys.executable, "-c", script, str(root)],
+                            capture_output=True, text=True, timeout=3)
+    assert result.returncode == 0, result.stderr
+    assert "rejected nonregular" in result.stdout
+
+
+def test_native_digest_checks_opened_size_before_reading(tmp_path, monkeypatch):
+    import os
+
+    from triton_evaluation.runtime.native_candidate import project_digest
+
+    path = tmp_path / "victim"
+    path.write_text("old")
+    real_open, real_read = os.open, os.read
+
+    def swap(name, flags, *args, **kwargs):
+        if name == "victim":
+            with path.open("wb") as stream:
+                stream.truncate(512 * 1024 * 1024 + 1)
+        return real_open(name, flags, *args, **kwargs)
+
+    def read(fd, count):
+        if os.fstat(fd).st_size > 512 * 1024 * 1024:
+            pytest.fail("oversized replacement was read before rejecting its opened size")
+        return real_read(fd, count)
+
+    monkeypatch.setattr(os, "open", swap)
+    monkeypatch.setattr(os, "read", read)
+    with pytest.raises(ValueError, match="limits"):
+        project_digest(tmp_path)
+
+
+def test_native_digest_bounds_directory_enumeration(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from triton_evaluation.runtime import native_candidate
+
+    class TooManyEntries:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def __iter__(self):
+            for i in range(8194):
+                if i == 8193:
+                    pytest.fail("directory enumerated beyond the allowed tree budget")
+                yield SimpleNamespace(name=f"entry-{i}")
+
+    monkeypatch.setattr(native_candidate.os, "scandir", lambda *_args: TooManyEntries())
+    with pytest.raises(ValueError, match="8192"):
+        native_candidate.project_digest(tmp_path)

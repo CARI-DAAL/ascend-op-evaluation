@@ -33,7 +33,7 @@ def _require(condition, message, kind="value_mismatch"):
         raise NativeComparisonError(message, kind)
 
 
-def copy_inputs(inputs, device):
+def copy_inputs(inputs, device, *, reference_model=None):
     """Copy a tensor/container tree, preserving shared strided storage and views.
 
     Storage is copied once per independent execution. Unsupported object/layout
@@ -43,8 +43,17 @@ def copy_inputs(inputs, device):
 
     objects, storages = ({}, {})
     active = set()
+    namespace = getattr(getattr(reference_model, "forward", None), "__globals__", {})
+    preserved = ()
+    if namespace.get("_ADAPTER_VERSION") == "official-task-v1":
+        if ("_ABSENT" not in namespace or not callable(namespace.get("run"))
+                or not isinstance(namespace.get("_PARAM_ORDER"), (list, tuple))):
+            raise ValueError("official reference input copying requires the adapter contract")
+        preserved = (namespace["_ABSENT"],)
 
     def copy(value):
+        if any(value is item for item in preserved):
+            return value
         key = id(value)
         if key in active:
             raise ValueError("native inputs cannot contain cyclic containers")

@@ -74,3 +74,44 @@ def test_native_timing_cannot_claim_latency_unrelated_to_samples():
     raw["per_shape_results"][0]["implementation"]["measurement_samples_ms"] = [2.0, 3.0]
     with pytest.raises(ShapingError):
         shape_performance(raw)
+
+
+@pytest.mark.parametrize("method,expected", [
+    ("profiler_kernel_sum_v1", "failed"),
+    ("native_profiler_kernel_sum_v1", "succeeded"),
+])
+def test_native_trace_rejects_a_different_measurement_protocol(tmp_path, method, expected):
+    import sys
+    from datetime import datetime, timedelta, timezone
+
+    from test_evaluation_evaluator import (
+        ENVIRONMENT,
+        Harness,
+        RecordingSink,
+        StubCheck,
+        trial_pinned,
+    )
+
+    from triton_evaluation.evaluators.base import EngineCheckResult
+    from triton_evaluation.operator_input import OperatorRequest, to_evaluation_request
+
+    request = to_evaluation_request(OperatorRequest.model_validate({
+        "definition": {"inputs": {}, "reference": "def run(): return 1"},
+        "workloads": [{"inputs": {}}],
+        "candidate": {"files": {"entry.py": "def run(): return 1"},
+                      "build": [sys.executable, "-c", "pass"], "entrypoint": "entry:run"},
+        "checks": ["profile"], "profile": {"mode": "trace"},
+    }))
+    raw = {
+        "mode": "trace", "measurement_method": method, "total_cases": 1,
+        "counts": {"selected": 1, "complete": 1, "partial": 0, "failed": 0},
+        "cases": [{"case_idx": 0, "status": "complete", "kernels": [
+            {"op_name": "native", "time_ms": 1.0, "percentage": 100.0},
+        ]}],
+    }
+    harness = Harness(None, profile=StubCheck(EngineCheckResult(status="succeeded", raw=raw)))
+    result = harness.run(request, tmp_path, 0, datetime.now(timezone.utc) + timedelta(minutes=1),
+                         lambda: True, ENVIRONMENT, trial_pinned(), RecordingSink())
+    assert result.profile.status == expected
+    if expected == "failed":
+        assert result.profile.error.code == "INVALID_ENGINE_OUTPUT"

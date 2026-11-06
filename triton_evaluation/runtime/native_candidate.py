@@ -148,12 +148,14 @@ def project_digest(root: Path) -> str:
         nonlocal total, nodes
         if prefix.count("/") > 32:
             raise ValueError("native artifact directory nesting exceeds 32")
+        names = []
         with os.scandir(directory_fd) as directory:
-            names = sorted(entry.name for entry in directory)
-        for name in names:
-            nodes += 1
-            if nodes > 8192:
-                raise ValueError("native artifact tree exceeds 8192 entries")
+            for entry in directory:
+                nodes += 1
+                if nodes > 8192:
+                    raise ValueError("native artifact tree exceeds 8192 entries")
+                names.append(entry.name)
+        for name in sorted(names):
             path = prefix + name
             info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
             if stat.S_ISDIR(info.st_mode):
@@ -166,12 +168,15 @@ def project_digest(root: Path) -> str:
             elif stat.S_ISREG(info.st_mode):
                 if len(entries) >= 4096 or total + info.st_size > 512 * 1024 * 1024:
                     raise ValueError("native build artifact limits exceeded")
-                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
+                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                             dir_fd=directory_fd)
                 digest = hashlib.sha256()
                 try:
                     before = os.fstat(fd)
                     if not stat.S_ISREG(before.st_mode):
                         raise ValueError("native artifact is not a regular file")
+                    if total + before.st_size > 512 * 1024 * 1024:
+                        raise ValueError("native build artifact limits exceeded")
                     remaining = before.st_size
                     while remaining:
                         chunk = os.read(fd, min(65536, remaining))

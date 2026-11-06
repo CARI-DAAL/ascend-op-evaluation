@@ -28,6 +28,7 @@ from triton_evaluation.api.contract import (
     ErrorInfo,
     EvaluationRequest,
     EvaluationResult,
+    NativeBuildEvidence,
 )
 from triton_evaluation.config import Settings
 from triton_evaluation.evaluators.base import LeaseLostError
@@ -310,6 +311,8 @@ class Worker:
 
             def record_native_build(evidence):
                 nonlocal native_build
+                if not self.store.save_native_build(lease, evidence):
+                    raise LeaseLostError("native build evidence publication was fenced out")
                 native_build = evidence
             with LeaseKeeper(
                 self.store, lease, self.settings,
@@ -384,7 +387,7 @@ class Worker:
                         code="EVALUATOR_EXECUTION_FAILED",
                         phase="execution",
                         message="evaluator failed before a subject outcome",
-                        native_build=native_build,
+                        native_build=native_build, request=request,
                     )
                     if self._health is not None:
                         self._health.mark_suspicious()
@@ -399,7 +402,10 @@ class Worker:
             if retryable_failure and self._health is not None:
                 self._health.mark_suspicious()
             if self._clock() >= lease.deadline_at_ms:
-                self._commit_deadline(lease, request.checks, progress.saved, request=request)
+                self._commit_deadline(
+                    lease, request.checks, progress.saved, request=request,
+                    native_build=native_build,
+                )
                 return
             if (
                 self.settings.engine_failure_requeue
@@ -471,10 +477,11 @@ class Worker:
     def _commit_deadline(
         self, lease: AttemptLease, requested_checks, persisted: dict,
         request: EvaluationRequest | None = None,
+        native_build: NativeBuildEvidence | None = None,
     ) -> None:
         result = complete_evaluation(
             requested_checks=requested_checks, outcomes=persisted,
-            pinned=lease.pinned,
+            pinned=lease.pinned, native_build=native_build,
             failure=CheckTimedOut(status="timeout", error=ErrorInfo(
                 code="DEADLINE_EXCEEDED", phase="deadline", check=None,
                 retryable=False,
@@ -494,7 +501,8 @@ class Worker:
         code: str,
         phase: str,
         message: str,
-        native_build=None,
+        native_build: NativeBuildEvidence | None = None,
+        request: EvaluationRequest | None = None,
     ) -> None:
         result = complete_evaluation(
             requested_checks=requested_checks, outcomes=persisted,
@@ -503,5 +511,6 @@ class Worker:
                 code=code, phase=phase, check=None, retryable=code != "INTERNAL",
                 message=message,
             )),
+            **(self._policy_provenance(request) if request is not None else {}),
         )
         self.store.commit_terminal(lease, "failed", result)

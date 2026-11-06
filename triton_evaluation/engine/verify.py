@@ -1191,7 +1191,9 @@ def run_single_case(models: ModelPair, inputs, device, case_ctx: CaseContext, no
         from triton_evaluation.engine.native_support import copy_inputs
         inputs_for_impl = copy_inputs(candidate_inputs, device)
         if case_ctx.cached_reference is None:
-            inputs_for_framework = copy_inputs(inputs, golden_device)
+            inputs_for_framework = copy_inputs(
+                inputs, golden_device, reference_model=models.reference_input_model or models.framework
+            )
 
     with torch.no_grad():
         impl_output = _run_candidate_forward(
@@ -1667,7 +1669,7 @@ def verify_implementations(
         "failed_cases": failed_cases,
         "failures": failures,
     }
-    if candidate_import_error is None and getattr(modules["impl_cls"], "_native_candidate", False):
+    if candidate_import_error is None and getattr(modules.get("impl_cls"), "_native_candidate", False):
         result["comparison_method"] = "native_tensor_v1"
     if explicit_coverage:
         result["coverage"] = {
