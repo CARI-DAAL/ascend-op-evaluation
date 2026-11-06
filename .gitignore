@@ -19,3 +19,7 @@ logs/
 /spike-cache/
 /spike-cold-cache/
 /spike-report/
+.secrets/
+logs_start.out
+deploy-a3/wheels/
+deploy-a3/regression-handle.json
