@@ -1,0 +1,4 @@
+interface:
+  display_name: "Eval Adapter Design"
+  short_description: "Design portable evaluation adapters and profiles"
+  default_prompt: "Use $eval-adapter-design to design an external evaluation adapter with reusable capabilities, a parameter map and conformance tests."
