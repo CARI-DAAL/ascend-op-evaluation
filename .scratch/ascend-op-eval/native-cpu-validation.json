@@ -1,0 +1,54 @@
+{
+  "scope": "AscendC/native candidate service implementation; local CPU validation only",
+  "baseline_revision": "bc22bacf51a659438dd28439644cc7d96f93382b",
+  "tested_code_revision": "1ff5ea094bdbd34ac874fdbef82c049b773a7bef",
+  "integration_branch": "feat/ascendc-evaluation",
+  "cpu": {
+    "command": "OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 /tmp/ascendc-test-venv/bin/python -m pytest -m 'not npu' -q",
+    "passed": 2578,
+    "skipped": 13,
+    "deselected": 7,
+    "seconds": 116.27,
+    "warnings": 1,
+    "raw_log": "/tmp/ascendc-release-cpu.log"
+  },
+  "checks": {
+    "ruff": "passed",
+    "compileall": "passed",
+    "diff_check": "passed"
+  },
+  "review": {
+    "standards": {
+      "resolved": [
+        "attempt-fenced durable build evidence and recovery",
+        "native comparator provenance during exception/reaper",
+        "nonblocking artifact opening, opened-size validation and bounded enumeration",
+        "empty-directory identity and separate file/node limits"
+      ],
+      "remaining_findings": []
+    },
+    "spec": {
+      "resolved": [
+        "alias-preserving first device transfer for comparison/single/trace",
+        "trace method identity bound to request"
+      ],
+      "remaining_findings": []
+    }
+  },
+  "device": {
+    "status": "not_run_per_user_instruction",
+    "plan": "docs/usage/native-candidates.md#device-validation",
+    "driver": "scripts/npu_native_gate.py",
+    "fixtures": "tests/fixtures/native/ascendc_smoke",
+    "qualification": "AscendC fixture compilation and all NPU/runtime/profiler results remain unqualified"
+  },
+  "limits": [
+    "source-only UTF-8 native project with Python callable entrypoint",
+    "native correctness and baseline reuse unsupported",
+    "native performance and trace requested separately",
+    "Event requires caller-declared stream contract",
+    "native build tree limited to regular files/directories",
+    "host-mode isolation uses worker permissions; configure sandbox for isolation",
+    "no claim of CANNBench leaderboard parity"
+  ]
+}

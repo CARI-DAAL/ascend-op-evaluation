@@ -30,3 +30,13 @@ server 计划覆盖实际 CANN 编译、pointwise/reduction/matrix 非对齐例�
 - 主 agent：HTTP/worker 集成测试、方法证据 shaping、全量集成与审查。
 
 分支测试不替代最终集成结果；最终证据在实施完成时追加。
+
+## 最终 CPU 验收
+
+已测代码 revision：1ff5ea094bdbd34ac874fdbef82c049b773a7bef。
+全量：2578 passed、13 skipped、7 deselected，116.27 秒。Ruff、compileall、diff-check 通过。
+原始日志：/tmp/ascendc-release-cpu.log；结构化记录见 [native-cpu-validation.json](native-cpu-validation.json)。
+
+Standards 审查的构建证据恢复、native provenance、文件收集竞态及空目录身份问题均修复并复查；Spec 审查的首搬运 alias 和 trace 方法身份问题均修复并复查。另修复 legacy 测试回归及官方输入默认 sentinel 的 native 复制语义。
+
+此状态仅表示本轮实现与 CPU 验收完成，不关闭长期 24 张票。真实 CANN 编译、NPU 数值、stream、时延及 profiler 工具兼容仍以 [server 计划](../../docs/usage/native-candidates.md#device-validation) 验收；本机未运行 NPU。
