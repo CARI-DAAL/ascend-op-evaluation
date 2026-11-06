@@ -1175,6 +1175,7 @@ def run_single_case(models: ModelPair, inputs, device, case_ctx: CaseContext, no
     candidate_inputs = _prepare_candidate_inputs_shared(
         models.reference_input_model or models.framework, inputs, trace=trace,
     )
+    native = bool(getattr(models.impl, "_native_candidate", False))
     inputs_for_impl = [
         x.to(device, copy=True) if isinstance(x, torch.Tensor) else x
         for x in candidate_inputs
@@ -1185,6 +1186,12 @@ def run_single_case(models: ModelPair, inputs, device, case_ctx: CaseContext, no
             x.to(golden_device, copy=True) if isinstance(x, torch.Tensor) else x
             for x in inputs
         ]
+
+    if native:
+        from triton_evaluation.engine.native_support import copy_inputs
+        inputs_for_impl = copy_inputs(candidate_inputs, device)
+        if case_ctx.cached_reference is None:
+            inputs_for_framework = copy_inputs(inputs, golden_device)
 
     with torch.no_grad():
         impl_output = _run_candidate_forward(
@@ -1204,6 +1211,18 @@ def run_single_case(models: ModelPair, inputs, device, case_ctx: CaseContext, no
                 for i, value in enumerate(outputs) if isinstance(value, torch.Tensor)
             ],
         })
+
+    if native:
+        from triton_evaluation.engine.native_support import compare_outputs, NativeComparisonError
+        try:
+            compare_outputs(framework_output, impl_output, tolerance=case_ctx.tolerance,
+                            non_compute=non_compute, expected_device=device)
+        except NativeComparisonError as error:
+            raise AccuracyError(str(error), {
+                "divergence": {"kind": error.kind, "sample": []},
+                "comparison_method": "native_tensor_v1",
+            }) from error
+        return
 
     if not isinstance(framework_output, (list, tuple)):
         framework_output = [framework_output]
@@ -1648,6 +1667,8 @@ def verify_implementations(
         "failed_cases": failed_cases,
         "failures": failures,
     }
+    if candidate_import_error is None and getattr(modules["impl_cls"], "_native_candidate", False):
+        result["comparison_method"] = "native_tensor_v1"
     if explicit_coverage:
         result["coverage"] = {
             "selected_case_indices": selected,

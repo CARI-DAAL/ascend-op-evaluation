@@ -227,6 +227,7 @@ def _capture_case(config, reference, model_type, raw, device, index, implementat
         operators, _, _ = benchmark.measure_single(benchmark.MeasureContext(
             model=model, inputs=inputs, warmup=config.warmup, repeats=config.repeats,
             profile_name=f"trace_case{index + 1}", device=device, method="profiler",
+            native_profile=config.native_profile,
         ))
         return operators
     finally:
@@ -245,7 +246,7 @@ def run_measurements(config, *, implementation="comparison", trace_indices=None,
     The optional progress callback also receives bounded per-case snapshots
     during timing, before a later case or trace can be interrupted.
     """
-    if implementation not in {"comparison", "torch", "triton"}:
+    if implementation not in {"comparison", "torch", "triton", "native"}:
         raise ValueError("invalid measurement implementation")
     if type(max_kernels) is not int or not 1 <= max_kernels <= 1000:
         raise ValueError("max_kernels must be within 1..1000")
@@ -275,6 +276,7 @@ def run_measurements(config, *, implementation="comparison", trace_indices=None,
                 performance = single_benchmark.measure_implementation(
                     op_name=config.op_name, verify_dir=config.verify_dir,
                     triton_impl_name=config.triton_impl_name, implementation=implementation,
+                    native_profile=config.native_profile,
                     warmup=config.warmup, repeats=config.repeats,
                     method=config.measurement_method, device=device,
                     case_indices=sorted(timing_indices), prepared=(reference, model_type, groups),
@@ -316,7 +318,8 @@ def run_measurements(config, *, implementation="comparison", trace_indices=None,
             # Release before advancing the lazy provider to the next workload.
             raw = None
     result = {
-        "mode": "trace", "measurement_method": "profiler_kernel_sum_v1",
+        "mode": "trace", "measurement_method": (
+            "native_profiler_kernel_sum_v1" if config.native_profile else "profiler_kernel_sum_v1"),
         "total_cases": len(groups),
         "counts": {
             "selected": len(cases),
@@ -336,7 +339,7 @@ def _write_checkpoint(path, result):
 
 def main():
     parser = benchmark._build_argparser()
-    parser.add_argument("--implementation", choices=("comparison", "torch", "triton"),
+    parser.add_argument("--implementation", choices=("comparison", "torch", "triton", "native"),
                         default="comparison")
     parser.add_argument("--trace-only", action="store_true")
     parser.add_argument("--trace-case-indices")
