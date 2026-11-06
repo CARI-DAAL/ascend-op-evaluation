@@ -88,7 +88,13 @@ def measure_implementation(*, op_name, verify_dir, triton_impl_name, implementat
                 {"input_index": i, "dimensions": list(value.shape), "dtype": str(value.dtype)}
                 for i, value in enumerate(raw) if isinstance(value, torch.Tensor)
             ]
-            inputs = benchmark._move_inputs_to_device(raw, device)
+            input_model = reference.Model if implementation == "torch" else None
+            if implementation != "torch" and native_profile:
+                from _common_utils import prepare_candidate_inputs
+                raw = prepare_candidate_inputs(getattr(reference, "Model", None), raw)
+            inputs = benchmark.prepare_measurement_inputs(
+                raw, device, native=native_profile, reference_model=input_model,
+            )
             model = model_type(*reference.get_init_inputs()).to(device)
             measurement = benchmark.measure_single(benchmark.MeasureContext(
                 model=model, inputs=inputs, warmup=warmup, repeats=repeats,

@@ -303,3 +303,48 @@ def test_native_contract_checks_remain_enabled_under_python_optimization():
     )
     assert result.returncode != 0
     assert "candidate output must be a Tensor" in result.stderr
+
+
+@pytest.mark.parametrize("mode", ["comparison", "single", "trace"])
+def test_native_measurement_first_device_transfer_preserves_alias(mode, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from triton_evaluation.engine import benchmark, joint_measurement, single_benchmark
+
+    class Model(torch.nn.Module):
+        _native_candidate = True
+        def forward(self, values):
+            return values[0]
+
+    base = torch.arange(8, dtype=torch.float32)
+    raw = [[base, base[1::2]]]
+    observations = []
+
+    def measure(context, **kwargs):
+        a, b = context.inputs[0]
+        assert a.device.type == b.device.type == "meta"
+        assert a.untyped_storage()._cdata == b.untyped_storage()._cdata
+        assert b.storage_offset() == 1 and b.stride() == (2,)
+        observations.append(context.inputs)
+        return benchmark.Measurement({"kernel": 1000.0}, 1.0, 0.0,
+                                     measurement_samples_ms=[1.0])
+
+    monkeypatch.setattr(benchmark, "measure_single", measure)
+    monkeypatch.setattr(benchmark, "cleanup_npu_memory", lambda: None)
+    config = benchmark.BenchmarkConfig("native", str(tmp_path), native_profile=True, repeats=1)
+    reference = SimpleNamespace(Model=Model, get_init_inputs=lambda: [])
+    if mode == "comparison":
+        benchmark.run_single_benchmark(
+            benchmark.ModelPair(Model(), Model(), Model), raw, config, "meta",
+            benchmark.CaseContext(1, 1),
+        )
+    elif mode == "single":
+        single_benchmark.measure_implementation(
+            op_name="native", verify_dir=str(tmp_path), triton_impl_name="native",
+            implementation="native", warmup=0, repeats=1, method="profiler", device="meta",
+            prepared=(reference, Model, [raw]),
+        )
+    else:
+        joint_measurement._capture_case(config, reference, Model, raw, "meta", 0, "native")
+    assert observations
+    assert base.tolist() == list(range(8))

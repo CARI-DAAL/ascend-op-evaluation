@@ -340,6 +340,12 @@ class EvaluationEvaluator:
         def profile_evidence(raw):
             result = shape_profile_runs(raw, request.profile or ProfileParams())
             if result.mode == "trace":
+                expected_method = (
+                    "native_profiler_kernel_sum_v1" if request.native_candidate is not None
+                    else "profiler_kernel_sum_v1"
+                )
+                if result.measurement_method != expected_method:
+                    raise ShapingError("trace evidence has a different measurement method")
                 expected = (
                     None if request.implementation == "comparison" else request.implementation
                 )

@@ -126,3 +126,53 @@ def test_benchmark_actual_candidate_function_receives_defaults(reference, monkey
     benchmark.run_single_benchmark(pair, raw, config, "cpu", benchmark.CaseContext(1, 1))
     assert torch.equal(captured[-1], reference.Model()(*raw))
     assert raw[1] is reference._ABSENT
+
+
+class NativeCandidate(Candidate):
+    _native_candidate = True
+    _native_event_timing = True
+
+
+@pytest.mark.parametrize("cache_hit", [False, True])
+def test_native_verification_keeps_trusted_reference_defaults(reference, cache_hit):
+    raw = reference.get_input_groups()[0]
+    expected = reference.Model()(*raw)
+    pair = verify.ModelPair(
+        None if cache_hit else reference.Model(), NativeCandidate(), "cpu", reference.Model,
+    )
+    context = verify.CaseContext(
+        1, 1, cached_reference=(None, expected) if cache_hit else None,
+    )
+    verify.run_single_case(pair, raw, "cpu", context)
+    assert all(value is reference._ABSENT for value in raw[1:])
+
+
+def test_native_measurement_keeps_reference_defaults(reference, monkeypatch, tmp_path):
+    raw = reference.get_input_groups()[0]
+    expected = reference.Model()(*raw)
+    outputs = []
+
+    def measure(context, **kwargs):
+        outputs.append(invoke_model(context.model, context.inputs))
+        return benchmark.Measurement({}, 1.0, 0.0, measurement_samples_ms=[1.0])
+
+    monkeypatch.setattr(benchmark, "measure_single", measure)
+    config = benchmark.BenchmarkConfig("native", str(tmp_path), native_profile=True, repeats=1)
+    benchmark.run_single_benchmark(
+        benchmark.ModelPair(reference.Model(), NativeCandidate(), reference.Model),
+        raw, config, "cpu", benchmark.CaseContext(1, 1),
+    )
+    assert len(outputs) == 2
+    assert all(torch.equal(output, expected) for output in outputs)
+    assert all(value is reference._ABSENT for value in raw[1:])
+
+
+def test_native_copy_preserves_only_the_reference_owned_absent_object(reference):
+    from triton_evaluation.engine.native_support import copy_inputs
+
+    raw = reference.get_input_groups()[0]
+    copied = copy_inputs(raw, "cpu", reference_model=reference.Model)
+    assert all(value is reference._ABSENT for value in copied[1:])
+    raw[1] = object()
+    with pytest.raises(ValueError, match="unsupported native"):
+        copy_inputs(raw, "cpu", reference_model=reference.Model)

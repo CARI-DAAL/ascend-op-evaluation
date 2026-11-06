@@ -212,11 +212,16 @@ def _capture_case(config, reference, model_type, raw, device, index, implementat
 
     inputs = model = None
     try:
-        if implementation == "comparison":
-            inputs = benchmark._prepare_candidate_inputs_shared(reference.Model, raw)
+        if implementation in {"comparison", "native"}:
+            inputs = benchmark._prepare_candidate_inputs_shared(
+                getattr(reference, "Model", None), raw
+            )
         else:
             inputs = raw
-        inputs = benchmark._move_inputs_to_device(inputs, device)
+        inputs = benchmark.prepare_measurement_inputs(
+            inputs, device, native=getattr(config, "native_profile", False),
+            reference_model=reference.Model if implementation == "torch" else None,
+        )
         init_inputs = reference.get_init_inputs()
         if implementation == "comparison":
             # Match _instantiate_bench_models, including its candidate seed.
