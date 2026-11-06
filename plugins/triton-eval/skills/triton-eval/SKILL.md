@@ -1,6 +1,6 @@
 ---
 name: triton-eval
-description: Measure or profile PyTorch or Triton operators, compare Triton against PyTorch for correctness and speedup, or recover an evaluation from a deployed triton-evaluation service.
+description: Measure or profile PyTorch, Triton or native AscendC operators, compare candidates against a reference for correctness and speedup, or recover a deployed evaluation.
 ---
 
 # Triton evaluation
@@ -63,8 +63,8 @@ the cache. Candidate timing is always measured. Preserve per-case
 always measure fresh and never read or write this cache; accepting the flag does
 not establish a cache hit.
 
-Use subcommand `--help` for the available options. Benchmarks default to Event
-timing. For per-kernel latency and pipe-utilization
+Use subcommand `--help` for the available options. Triton benchmarks default to Event
+timing; native projects default to profiler. For per-kernel latency and pipe-utilization
 feedback, choose `benchmark --method profiler`. Inspect
 `result.performance.data.per_case[].kernel_metrics`, keyed by implementation
 kernel name. Ratios are fractions in `[0, 1]`; missing counters are `null`. These
@@ -76,6 +76,35 @@ The client normally
 polls for up to 960 seconds with a 1-second interval; `--timeout`,
 `--poll-interval` and `--no-wait` control that client behavior. An elapsed client
 wait does not cancel accepted work.
+
+## Native AscendC candidates
+
+Use `--native-project project/native.json` instead of `--triton`. The manifest
+contains `kind: "native"`, an explicit `files` list relative to the manifest,
+`build` argv, and a Python `entrypoint` such as `entry:run`. Optional fields are
+`build_timeout_seconds` (default 300), `kernel_names`, and `event_timing` (false).
+The entrypoint must return supported tensors. Files are packaged as UTF-8 data,
+never compiled/imported by the client; reject symlinks or traversal. Limits are
+128 files, 2 MiB total sources and 1 MiB manifest. Native packaging uses POSIX
+no-follow file APIs.
+
+The worker needs the declared CANN/AscendC toolchain and ABI dependencies;
+builds happen in the private leased attempt. Use `evaluate --checks compile`
+for native build-only evidence, or `verify` / `benchmark` for device checks.
+Build diagnostics appear in `result.native_build`; compilation success is not
+correctness evidence.
+
+Native timing defaults to profiler. `native_profiler_kernel_sum_v1` manually
+warms up, captures each measured call separately, sums all its kernel launches,
+and averages call sums. It is distinct from Triton legacy and CANNBench timing.
+Event timing requires explicit `event_timing: true` plus `--method event`, and
+correct stream ordering is the submitter's responsibility. Whole-device sync
+after the end event does not fix missing cross-stream dependencies.
+
+Use `--candidate-only` for native single-source measurement, which is explicitly
+correctness-unverified. Native baseline-cache and correctness-evidence reuse are
+not supported; do not request `--use-baseline-cache` or `--correctness-from`.
+Native op/deep profiling requires explicit `kernel_names` for attribution.
 
 ## Combine checks and control coverage
 

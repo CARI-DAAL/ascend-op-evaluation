@@ -1,0 +1,2 @@
+{"uuid": "reduce_sum-0", "inputs": {"x": {"type": "random", "shape": [17], "dtype": "float32"}}}
+{"uuid": "reduce_sum-1", "inputs": {"x": {"type": "random", "shape": [63], "dtype": "float32"}}}

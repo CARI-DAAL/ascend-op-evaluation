@@ -1,0 +1,21 @@
+{
+  "kind": "native",
+  "files": [
+    "build.sh",
+    "CMakeLists.txt",
+    "kernels.asc",
+    "extension.cpp",
+    "entry.py"
+  ],
+  "build": [
+    "bash",
+    "build.sh",
+    "dav-2201"
+  ],
+  "entrypoint": "entry:add",
+  "build_timeout_seconds": 300,
+  "kernel_names": [
+    "native_add"
+  ],
+  "event_timing": false
+}
