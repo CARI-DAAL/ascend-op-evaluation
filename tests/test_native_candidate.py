@@ -271,3 +271,32 @@ def test_native_digest_bounds_directory_enumeration(tmp_path, monkeypatch):
     monkeypatch.setattr(native_candidate.os, "scandir", lambda *_args: TooManyEntries())
     with pytest.raises(ValueError, match="8192"):
         native_candidate.project_digest(tmp_path)
+
+
+@pytest.mark.parametrize("change", ["add", "remove"])
+def test_native_artifact_identity_includes_empty_directories(tmp_path, change):
+    from triton_evaluation.api.contract import NativeBuildEvidence
+    from triton_evaluation.runtime.native_candidate import project_digest, validate_build
+
+    (tmp_path / "entry.py").write_text("def run(x): return x\n")
+    directory = tmp_path / "optional-feature"
+    if change == "remove":
+        directory.mkdir()
+    evidence = NativeBuildEvidence(
+        outcome="compiled", duration_ms=0, artifact_sha256=project_digest(tmp_path),
+    )
+    if change == "add":
+        directory.mkdir()
+    else:
+        directory.rmdir()
+    with pytest.raises(ValueError, match="changed"):
+        validate_build(tmp_path, evidence)
+
+
+def test_native_directory_entries_do_not_consume_file_budget(tmp_path):
+    from triton_evaluation.runtime.native_candidate import project_digest
+
+    for index in range(4096):
+        (tmp_path / f"directory-{index:04d}").mkdir()
+    (tmp_path / "entry.py").write_text("def run(x): return x\n")
+    assert len(project_digest(tmp_path)) == 64

@@ -143,9 +143,10 @@ def project_digest(root: Path) -> str:
     entries = []
     total = 0
     nodes = 0
+    files = 0
 
     def collect(directory_fd, prefix=""):
-        nonlocal total, nodes
+        nonlocal total, nodes, files
         if prefix.count("/") > 32:
             raise ValueError("native artifact directory nesting exceeds 32")
         names = []
@@ -159,6 +160,7 @@ def project_digest(root: Path) -> str:
             path = prefix + name
             info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
             if stat.S_ISDIR(info.st_mode):
+                entries.append((path, "directory"))
                 fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                              dir_fd=directory_fd)
                 try:
@@ -166,7 +168,7 @@ def project_digest(root: Path) -> str:
                 finally:
                     os.close(fd)
             elif stat.S_ISREG(info.st_mode):
-                if len(entries) >= 4096 or total + info.st_size > 512 * 1024 * 1024:
+                if files >= 4096 or total + info.st_size > 512 * 1024 * 1024:
                     raise ValueError("native build artifact limits exceeded")
                 fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
                              dir_fd=directory_fd)
@@ -190,7 +192,8 @@ def project_digest(root: Path) -> str:
                     ):
                         raise ValueError("native artifact changed during collection")
                     total += before.st_size
-                    entries.append((path, before.st_mode & 0o111, digest.hexdigest()))
+                    files += 1
+                    entries.append((path, "file", before.st_mode & 0o111, digest.hexdigest()))
                 finally:
                     os.close(fd)
             else:
