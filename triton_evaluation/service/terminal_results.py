@@ -23,6 +23,7 @@ from triton_evaluation.api.contract import (
     ErrorInfo,
     EvaluationResult,
     ExecutionEnvironment,
+    NativeBuildEvidence,
     PerformanceOutcome,
     ProfileOutcome,
     Provenance,
@@ -79,6 +80,7 @@ def complete_evaluation(
     failure: CheckFailed | CheckTimedOut | None = None,
     correctness_algorithm_override: str | None = None,
     reference_device_policy: str | None = None,
+    native_build: NativeBuildEvidence | None = None,
 ) -> EvaluationResult:
     """Produce one complete result, retaining only valid requested evidence.
 
@@ -161,7 +163,8 @@ def complete_evaluation(
         ),
     )
     return EvaluationResult.model_validate(
-        {**{check: final.get(check) for check in _CHECK_ORDER}, "provenance": provenance},
+        {**{check: final.get(check) for check in _CHECK_ORDER}, "provenance": provenance,
+         "native_build": native_build},
         context={"requested_checks": requested},
     )
 

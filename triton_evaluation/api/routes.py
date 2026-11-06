@@ -105,7 +105,8 @@ async def submit_evaluation(
         "benchmark": (
             ["correctness", "performance"]
             if evaluation_request.definition.reference is not None
-            and evaluation_request.triton_code is not None
+            and (evaluation_request.triton_code is not None
+                 or evaluation_request.candidate is not None)
             else ["performance"]
         ),
         "profile": ["profile"],

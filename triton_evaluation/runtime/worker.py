@@ -306,6 +306,11 @@ class Worker:
             )
             work_dir = tempfile.mkdtemp(prefix=f"eval_{digest[:24]}_")
             progress = FencedProgress(self.store, lease)
+            native_build = None
+
+            def record_native_build(evidence):
+                nonlocal native_build
+                native_build = evidence
             with LeaseKeeper(
                 self.store, lease, self.settings,
                 identity=self.identity, sleep=do_sleep, metrics=self.metrics,
@@ -317,6 +322,8 @@ class Worker:
                     )
                     pinned = lease.pinned
                     reuse_kwargs = {}
+                    if request.native_candidate is not None:
+                        reuse_kwargs["on_native_build"] = record_native_build
                     if request.correctness_from is not None:
                         def reuse_correctness():
                             evidence = self.store.correctness_for_attempt(
@@ -355,6 +362,7 @@ class Worker:
                     validated = complete_evaluation(
                         requested_checks=request.checks,
                         outcomes={check: getattr(validated, check) for check in request.checks},
+                        native_build=validated.native_build,
                         pinned=pinned, execution_environment=environment,
                         **self._policy_provenance(request),
                     )
@@ -376,6 +384,7 @@ class Worker:
                         code="EVALUATOR_EXECUTION_FAILED",
                         phase="execution",
                         message="evaluator failed before a subject outcome",
+                        native_build=native_build,
                     )
                     if self._health is not None:
                         self._health.mark_suspicious()
@@ -451,7 +460,9 @@ class Worker:
         override = request.reference_device_policy
         effective = override or self.settings.reference_device_policy
         kwargs = {"reference_device_policy": effective}
-        if override is not None and override != self.settings.reference_device_policy:
+        if request.native_candidate is not None:
+            kwargs["correctness_algorithm_override"] = f"native_tensor_v1:{effective}"
+        elif override is not None and override != self.settings.reference_device_policy:
             kwargs["correctness_algorithm_override"] = (
                 self.settings.correctness_algorithm_for(override)
             )
@@ -483,10 +494,11 @@ class Worker:
         code: str,
         phase: str,
         message: str,
+        native_build=None,
     ) -> None:
         result = complete_evaluation(
             requested_checks=requested_checks, outcomes=persisted,
-            pinned=lease.pinned,
+            pinned=lease.pinned, native_build=native_build,
             failure=CheckFailed(status="failed", error=ErrorInfo(
                 code=code, phase=phase, check=None, retryable=code != "INTERNAL",
                 message=message,

@@ -34,7 +34,9 @@ from ..api.contract import (
     CheckSkipped,
     CheckSucceeded,
     CheckTimedOut,
+    CompileOutcome,
     CorrectnessResult,
+    DomainFailure,
     ErrorInfo,
     EvaluationRequest,
     EvaluationResult,
@@ -46,6 +48,12 @@ from ..api.contract import (
     SkipInfo,
 )
 from ..runtime.correctness_evidence import CorrectnessEvidenceError
+from ..runtime.native_candidate import (
+    PROJECT_DIRECTORY,
+    NativeArtifactChanged,
+    build_candidate,
+    validate_build,
+)
 from ..service.models import PinnedProvenance
 from ..service.terminal_results import compile_outcome_from_precheck, complete_evaluation
 from .base import (
@@ -179,6 +187,7 @@ class EvaluationEvaluator:
         *,
         precheck: Callable[[], str | None] | None = None,
         reuse_correctness: Callable[[], CheckSucceeded[CorrectnessResult]] | None = None,
+        on_native_build: Callable | None = None,
     ) -> EvaluationResult:
         """Run correctness, conditional performance, then independent profile."""
         requested = list(request.checks)
@@ -190,7 +199,44 @@ class EvaluationEvaluator:
         if device_id is None and requested != ["compile"]:
             raise ValueError("CPU attempts can only execute the compile check")
 
+        native_build = None
+        if request.native_candidate is not None:
+            native_build = build_candidate(
+                request.native_candidate, Path(work_dir), device_id=device_id,
+                deadline_at=deadline_at, lease_valid=lease_valid,
+                runner=getattr(self.verify, "runner", None),
+            )
+            if on_native_build is not None:
+                on_native_build(native_build)
+            if native_build.outcome != "compiled":
+                return self._native_build_failure(
+                    request, native_build, progress, lease_valid, pinned, execution_environment,
+                )
+
+        def guard_native():
+            if native_build is not None:
+                validate_build(Path(work_dir) / PROJECT_DIRECTORY, native_build)
+
+        def slot(check, produce, lease, sink):
+            def guarded():
+                try:
+                    guard_native()
+                    outcome = produce()
+                    guard_native()
+                    return outcome
+                except NativeArtifactChanged:
+                    return CheckFailed(status="failed", error=ErrorInfo(
+                        code="NATIVE_ARTIFACT_CHANGED", phase="execution", check=check,
+                        retryable=False, message="native build outputs changed after compilation",
+                    ))
+            return self._slot(check, guarded, lease, sink)
+
         def compile_check():
+            if native_build is not None:
+                return CheckSucceeded[CompileOutcome](status="succeeded", data=CompileOutcome(
+                    outcome="compiled", compiler_stage="backend",
+                    duration_ms=native_build.duration_ms,
+                ))
             started = monotonic()
             verdict = precheck() if precheck is not None else None
             return compile_outcome_from_precheck(verdict, (monotonic() - started) * 1000)
@@ -214,10 +260,20 @@ class EvaluationEvaluator:
                         code=error.code, phase=error.phase, check="correctness",
                         retryable=False, message=str(error),
                     ))
+            def correctness_evidence(raw):
+                result = shape_correctness(raw, decoy=_is_decoy(raw))
+                if result.outcome in {"correct", "wrong", "incomplete"}:
+                    expected = "native_tensor_v1" if request.native_candidate is not None else None
+                    if result.comparison_method != expected:
+                        raise ShapingError(
+                            "correctness evidence uses a different comparison method"
+                        )
+                return result
+
             return _engine_outcome(
                 "correctness",
                 self.verify.run(request, work_dir, device_id, deadline_at, lease_valid),
-                lambda raw: shape_correctness(raw, decoy=_is_decoy(raw)),
+                correctness_evidence,
             )
 
         def performance_evidence(raw):
@@ -225,10 +281,16 @@ class EvaluationEvaluator:
                 result = shape_performance(raw)
                 expected_method = (
                     "npu_event_v1" if request.performance.method == "event"
+                    else "native_profiler_kernel_sum_v1" if request.native_candidate is not None
                     else "profiler_kernel_sum_v1"
                 )
                 if result.measurement_method != expected_method:
                     raise ShapingError("comparison timing has a different measurement method")
+                if (request.native_candidate is not None
+                        and request.performance.method == "profiler"):
+                    if any(len(case.implementation_samples_ms) != request.performance.repeats
+                           for case in result.per_case):
+                        raise ShapingError("native sample count differs from requested repeats")
                 correctness = outcomes.get("correctness")
                 selection = request.performance.case_indices
                 if selection is None and correctness is not None:
@@ -245,13 +307,20 @@ class EvaluationEvaluator:
             result = shape_single_performance(raw)
             method = request.performance.method
             expected_method = (
-                "npu_event_v1" if method == "event" else "profiler_kernel_sum_v1"
+                "npu_event_v1" if method == "event" else
+                "native_profiler_kernel_sum_v1" if request.native_candidate is not None
+                else "profiler_kernel_sum_v1"
             )
             if (result.implementation != request.implementation
                     or result.measurement_method != expected_method):
                 raise ShapingError(
                     "standalone performance evidence has a different subject or method"
                 )
+            if (request.native_candidate is not None
+                        and request.performance.method == "profiler"):
+                if any(len(case.measurement_samples_ms) != request.performance.repeats
+                       for case in result.per_case):
+                    raise ShapingError("native sample count differs from requested repeats")
             selection = request.performance.case_indices
             observed = {case.case_idx for case in result.per_case + result.unmeasured_cases}
             observed.update(result.pending_case_indices)
@@ -260,6 +329,7 @@ class EvaluationEvaluator:
             return result
 
         def publish_checkpoint(engine):
+            guard_native()
             outcome = _engine_outcome("performance", engine, performance_evidence)
             if outcome.status != "succeeded":
                 return False
@@ -288,7 +358,7 @@ class EvaluationEvaluator:
             return result
 
         if "compile" in requested:
-            outcomes["compile"] = self._slot(
+            outcomes["compile"] = slot(
                 "compile",
                 compile_check,
                 lease_valid,
@@ -298,7 +368,7 @@ class EvaluationEvaluator:
             # It does not establish a broken worker environment or skip checks.
 
         if "correctness" in requested:
-            correctness = self._slot(
+            correctness = slot(
                 "correctness",
                 correctness_check,
                 lease_valid,
@@ -325,6 +395,7 @@ class EvaluationEvaluator:
 
                     def publish_performance(engine):
                         nonlocal trace_started
+                        guard_native()
                         if "performance" in outcomes:
                             return outcomes["performance"].status == "succeeded"
                         outcome = _engine_outcome("performance", engine, performance_evidence)
@@ -345,7 +416,7 @@ class EvaluationEvaluator:
                     publish_performance(performance_engine)
                     performance = outcomes["performance"]
                 else:
-                    performance = self._slot(
+                    performance = slot(
                         "performance",
                         lambda: _engine_outcome(
                             "performance",
@@ -362,7 +433,7 @@ class EvaluationEvaluator:
                     performance.status == "succeeded" and not performance.data.complete
                 )
             else:
-                performance = self._slot(
+                performance = slot(
                     "performance",
                     lambda: _skipped(
                         "performance",
@@ -377,7 +448,7 @@ class EvaluationEvaluator:
 
         if "profile" in requested:
             if infra_broken:
-                profile = self._slot(
+                profile = slot(
                     "profile",
                     lambda: _skipped("profile", "PRIOR_CHECK_FAILED", None, _PRIOR_FAILED_MESSAGE),
                     lease_valid,
@@ -392,7 +463,7 @@ class EvaluationEvaluator:
                 if not progress.save("profile", profile):
                     raise LeaseLostError("joint trace save was fenced out")
             else:
-                profile = self._slot(
+                profile = slot(
                     "profile",
                     lambda: _engine_outcome(
                         "profile",
@@ -415,4 +486,49 @@ class EvaluationEvaluator:
             outcomes=outcomes,
             pinned=pinned,
             execution_environment=execution_environment,
+            native_build=native_build,
+        )
+
+    def _native_build_failure(self, request, evidence, progress, lease_valid, pinned, environment):
+        outcomes = {}
+        first = request.checks[0]
+        excerpt = bounded_detail(evidence.stderr or evidence.stdout or "native build failed", 400)
+        for check in request.checks:
+            def produce(check=check):
+                if evidence.outcome == "compile_error":
+                    if check == "compile":
+                        return CheckSucceeded[CompileOutcome](
+                            status="succeeded", data=CompileOutcome(
+                                outcome="compile_error", compiler_stage="backend",
+                                duration_ms=evidence.duration_ms, error_excerpt=excerpt,
+                            ),
+                        )
+                    if check == "correctness":
+                        return CheckSucceeded[CorrectnessResult](
+                            status="succeeded", data=CorrectnessResult(
+                                outcome="compile_error", passed=False, passed_cases=0,
+                                total_cases=request.native_case_count, failures=[],
+                                domain_failure=DomainFailure(
+                                    code="SUBJECT_COMPILE_ERROR", phase="compile",
+                                    message="native build command returned a nonzero exit code",
+                                ),
+                            ),
+                        )
+                if check != first:
+                    return _skipped(check, "PRIOR_CHECK_FAILED", first,
+                                    "native build did not complete successfully")
+                error = ErrorInfo(
+                    code="NATIVE_BUILD_TIMEOUT" if evidence.outcome == "timed_out"
+                    else "NATIVE_BUILD_FAILED", phase="execution", check=check,
+                    retryable=False, message="native build did not complete: "
+                    + bounded_detail(" ".join(excerpt.split()), 350),
+                )
+                if evidence.outcome == "timed_out":
+                    return CheckTimedOut(status="timeout", error=error)
+                return CheckFailed(status="failed", error=error)
+
+            outcomes[check] = self._slot(check, produce, lease_valid, progress)
+        return complete_evaluation(
+            requested_checks=request.checks, outcomes=outcomes, pinned=pinned,
+            execution_environment=environment, native_build=evidence,
         )
