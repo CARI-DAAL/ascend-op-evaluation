@@ -78,11 +78,37 @@ shapes and dtypes must match, integer values compare exactly, and floating
 results use the declared workload tolerance or the native method's defaults.
 Inspect outcome and case coverage, not just the resource's terminal state.
 
+For floating outputs the native method compares in FP64 using
+`abs(candidate-reference) <= max_atol + max_rtol * abs(reference)`.
+Its default `(max_atol, max_rtol)` is `(0.09, 2**-10)` for float16,
+`(0.1, 2**-7)` for bfloat16, and `(0.001, 2**-13)` for float32/float64.
+The default required matched ratio is 1.0. A supplied `max_error_cap` is a
+direct absolute-error bound in output units for this method, not the older
+declared-tolerance method's scaled cap. Supply task-appropriate overrides;
+these defaults do not claim CANNBench precision compatibility. Non-compute
+mode requires bit-exact output. Non-finite floats are rejected, except matched
+negative infinities explicitly allowed by `allow_negative_inf`.
+
 Native timing defaults to profiler. Its `native_profiler_kernel_sum_v1` method
 warms up before capture, captures each measured call separately, sums its kernel
 durations (including repeated same-name launches), and averages the call sums.
 Reference and candidate use the same method. This is not CANNBench's aggregation
 and does not establish leaderboard parity.
+
+The native profiler accepts 1–100 repeats (default 20); its per-call samples
+survive in `implementation_samples_ms` / `reference_samples_ms`, or
+`measurement_samples_ms` for a single implementation. Joint native
+performance plus trace requests are not supported in this release; submit
+them separately. Artifact integrity checks reject build outputs that change
+between checks. These checks do not certify a same-process judge against
+malicious candidate code.
+
+Build outputs must contain only regular files and directories (no symlinks),
+within the service's bounded artifact-tree limits. Evaluation code must not
+modify that tree; write scratch data outside `native_candidate`. Build diagnostics
+are bounded tails, retained in normal terminal results, including ordinary
+evaluation failures. A hard worker death before publication can lose those tails;
+this release does not provide a separate durable build-log artifact store.
 
 Event timing requires both `--method event` and `event_timing: true` in the
 manifest. This declaration means the extension launches on the stream bracketed

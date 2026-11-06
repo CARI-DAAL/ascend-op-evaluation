@@ -248,6 +248,8 @@ def test_npu_strict_fails_fast_without_ambient_device(tmp_path, monkeypatch):
     """A strict run whose ambient NPU setup failed must die at once, not grind
     through single-threaded CPU materialization for the whole budget."""
     torch_mod = _fake_torch_rng(npu_broken=True, npu_available=False)
+    # Exercise exhausted availability without spending the production retry window.
+    monkeypatch.setattr(verify, "_AMBIENT_WAIT_CAP_SECONDS", 0.0)
     del torch_mod.npu.get_rng_state
     reference = SimpleNamespace(
         Model=object,
