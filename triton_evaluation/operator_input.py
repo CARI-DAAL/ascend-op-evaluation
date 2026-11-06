@@ -25,6 +25,7 @@ from .api.contract import (
     Check,
     CorrectnessParams,
     EvaluationRequest,
+    NativeCandidate,
     PerformanceParams,
     ProfileParams,
     SourceCode,
@@ -382,6 +383,7 @@ class OperatorRequest(StrictModel):
     definition: Definition
     workloads: list[Workload] = Field(min_length=1, max_length=128)
     triton_code: SourceCode | None = None
+    candidate: NativeCandidate | None = None
     custom_inputs_code: SourceCode | None = None
     seed: int = Field(default=200, ge=0, le=2**32 - 1)
     checks: list[Check] = Field(
@@ -389,7 +391,7 @@ class OperatorRequest(StrictModel):
             ["correctness", "performance"]
             if data.get("definition")
             and data["definition"].reference is not None
-            and data.get("triton_code") is not None
+            and (data.get("triton_code") is not None or data.get("candidate") is not None)
             else ["performance"]
         ),
         min_length=1,
@@ -408,6 +410,12 @@ class OperatorRequest(StrictModel):
     performance: PerformanceParams | None = None
     profile: ProfileParams | None = None
     non_compute: bool = False
+
+    @model_validator(mode="after")
+    def exclusive_candidate(self):
+        if self.triton_code is not None and self.candidate is not None:
+            raise ValueError("candidate and triton_code are mutually exclusive")
+        return self
 
 
 _REFERENCE_MODEL = """class Model(_operator_torch.nn.Module):
@@ -498,7 +506,7 @@ class ModelNew(_operator_torch.nn.Module):
 def _check_operator_input(request: OperatorRequest, correctness: CorrectnessParams | None):
     """Rules only the public input can break; check coupling is the durable model's."""
     sources = (request.definition.reference, request.triton_code)
-    if all(source is None for source in sources):
+    if all(source is None for source in sources) and request.candidate is None:
         raise ValueError("at least one reference or triton_code is required")
     if any(
         source is not None and not source.strip()
@@ -532,11 +540,15 @@ def to_evaluation_request(
     cases = json.dumps(
         workloads, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False,
     )
+    has_candidate = request.triton_code is not None or request.candidate is not None
     implementation = (
-        "triton" if request.definition.reference is None
-        else "torch" if request.triton_code is None else "comparison"
+        ("native" if request.candidate is not None else "triton")
+        if request.definition.reference is None
+        else "torch" if not has_candidate else "comparison"
     )
-    reference_support = _INPUT_SUPPORT if implementation == "triton" else _REFERENCE_SUPPORT
+    reference_support = (
+        _INPUT_SUPPORT if implementation in {"triton", "native"} else _REFERENCE_SUPPORT
+    )
     generation_source = Path(__file__).parent.joinpath(
         "runtime/input_generation.py"
     ).read_text(encoding="utf-8")
@@ -567,6 +579,42 @@ def to_evaluation_request(
         request.triton_code + "\n" + _CANDIDATE_SUPPORT
         if request.triton_code is not None else ""
     )
+    performance = request.performance
+    if request.candidate is not None:
+        from .runtime.native_candidate import candidate_wrapper
+
+        kernel_code = candidate_wrapper(request.candidate)
+        for workload in request.workloads:
+            tolerance = workload.tolerance
+            for name in ("max_atol", "max_rtol", "max_error_cap", "required_matched_ratio"):
+                value = getattr(tolerance, name)
+                if value is not None and (not math.isfinite(value) or value < 0):
+                    raise ValueError("native tolerance values must be finite and nonnegative")
+            if (tolerance.required_matched_ratio is not None
+                    and tolerance.required_matched_ratio > 1):
+                raise ValueError("native required_matched_ratio must lie in [0, 1]")
+        if request.correctness_from is not None:
+            raise ValueError("native candidates cannot reuse correctness evidence")
+        if "performance" in selected:
+            if performance is not None and (
+                "use_baseline_cache" in performance.model_fields_set
+                and performance.use_baseline_cache
+            ):
+                raise ValueError("native candidates require use_baseline_cache=false")
+            method = (
+                performance.method if performance is not None
+                and "method" in performance.model_fields_set else "profiler"
+            )
+            if method == "event" and not request.candidate.event_timing:
+                raise ValueError("native Event timing requires event_timing=true stream contract")
+            values = performance.model_dump() if performance is not None else {}
+            if performance is None or "repeats" not in performance.model_fields_set:
+                values["repeats"] = 20
+            if method == "profiler" and values["repeats"] > 100:
+                raise ValueError("native profiler supports at most 100 repeats")
+            performance = PerformanceParams.model_validate({
+                **values, "method": method, "use_baseline_cache": False,
+            })
     if any(len(source.encode("utf-8")) > MAX_SOURCE_BYTES
            for source in (reference_code, kernel_code)):
         raise ValueError("generated operator source exceeds the 2 MiB engine limit")
@@ -575,13 +623,15 @@ def to_evaluation_request(
             schema_version="2.1", purpose="trial", op_name="operator",
             implementation=implementation,
             reference_code=reference_code, kernel_code=kernel_code,
+            native_candidate=request.candidate,
+            native_case_count=len(workloads) if request.candidate is not None else None,
             triton_impl_name="triton_ascend_impl", checks=selected,
             reference_device_policy=request.reference_device_policy,
             deadline_seconds=request.deadline_seconds, non_compute=request.non_compute,
             correctness_from=request.correctness_from,
             correctness=correctness,
             performance=(
-                request.performance if checks is None or "performance" in selected else None
+                performance if checks is None or "performance" in selected else None
             ),
             profile=request.profile if checks is None or "profile" in selected else None,
         )

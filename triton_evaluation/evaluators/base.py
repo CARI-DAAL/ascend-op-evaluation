@@ -64,6 +64,7 @@ class ScriptOutcome:
     stderr: str
     timed_out: bool
     outcome: Literal["exited", "budget", "resource_deadline", "fenced"] = "exited"
+    logs_truncated: bool = False
 
 
 def engine_failure(
@@ -224,6 +225,7 @@ def run_script(
     *,
     budget_seconds: float | None = None,
     environment: Mapping[str, str] | None = None,
+    output_limit_bytes: int | None = None,
 ) -> ScriptOutcome:
     """Run one engine invocation with bounded polling.
 
@@ -259,18 +261,20 @@ def run_script(
                     break
                 if deadline_at is not None and remaining_seconds(deadline_at) <= 0:
                     _kill_group(proc)
-                    return _collected(proc, out_file, err_file, "resource_deadline")
+                    return _collected(
+                        proc, out_file, err_file, "resource_deadline", output_limit_bytes
+                    )
                 if lease_valid is not None and not lease_valid():
                     _kill_group(proc)
-                    return _collected(proc, out_file, err_file, "fenced")
+                    return _collected(proc, out_file, err_file, "fenced", output_limit_bytes)
                 if (
                     budget_seconds is not None
                     and time.monotonic() - started >= budget_seconds
                 ):
                     _kill_group(proc)
-                    return _collected(proc, out_file, err_file, "budget")
+                    return _collected(proc, out_file, err_file, "budget", output_limit_bytes)
                 time.sleep(_SCRIPT_POLL_SECONDS)
-            return _collected(proc, out_file, err_file, "exited")
+            return _collected(proc, out_file, err_file, "exited", output_limit_bytes)
         finally:
             # The entrypoint can exit while candidate-created children remain.
             # Its process group belongs to this invocation on every exit path.
@@ -287,16 +291,25 @@ def _kill_group(proc: subprocess.Popen) -> None:
     proc.wait()
 
 
-def _collected(proc, out_file, err_file, outcome: str) -> ScriptOutcome:
+def _collected(proc, out_file, err_file, outcome: str, limit: int | None = None) -> ScriptOutcome:
     proc.wait()
-    out_file.seek(0)
-    err_file.seek(0)
+    def read(stream):
+        if limit is None:
+            stream.seek(0)
+            return stream.read(), False
+        size = os.fstat(stream.fileno()).st_size
+        data = os.pread(stream.fileno(), limit, max(0, size - limit))
+        return data.decode("utf-8", errors="replace"), size > limit
+
+    stdout, out_truncated = read(out_file)
+    stderr, err_truncated = read(err_file)
     return ScriptOutcome(
         exit_code=proc.returncode,
-        stdout=out_file.read(),
-        stderr=err_file.read(),
+        stdout=stdout,
+        stderr=stderr,
         timed_out=outcome != "exited",
         outcome=outcome,
+        logs_truncated=out_truncated or err_truncated,
     )
 
 
