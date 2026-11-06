@@ -102,6 +102,8 @@ class BenchmarkConfig:
     reference_cache_trace: object = None
     baseline_timings: object = None
     disable_reference_cache: bool = False
+    native_profile: bool = False
+    native_reference_samples: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -122,6 +124,7 @@ class MeasureContext:
     device: Any
     method: str = MEASUREMENT_METHOD_DEFAULT  # event | profiler
     cv_threshold: float = CV_THRESHOLD_DEFAULT
+    native_profile: bool = False
 
 
 @dataclass
@@ -131,6 +134,7 @@ class Measurement:
     latency_ms: Optional[float]
     peak_memory: float
     kernel_metrics: Optional[Dict[str, Dict[str, Any]]] = None
+    measurement_samples_ms: Optional[List[float]] = None
 
     def __iter__(self):
         # Preserve the existing three-value unpacking used by probes and callers.
@@ -205,6 +209,7 @@ class PerformanceResult:
     reference_path: Optional[str] = None
     # Fresh implementation capture only; never synthesized from cached timings.
     kernel_metrics: Optional[Dict[str, Dict[str, Any]]] = None
+    measurement_samples_ms: Optional[List[float]] = None
 
 
 @dataclass
@@ -462,7 +467,6 @@ def run_profiler_with_config(test_fn: callable, warmup: int, repeats: int, profi
     """运行NPU profiler并返回生成的性能分析目录路径。"""
     import torch
     import torch_npu
-    import triton.runtime as runtime
     from triton_evaluation.runtime.profiler_runtime import (
         load_runtime as _load_profiler_runtime,
         check_synchronous_handler as _check_profiler_sync,
@@ -497,6 +501,7 @@ def run_profiler_with_config(test_fn: callable, warmup: int, repeats: int, profi
 
     # clear_l2_cache 支持
     if clear_l2_cache:
+        import triton.runtime as runtime
         buffer = runtime.driver.active.get_empty_cache_for_benchmark()
         buffer = buffer.float()
         buffer.sum()
@@ -561,10 +566,15 @@ def _measure_event(test_fn, warmup: int, repeats: int, cv_threshold: float):
     import torch_npu  # noqa: F401
 
     for _ in range(warmup):
+        if hasattr(test_fn, "prepare"):
+            test_fn.prepare()
         test_fn()
     torch.npu.synchronize()
     samples: List[float] = []
     for _ in range(repeats):
+        if hasattr(test_fn, "prepare"):
+            test_fn.prepare()
+            torch.npu.synchronize()
         start = torch.npu.Event(enable_timing=True)
         end = torch.npu.Event(enable_timing=True)
         start.record()
@@ -585,11 +595,35 @@ def measure_single(
     import torch_npu  # noqa: F401
 
     torch.npu.reset_peak_memory_stats()
-    test_fn = prepare_model_fn(ctx.model, ctx.inputs, ctx.device)
+    samples_ms = None
+    native = bool(getattr(ctx.model, "_native_candidate", False))
+    if native or ctx.native_profile:
+        from triton_evaluation.engine.native_support import copy_inputs
+        state = {}
 
+        def prepare():
+            state["inputs"] = copy_inputs(ctx.inputs, ctx.device)
+
+        def test_fn():
+            with torch.no_grad():
+                _invoke_model_shared(ctx.model, state["inputs"])
+
+        test_fn.prepare = prepare
+    else:
+        test_fn = prepare_model_fn(ctx.model, ctx.inputs, ctx.device)
+    if native and ctx.method == "event" and not getattr(ctx.model, "_native_event_timing", False):
+        raise ValueError("native Event timing requires an explicit current-stream declaration")
     if ctx.method == "event":
         latency_ms = _measure_event(test_fn, ctx.warmup, ctx.repeats, ctx.cv_threshold)
         operators = None
+        kernel_metrics = None
+    elif native or ctx.native_profile:
+        from triton_evaluation.engine.native_support import measure_profile
+        samples_ms = []
+        operators, latency_ms = measure_profile(
+            test_fn, ctx.warmup, ctx.repeats, ctx.profile_name,
+            clear_l2_cache=clear_l2_cache, keep_res=keep_res, samples_ms=samples_ms,
+        )
         kernel_metrics = None
     else:
         profile_path = run_profiler_with_config(
@@ -603,7 +637,7 @@ def measure_single(
         )
 
     peak_memory = torch.npu.max_memory_allocated() / (1024 * 1024)
-    return Measurement(operators, latency_ms, round(peak_memory, 2), kernel_metrics)
+    return Measurement(operators, latency_ms, round(peak_memory, 2), kernel_metrics, samples_ms)
 
 
 # ============================================================================
@@ -662,7 +696,7 @@ def _measure_framework(
 
     inputs_framework = _move_inputs_to_device(inputs, device)
     logger.info("    测试 Framework (warmup=%d, active=%d)...", config.warmup, config.repeats)
-    operators, latency_ms, peak_memory = measure_single(
+    measurement = measure_single(
         MeasureContext(
             model=framework_model,
             inputs=inputs_framework,
@@ -672,10 +706,14 @@ def _measure_framework(
             device=device,
             method=config.measurement_method,
             cv_threshold=config.cv_threshold,
+            native_profile=config.native_profile,
         ),
         clear_l2_cache=config.clear_l2_cache,
         keep_res=config.keep_res,
     )
+    operators, latency_ms, peak_memory = measurement
+    if config.native_profile:
+        config.native_reference_samples[case_idx] = measurement.measurement_samples_ms
     return operators or {}, latency_ms, peak_memory, None
 
 
@@ -698,13 +736,15 @@ def _measure_impl(
             device=device,
             method=config.measurement_method,
             cv_threshold=config.cv_threshold,
+            native_profile=config.native_profile,
         ),
         clear_l2_cache=config.clear_l2_cache,
         keep_res=config.keep_res,
     )
     operators, latency_ms, peak_memory = measurement
     return Measurement(operators or {}, latency_ms, peak_memory,
-                       getattr(measurement, "kernel_metrics", None))
+                       getattr(measurement, "kernel_metrics", None),
+                       getattr(measurement, "measurement_samples_ms", None))
 
 
 def _compute_speedup(framework_latency_ms: float, impl_latency_ms: float) -> float:
@@ -742,12 +782,14 @@ def _build_perf_pair(
             latency_samples_source=source,
             latency_samples_proof_sha256=proof,
             reference_path=reference_path,
+            measurement_samples_ms=framework.measurement_samples_ms,
         ),
         PerformanceResult(
             avg_latency_ms=round(impl.latency_ms, 4),
             peak_memory_mb=round(impl.peak_memory, 2),
             operators=impl.operators,
             kernel_metrics=impl.kernel_metrics,
+            measurement_samples_ms=impl.measurement_samples_ms,
         ),
     )
 
@@ -788,9 +830,11 @@ def run_single_benchmark(
 
     speedup = _compute_speedup(framework_latency_ms, impl_latency_ms)
     fw_perf, impl_perf = _build_perf_pair(
-        Measurement(framework_operators, framework_latency_ms, framework_peak_memory),
+        Measurement(framework_operators, framework_latency_ms, framework_peak_memory,
+                    measurement_samples_ms=config.native_reference_samples.get(case_idx)),
         Measurement(impl_operators, impl_latency_ms, impl_peak_memory,
-                    getattr(impl_measurement, "kernel_metrics", None)),
+                    getattr(impl_measurement, "kernel_metrics", None),
+                    getattr(impl_measurement, "measurement_samples_ms", None)),
         reference_evidence,
         reference_path=_reference_path_label(config),
     )
@@ -1405,7 +1449,8 @@ def _build_benchmark_result(config, selected_indices, per_shape_results, *, prog
         warmup=config.warmup,
         repeats=config.repeats,
         max_retries=config.max_retries,
-        measurement_method=config.measurement_method,
+        measurement_method=("native_profiler" if config.native_profile and config.measurement_method == "profiler"
+                            else config.measurement_method),
         framework=overall.framework,
         implementation=overall.implementation,
         speedup_vs_torch=overall.speedup_vs_torch,
@@ -1443,6 +1488,8 @@ def _normalize_shape_speedup(s: Optional[float]) -> Optional[float]:
 
 def _measurement_method_tag(method: str, measured: bool) -> str:
     """落盘的测量方法标签：event 且该 shape 有时延数据时为 npu_event_v1。"""
+    if method == "native_profiler":
+        return "native_profiler_kernel_sum_v1"
     if method == "event" and measured:
         return "npu_event_v1"
     return "profiler_kernel_sum_v1"
@@ -1487,12 +1534,16 @@ def result_to_dict(result: BenchmarkResult) -> Dict[str, Any]:
                     "latency_samples_source": r.framework.latency_samples_source,
                     "latency_samples_proof_sha256": r.framework.latency_samples_proof_sha256,
                     "reference_path": r.framework.reference_path,
+                    **({"measurement_samples_ms": r.framework.measurement_samples_ms}
+                       if r.framework.measurement_samples_ms is not None else {}),
                 } if r.framework else None
             ),
             "implementation": (
                 {
                     "avg_latency_ms": r.implementation.avg_latency_ms,
                     "peak_memory_mb": r.implementation.peak_memory_mb,
+                    **({"measurement_samples_ms": r.implementation.measurement_samples_ms}
+                       if r.implementation.measurement_samples_ms is not None else {}),
                     **({"kernel_metrics": r.implementation.kernel_metrics}
                        if r.implementation.kernel_metrics is not None else {}),
                 } if r.implementation else None
@@ -1652,6 +1703,7 @@ def _build_argparser():
     parser = argparse.ArgumentParser(description="性能测试脚本")
     parser.add_argument("--op_name", required=True, help="算子名称")
     parser.add_argument("--verify_dir", default=".", help="验证目录路径（默认当前目录）")
+    parser.add_argument("--native-profile", action="store_true")
     parser.add_argument("--triton_impl_name", default=TRITON_IMPL_NAME_DEFAULT,
                        help="Triton 实现模块名")
     parser.add_argument("--warmup", type=int, default=WARMUP_DEFAULT, help="warmup 次数（默认 5）")
@@ -1750,6 +1802,7 @@ def _build_config(args, verify_dir):
         keep_res=args.keep_res,
         max_retries=args.max_retries,
         measurement_method=args.measurement_method,
+        native_profile=args.native_profile,
         cv_threshold=args.cv_threshold,
         case_indices=_parse_case_indices(args.case_indices),
         baseline_timings=(None if args.baseline_timings_json is None

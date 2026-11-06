@@ -31,10 +31,10 @@ def load_module(name, path):
 
 def measure_implementation(*, op_name, verify_dir, triton_impl_name, implementation,
                            warmup, repeats, method, case_indices=None, device="npu:0",
-                           prepared=None, operators_by_case=None, checkpoint=None):
+                           prepared=None, operators_by_case=None, checkpoint=None, native_profile=False):
     import torch
 
-    if implementation not in {"torch", "triton"}:
+    if implementation not in {"torch", "triton", "native"}:
         raise ValueError("a single implementation is required")
     if prepared is not None:
         reference, model_type, groups = prepared
@@ -54,6 +54,7 @@ def measure_implementation(*, op_name, verify_dir, triton_impl_name, implementat
         ]
         if not hasattr(groups, "__len__") or not hasattr(groups, "__getitem__"):
             groups = list(groups)
+    native_profile = native_profile or bool(getattr(model_type, "_native_candidate", False))
     selected = list(range(len(groups))) if case_indices is None else list(case_indices)
     if not selected or len(set(selected)) != len(selected) or any(
         type(index) is not int or index < 0 or index >= len(groups) for index in selected
@@ -64,7 +65,8 @@ def measure_implementation(*, op_name, verify_dir, triton_impl_name, implementat
     def result_snapshot():
         result = {
             "implementation": implementation, "correctness_verified": False,
-            "measurement_method": "npu_event_v1" if method == "event" else "profiler_kernel_sum_v1",
+            "measurement_method": "npu_event_v1" if method == "event" else (
+                "native_profiler_kernel_sum_v1" if native_profile else "profiler_kernel_sum_v1"),
             "selected_cases": len(selected), "measured_cases": len(measured),
             "coverage": len(measured) / len(selected), "per_case": list(measured),
             "unmeasured_cases": list(unmeasured),
@@ -91,6 +93,7 @@ def measure_implementation(*, op_name, verify_dir, triton_impl_name, implementat
             measurement = benchmark.measure_single(benchmark.MeasureContext(
                 model=model, inputs=inputs, warmup=warmup, repeats=repeats,
                 profile_name=f"single_{implementation}_{index}", device=device, method=method,
+                native_profile=native_profile,
             ))
             operators, latency, peak = measurement
             if operators_by_case is not None:
@@ -101,6 +104,9 @@ def measure_implementation(*, op_name, verify_dir, triton_impl_name, implementat
                 case_completed = True
                 continue
             case = {"case_idx": index, "input_shapes": shapes, "latency_ms": latency}
+            samples = getattr(measurement, "measurement_samples_ms", None)
+            if samples is not None:
+                case["measurement_samples_ms"] = samples
             kernel_metrics = getattr(measurement, "kernel_metrics", None)
             if kernel_metrics is not None:
                 case["kernel_metrics"] = kernel_metrics
@@ -128,10 +134,11 @@ def measure_implementation(*, op_name, verify_dir, triton_impl_name, implementat
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--native-profile", action="store_true")
     parser.add_argument("--op_name", required=True)
     parser.add_argument("--verify_dir", required=True)
     parser.add_argument("--triton_impl_name", required=True)
-    parser.add_argument("--implementation", choices=("torch", "triton"), required=True)
+    parser.add_argument("--implementation", choices=("torch", "triton", "native"), required=True)
     parser.add_argument("--warmup", type=int, required=True)
     parser.add_argument("--repeats", type=int, required=True)
     parser.add_argument("--measurement-method", choices=("event", "profiler"), required=True)
@@ -149,7 +156,7 @@ def main():
     result = measure_implementation(
         op_name=args.op_name, verify_dir=args.verify_dir, triton_impl_name=args.triton_impl_name,
         implementation=args.implementation, warmup=args.warmup, repeats=args.repeats,
-        method=args.measurement_method, case_indices=indices,
+        method=args.measurement_method, case_indices=indices, native_profile=args.native_profile,
         checkpoint=lambda result: benchmark.write_checkpoint(args.output, result),
     )
     benchmark.write_checkpoint(args.output, result)
