@@ -37,6 +37,7 @@ from triton_evaluation.runtime import health
 from triton_evaluation.runtime.correctness_evidence import write_handoff
 from triton_evaluation.runtime.execution_environment import build_execution_environment
 from triton_evaluation.runtime.precheck import run_precheck
+from triton_evaluation.runtime.process_title import evaluation_process, identify_request, task_stage
 from triton_evaluation.runtime.verdict_cache import VerdictCache
 from triton_evaluation.serialization import canonical_json_bytes, sha256_hex
 from triton_evaluation.service.broker import EvaluationStore
@@ -146,7 +147,10 @@ class FencedProgress:
         self.saved: dict[str, dict] = {}
 
     def begin(self, check: Check) -> bool:
-        return self._store.set_active_check(self._lease, check)
+        accepted = self._store.set_active_check(self._lease, check)
+        if accepted:
+            task_stage(check)
+        return accepted
 
     def save(self, check: Check, outcome: CheckOutcome) -> bool:
         if not self._store.save_check_outcome(self._lease, check, outcome):
@@ -240,7 +244,8 @@ class Worker:
             self._maintenance()
             return False
         increment(self.metrics, "worker_attempts_total")
-        self._run_attempt(lease, do_sleep)
+        with evaluation_process(lease.evaluation_id, lease.attempt_id):
+            self._run_attempt(lease, do_sleep)
         # Suspicious endings require a canary immediately after the attempt.
         # Healthy attempts pass through without probing.
         if self._health is not None:
@@ -285,6 +290,7 @@ class Worker:
         try:
             try:
                 request = self._parse_and_verify(lease)
+                identify_request(request)
             except _CorruptedRequestError:
                 self._commit_protocol_failure(
                     lease, requested_checks=lease.requested_checks, persisted={}, code="INTERNAL",

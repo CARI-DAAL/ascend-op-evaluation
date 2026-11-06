@@ -97,6 +97,8 @@ class CleanInputGroups(Sequence):
         return len(self.groups)
 
     def _before_case(self, index):
+        from triton_evaluation.runtime.process_title import set_stage
+        set_stage("inputs", case=index + 1)
         if self.fresh:
             # Built-in workload generation already resets RNGs per case and
             # allocates fresh storage. Avoid copying NPU tensors or RNG states.
@@ -208,6 +210,8 @@ def trace_case(index, operators, max_kernels):
 
 
 def _capture_case(config, reference, model_type, raw, device, index, implementation):
+    from triton_evaluation.runtime.process_title import set_stage
+    set_stage("profile", case=index + 1)
     import torch
 
     inputs = model = None
@@ -351,6 +355,10 @@ def main():
     parser.add_argument("--trace-output", required=True)
     parser.add_argument("--max-trace-kernels", type=int, default=200)
     args = parser.parse_args()
+    from triton_evaluation.runtime.process_title import infer_backend, set_stage
+    infer_backend(implementation=args.implementation, native=args.native_profile)
+    if args.trace_only:
+        set_stage("profile")
     if args.reference_only:
         parser.error("reference-only baselines require the isolated benchmark runner")
     if not args.trace_only and not args.output:
@@ -375,5 +383,6 @@ def main():
 
 
 if __name__ == "__main__":
-    benchmark._set_process_title("EvalEngine")
+    from triton_evaluation.runtime.process_title import set_stage
+    set_stage("benchmark", initialize=True)
     sys.exit(main())

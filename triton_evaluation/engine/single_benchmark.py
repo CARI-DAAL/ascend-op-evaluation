@@ -79,6 +79,8 @@ def measure_implementation(*, op_name, verify_dir, triton_impl_name, implementat
         checkpoint(result_snapshot())
     selected_iterator = iter(benchmark._SelectedInputGroups(groups, [index + 1 for index in selected]))
     for index in selected:
+        from triton_evaluation.runtime.process_title import set_stage
+        set_stage("benchmark", case=index + 1)
         shapes = []
         model = inputs = raw = None
         case_completed = False
@@ -151,6 +153,8 @@ def main():
     parser.add_argument("--case-indices")
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
+    from triton_evaluation.runtime.process_title import infer_backend
+    infer_backend(implementation=args.implementation, native=args.native_profile)
     import torch
     import torch_npu  # noqa: F401
 
@@ -169,4 +173,6 @@ def main():
 
 
 if __name__ == "__main__":
+    from triton_evaluation.runtime.process_title import set_stage
+    set_stage("benchmark", initialize=True)
     main()

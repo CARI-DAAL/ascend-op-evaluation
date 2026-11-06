@@ -1165,6 +1165,8 @@ def run_single_case(models: ModelPair, inputs, device, case_ctx: CaseContext, no
 
     case_idx = case_ctx.case_idx
     total_cases = case_ctx.total_cases
+    from triton_evaluation.runtime.process_title import set_stage, process_phase
+    set_stage("verify", case=case_idx)
     logger.info("  测试第 %d/%d 组输入...", case_idx, total_cases)
 
     # 推断输入类型（"float" / "int" / "no_tensor"）→ 决定输出整型时走整数计算 vs 量化
@@ -1200,7 +1202,8 @@ def run_single_case(models: ModelPair, inputs, device, case_ctx: CaseContext, no
             models.impl, inputs_for_impl, case_ctx.subject_budget_seconds
         )
         if case_ctx.cached_reference is None:
-            framework_output = _invoke_model_shared(models.framework, inputs_for_framework)
+            with process_phase("reference", case=case_idx):
+                framework_output = _invoke_model_shared(models.framework, inputs_for_framework)
         else:
             framework_output = case_ctx.cached_reference[1]
 
@@ -1214,6 +1217,7 @@ def run_single_case(models: ModelPair, inputs, device, case_ctx: CaseContext, no
             ],
         })
 
+    set_stage("compare", case=case_idx)
     if native:
         from triton_evaluation.engine.native_support import compare_outputs, NativeComparisonError
         try:
@@ -1336,6 +1340,8 @@ _CANDIDATE_ERROR_TYPES = tuple(cls for cls, _phase in _CANDIDATE_ERROR_PHASES)
 def _attempt_case(modules, case_ctx: CaseContext, inputs, device,
                    golden_device, non_compute):
     """在指定 golden_device 上跑一遍；成功返回 None，失败把异常抛给调用方。"""
+    from triton_evaluation.runtime.process_title import set_stage
+    set_stage("load", case=case_ctx.case_idx)
     framework_model = None
     impl_model = None
     if case_ctx.reference_trace is not None:
@@ -1521,12 +1527,17 @@ def verify_implementations(
         if official_source_metadata(reference_source) is None:
             reference_cache = None
 
+    from triton_evaluation.runtime.process_title import set_stage, infer_backend
+    set_stage("load")
     candidate_import_error = None
     try:
         modules = _load_verify_modules(op_name, verify_dir, triton_impl_name)
     except _CandidateImportError as exc:
         candidate_import_error = exc
         modules = {"torch_module": exc.torch_module}
+
+    infer_backend(native=bool(getattr(modules.get("impl_cls"), "_native_candidate", False)))
+    set_stage("inputs")
 
     known_total = (
         _metadata_case_count(modules["torch_module"])
@@ -1601,7 +1612,8 @@ def verify_implementations(
         if candidate_import_error is None else None
     )
     declared_tolerances = declared() if declared is not None else None
-    for case_idx, inputs in selected_inputs:
+    from triton_evaluation.runtime.process_title import labelled_inputs
+    for case_idx, inputs in labelled_inputs(selected_inputs):
         if candidate_import_error is not None:
             evaluated.append(case_idx)
             failures.append({
@@ -1714,7 +1726,8 @@ def _terminate_expired_subprocess(proc, waited_seconds: int) -> None:
 
 
 if __name__ == "__main__":
-    _set_process_title("EvalEngine")
+    from triton_evaluation.runtime.process_title import set_stage
+    set_stage("verify", initialize=True)
     _setup_logger()
     parser = argparse.ArgumentParser(description="算子验证脚本")
     parser.add_argument("--op_name", required=True, help="算子名称")

@@ -235,6 +235,11 @@ def build_runner_source() -> str:
 
             sys.path.insert(0, args.engine_dir)
             sys.path.insert(0, args.verify_dir)
+            from triton_evaluation.runtime.process_title import set_stage, infer_backend
+            set_stage("inputs" if args.describe_cases else "profile",
+                      case=None if args.case_idx is None else args.case_idx + 1,
+                      initialize=True)
+            infer_backend(implementation=args.implementation)
             import torch
             from _common_utils import describe_input, enforce_conv_fp32
             from _common_utils import ensure_npu_ambient_device
@@ -549,6 +554,8 @@ def run_profile(
     )
     runner_path = write_runner(config.verify_dir)
     env = dict(os.environ)
+    from triton_evaluation.runtime.process_title import process_environment
+    env.update(process_environment())
     cases = discover_fn(
         runner_path=runner_path,
         engine_dir=config.engine_dir,
@@ -705,6 +712,8 @@ def _config_from_args() -> ProfileConfig:
 
 def main() -> int:
     config = _config_from_args()
+    from triton_evaluation.runtime.process_title import infer_backend
+    infer_backend(implementation=config.implementation, native=config.candidate_kind == "native")
     try:
         result, exit_code = run_profile(config)
         atomic_write_json(config.output, result)
@@ -727,5 +736,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    _set_process_title("EvalEngine")
+    from triton_evaluation.runtime.process_title import set_stage
+    set_stage("profile", initialize=True)
     raise SystemExit(main())

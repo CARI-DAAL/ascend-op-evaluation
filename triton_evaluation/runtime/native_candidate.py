@@ -12,6 +12,7 @@ from pathlib import Path
 
 from ..api.contract import NativeBuildEvidence, NativeCandidate
 from ..serialization import canonical_json_bytes, sha256_hex
+from .process_title import process_phase
 
 PROJECT_DIRECTORY = "native_candidate"
 BUILD_LOG_BYTES = 16 * 1024
@@ -95,10 +96,11 @@ def build_candidate(candidate: NativeCandidate, work_dir: Path, *, device_id,
     root = stage_project(candidate, work_dir)
     started = time.monotonic()
     try:
-        result = (runner or run_script)(
-            candidate.build, root, device_id, deadline_at, lease_valid,
-            budget_seconds=candidate.build_timeout_seconds, output_limit_bytes=BUILD_LOG_BYTES,
-        )
+        with process_phase("build"):
+            result = (runner or run_script)(
+                candidate.build, root, device_id, deadline_at, lease_valid,
+                budget_seconds=candidate.build_timeout_seconds, output_limit_bytes=BUILD_LOG_BYTES,
+            )
     except OSError as error:
         # Missing compiler / loader / permission is environment evidence, not
         # proof that the submitted source is invalid.

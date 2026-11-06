@@ -11,6 +11,9 @@ Native projects declare a Python callable entrypoint receiving the same argument
 The evaluation service runs separately on an Ascend host. Accepted work is stored
 in Redis and can be recovered by ID after a client disconnect.
 
+NPU process names distinguish native/AscendC (`AscC`) and Triton (`Trit`) jobs,
+their phase and a task suffix; see the [process label guide](docs/operations/process-labels.md).
+
 [Quick start](#quick-start) · [API](#api) · [Deployment](#deploy) ·
 [Development](#contributing) · [Documentation](#documentation)
 

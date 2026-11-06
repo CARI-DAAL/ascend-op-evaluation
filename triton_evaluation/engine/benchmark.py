@@ -678,6 +678,8 @@ def _measure_framework(
     样本证据是 (八个时延样本, 来源标签, 授权策略摘要)；无样本证据（单次测量或
     预设参考值）时为 None。
     """
+    from triton_evaluation.runtime.process_title import set_stage
+    set_stage("reference", case=case_idx)
     if config.reference_latencies_ms is not None:
         samples = None
         if config.reference_cache_samples is not None:
@@ -736,6 +738,8 @@ def _measure_impl(
     case_idx: int,
 ) -> Measurement:
     """测量 impl 端时延 / 显存 / 算子分项。"""
+    from triton_evaluation.runtime.process_title import set_stage
+    set_stage("benchmark", case=case_idx)
     logger.info("    测试 Implementation (warmup=%d, active=%d)...", config.warmup, config.repeats)
     measurement = measure_single(
         MeasureContext(
@@ -1363,14 +1367,19 @@ class _SelectedInputGroups(Sequence):
         if isinstance(index, slice):
             return _SelectedInputGroups(self.groups,
                                         [value + 1 for value in self.indices[index]])
-        return self.groups[self.indices[index]]
+        from triton_evaluation.runtime.process_title import process_phase
+        with process_phase("inputs", case=self.indices[index] + 1):
+            return self.groups[self.indices[index]]
 
     def __iter__(self):
         # Preserve the historical official adapter's O(n) full-pass iterator.
         if self.indices == tuple(range(len(self.groups))):
-            yield from self.groups
+            from triton_evaluation.runtime.process_title import labelled_inputs
+            yield from labelled_inputs(self.groups)
         else:
             for index in self.indices:
+                from triton_evaluation.runtime.process_title import set_stage
+                set_stage("inputs", case=index + 1)
                 yield self.groups[index]
 
 
@@ -1827,6 +1836,11 @@ def _build_config(args, verify_dir):
 def main():
     _setup_logger()
     args = _build_argparser().parse_args()
+    from triton_evaluation.runtime.process_title import infer_backend, set_stage
+    infer_backend(native=args.native_profile,
+                  implementation="torch" if args.reference_only else "comparison")
+    if args.reference_only:
+        set_stage("reference")
 
     # 关闭 HF32 卷积并回读校验，确保性能/精度测试与 verify 一致
     _enforce_conv_fp32()
@@ -1865,5 +1879,6 @@ def main():
 
 
 if __name__ == "__main__":
-    _set_process_title("EvalEngine")
+    from triton_evaluation.runtime.process_title import set_stage
+    set_stage("benchmark", initialize=True)
     main()

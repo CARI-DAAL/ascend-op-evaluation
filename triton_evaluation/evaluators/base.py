@@ -240,6 +240,9 @@ def run_script(
     if deadline_at is not None and remaining_seconds(deadline_at) <= 0:
         return ScriptOutcome(-1, "", "", True, "resource_deadline")
     env = dict(os.environ if environment is None else environment)
+    from ..runtime.process_title import process_environment
+
+    env.update(process_environment())
     # A CPU precheck must not inherit the parent's NPU assignment.
     env["ASCEND_RT_VISIBLE_DEVICES"] = "" if device_id is None else str(device_id)
     cmd, env = isolate_command(cmd, cwd, device_id, env)

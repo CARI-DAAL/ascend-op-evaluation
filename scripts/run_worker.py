@@ -16,6 +16,7 @@ from triton_evaluation.evaluators.evaluation import EvaluationEvaluator
 from triton_evaluation.evaluators.profile import ProfileEvaluator
 from triton_evaluation.evaluators.verify import VerifyEvaluator
 from triton_evaluation.runtime.baseline_cache import BaselineCache
+from triton_evaluation.runtime.process_title import set_process_title as _set_process_title
 from triton_evaluation.runtime.verdict_cache import VerdictCache
 from triton_evaluation.runtime.worker import Worker
 from triton_evaluation.service.broker import EvaluationStore
@@ -25,21 +26,15 @@ from triton_evaluation.versioning import startup_identity
 logger = logging.getLogger(__name__)
 
 # Process title shown in `npu-smi info` / ps; 15-char /proc/<pid>/comm limit.
-_PROCESS_TITLE = "EvalWorker"
+_PROCESS_TITLE = "Eval-Idle"
 
 # Keeps the startup device-hold tensor alive for the process lifetime.
 _DEVICE_HOLD = None
 
 
 def set_process_title() -> None:
-    """Rename the worker so npu-smi shows `EvalWorker` instead of `python`.
-    Best effort: missing setproctitle only keeps the default name."""
-    try:
-        from setproctitle import setproctitle
-
-        setproctitle(_PROCESS_TITLE)
-    except ImportError:
-        logger.info("setproctitle not installed; process keeps the default name")
+    """Name the idle worker even without the optional setproctitle package."""
+    _set_process_title(_PROCESS_TITLE, detail="ascend-eval worker idle")
 
 
 def build_worker(card: int | None, settings: Settings | None = None) -> Worker:
