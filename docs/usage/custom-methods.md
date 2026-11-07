@@ -17,7 +17,7 @@ The service does not import submitted code to read its descriptor.
 | Operation | Endpoint |
 | --- | --- |
 | Register source package | `POST /methods` |
-| Discover runtime/registry limits | `GET /method-runtimes` |
+| Discover declared runtimes and registry limits | `GET /method-runtimes` |
 | Read frozen package | `GET /methods/{method_ref}` |
 | Set caller-owned alias | `PUT /method-aliases/{alias}` |
 | Upload/read input or dependency | `POST /method-artifacts`, `GET /method-artifacts/{artifact_ref}` |
@@ -71,6 +71,11 @@ python3 "$CLI" materials ev_EVALUATION_ID --output frozen-method.json
 Parameters are validated by the frozen schema, including unknown fields and
 constraints. Missing values receive declared defaults; explicit 0, false and null
 retain their distinct meanings. The result records requested and effective values.
+The first contract supports a bounded Draft 2020-12 schema vocabulary; external
+references, regex/pattern keywords, other dialects and ambiguous conditional
+defaults are rejected. Schema validation is metadata-only and never imports the
+method. Defaults inside named properties, array items and dynamic object members
+are applied recursively where the schema permits them.
 Package descriptor, source, dependency and runtime identities remain visible on
 queued and terminal method resources. Changing the method or parameters does not
 reuse built-in correctness or baseline evidence.
@@ -117,6 +122,13 @@ inputs. Frozen admission is bounded at 8 MiB. Default output limits are 64 KiB
 logs, 1 MiB artifacts and 32 files; selected limits and truncation/missing states
 are explicit. Large upstream tasks or profiler exports must fit these documented
 limits; do not silently drop requested tasks or trace data to fit.
+
+The registry defaults to 64 MiB of serialized records and 256 records per caller,
+including packages, input artifacts and aliases. Operators can configure
+`TRITON_EVAL_METHOD_REGISTRY_MAX_BYTES` and
+`TRITON_EVAL_METHOD_REGISTRY_MAX_RECORDS`; reuploading existing bytes does not
+double-charge storage. Frozen admitted materials remain readable through the
+evaluation handle for its retention window, even when a registry entry expires.
 Output artifacts belong to the execution's retained evidence. To use one as a
 later method input, download it and register those bytes with artifact-upload;
 the service verifies the same content digest. An output ref is not automatically
@@ -129,6 +141,14 @@ method descriptor. Declared Python distributions require exact versions and tool
 requirements must exist. The method does not install dependencies into the shared
 service interpreter. Missing runtime/capability/dependency produces an explicit
 failure, never a different checker or timing fallback.
+
+Deploy matching verified API and worker builds. A development all-zero build ID
+is not evidence of compatibility with an older worker. Set
+`TRITON_EVAL_METHOD_CAPABILITIES` only to capabilities the configured runtime
+provides, for example `["python","npu","process-isolation","soc-ascend910_93"]`
+for a server that has separately qualified those requirements. `process-isolation`
+also requires the existing engine sandbox configuration and digest; a caller
+cannot enable it merely by listing it in the method descriptor.
 
 The runtime fingerprint identifies deployment-declared runtime configuration;
 it is not blanket hardware attestation. Package-version/tool checks are separate

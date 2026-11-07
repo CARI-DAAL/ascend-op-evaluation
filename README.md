@@ -73,9 +73,18 @@ See the [client guide](plugins/triton-eval/README.md) and
 [skill](plugins/triton-eval/skills/triton-eval/SKILL.md) for retry, recovery and
 plugin packaging. Both client compatibility manifests share the same skill.
 
+## Custom methods
+
+External adapters can register versioned checker, measurement or harness packages
+using `custom-method-v1`. The service freezes method bytes, dependencies, inputs
+and effective parameters before the existing worker lifecycle executes them.
+Reports retain `caller_method` authority; they are not automatic certification of
+candidate correctness. See the [custom method guide](docs/usage/custom-methods.md)
+for the standalone client, cancellation, artifacts and runnable examples.
+
 ## API
 
-All submission endpoints accept one input protocol:
+The operator submission endpoints below accept one input protocol:
 
 | Field | Contents |
 | --- | --- |

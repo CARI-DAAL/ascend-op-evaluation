@@ -51,6 +51,9 @@ CAPABILITIES = (
     "evaluation-progress",
     "operator-metrics",
     "version-discovery",
+    "custom-method-v1",
+    "evaluation-cancellation",
+    "method-artifact-recovery",
 )
 
 # The placeholder build of an unconfigured deployment; never a release build.
