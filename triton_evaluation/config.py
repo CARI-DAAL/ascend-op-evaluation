@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     # Change this namespace when the fixed hardware or timing runtime changes.
     baseline_cache_namespace: str = Field(default="torch-baseline-v1", min_length=1)
     engine_dir: str = _DEFAULT_ENGINE_DIR
+    method_runtime_id: str = Field(
+        default="worker-python-v1", pattern=r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$",
+    )
+    method_capabilities: list[str] = Field(default_factory=lambda: ["python"], max_length=64)
     reference_device_policy: Literal["cpu-first", "npu-strict"] = "cpu-first"
     reference_diagnostics_dir: Path | None = None
     # Optional reference-cache settings are pinned as one deployment group.

@@ -25,9 +25,16 @@ class MethodModel(BaseModel):
 
 def safe_path(value: str) -> str:
     path = PurePosixPath(value)
-    if (not value or len(value) > 256 or "\\" in value or "\0" in value
-            or path.is_absolute() or path.as_posix() != value
-            or any(part in {".", ".."} for part in path.parts)):
+    if (
+        not value
+        or not path.parts
+        or len(value) > 256
+        or "\\" in value
+        or "\0" in value
+        or path.is_absolute()
+        or path.as_posix() != value
+        or any(part in {".", ".."} for part in path.parts)
+    ):
         raise ValueError("method paths must be normalized relative POSIX paths")
     return value
 
@@ -37,10 +44,12 @@ class MethodRequirements(MethodModel):
     device: Literal["cpu", "npu"] = "cpu"
     capabilities: list[Name] = Field(default_factory=lambda: ["python"], max_length=32)
     packages: dict[Name, Annotated[str, Field(min_length=1, max_length=128)]] = Field(
-        default_factory=dict, max_length=32,
+        default_factory=dict,
+        max_length=32,
     )
     tools: list[Annotated[str, Field(pattern=r"^[A-Za-z0-9_+.-]{1,64}$")]] = Field(
-        default_factory=list, max_length=32,
+        default_factory=list,
+        max_length=32,
     )
 
 
@@ -122,16 +131,24 @@ class StoredArtifact(ArtifactUpload):
     def valid_identity(self):
         data = self.content()
         digest = hashlib.sha256(data).hexdigest()
-        if (digest != self.sha256 or self.artifact_ref != "sha256:" + digest
-                or len(data) != self.size_bytes):
+        if (
+            digest != self.sha256
+            or self.artifact_ref != "sha256:" + digest
+            or len(data) != self.size_bytes
+        ):
             raise ValueError("artifact digest or size mismatch")
         return self
 
     @classmethod
     def from_bytes(cls, data: bytes, media_type="application/octet-stream"):
         digest = hashlib.sha256(data).hexdigest()
-        return cls(artifact_ref="sha256:" + digest, sha256=digest, size_bytes=len(data),
-                   media_type=media_type, content_base64=base64.b64encode(data).decode())
+        return cls(
+            artifact_ref="sha256:" + digest,
+            sha256=digest,
+            size_bytes=len(data),
+            media_type=media_type,
+            content_base64=base64.b64encode(data).decode(),
+        )
 
 
 class MethodAlias(MethodModel):
@@ -210,6 +227,41 @@ class MethodArtifact(MethodModel):
         return self
 
 
+class MethodIdentity(MethodModel):
+    """Public admission identity available even when no method report exists."""
+
+    contract_version: Literal["custom-method-v1"] = CONTRACT
+    method_ref: Ref
+    name: str
+    version: str
+    kind: Kind
+    descriptor_sha256: Hash
+    implementation_sha256: Hash
+    dependency_digests: dict[str, Hash]
+    requested_parameters: dict[str, JsonValue]
+    effective_parameters: dict[str, JsonValue]
+    runtime_id: str
+    runtime_fingerprint: Hash
+    inputs: dict[str, Ref]
+
+    @classmethod
+    def from_execution(cls, execution: MethodExecution):
+        return cls(
+            method_ref=execution.method_ref,
+            name=execution.package.descriptor.name,
+            version=execution.package.descriptor.version,
+            kind=execution.package.descriptor.kind,
+            descriptor_sha256=execution.descriptor_sha256,
+            implementation_sha256=execution.implementation_sha256,
+            dependency_digests=execution.dependency_digests,
+            requested_parameters=execution.requested_parameters,
+            effective_parameters=execution.effective_parameters,
+            runtime_id=execution.runtime_id,
+            runtime_fingerprint=execution.runtime_fingerprint,
+            inputs={name: value.artifact_ref for name, value in execution.inputs.items()},
+        )
+
+
 class MethodResult(MethodModel):
     contract_version: Literal["custom-method-v1"] = CONTRACT
     method_ref: Ref
@@ -219,8 +271,13 @@ class MethodResult(MethodModel):
     runtime_fingerprint: Hash
     kind: Kind
     outcome: Literal[
-        "passed", "failed", "completed", "method_error", "protocol_error",
-        "environment_unavailable", "timed_out",
+        "passed",
+        "failed",
+        "completed",
+        "method_error",
+        "protocol_error",
+        "environment_unavailable",
+        "timed_out",
     ]
     authority: Literal["caller_method"] = "caller_method"
     isolation: Literal["host", "sandbox"] = "host"
@@ -242,8 +299,12 @@ def package_identity(package: MethodPackage) -> dict:
 
     descriptor = sha256_hex(canonical_json_bytes(package.descriptor.model_dump(mode="json")))
     implementation = sha256_hex(canonical_json_bytes(package.files))
-    dependencies = {name: ref.removeprefix("sha256:")
-                    for name, ref in package.descriptor.dependencies.items()}
-    fields = {"descriptor_sha256": descriptor, "implementation_sha256": implementation,
-              "dependency_digests": dependencies}
+    dependencies = {
+        name: ref.removeprefix("sha256:") for name, ref in package.descriptor.dependencies.items()
+    }
+    fields = {
+        "descriptor_sha256": descriptor,
+        "implementation_sha256": implementation,
+        "dependency_digests": dependencies,
+    }
     return {"method_ref": "sha256:" + sha256_hex(canonical_json_bytes(fields)), **fields}

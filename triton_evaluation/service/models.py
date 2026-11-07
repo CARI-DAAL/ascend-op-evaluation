@@ -18,7 +18,7 @@ from triton_evaluation.service.security import CallerClass
 TrafficClass = Literal["trial", "trusted", "rollout"]
 ExecutionClass = Literal["cpu", "npu"]
 CreateDecision = Literal["created", "replayed", "conflict", "rate_limited", "limit_exceeded"]
-TerminalState = Literal["completed", "failed", "timed_out"]
+TerminalState = Literal["completed", "failed", "timed_out", "cancelled"]
 
 
 def new_evaluation_id() -> str:
@@ -86,6 +86,8 @@ class CreateResourceCommand:
     @property
     def execution_class(self) -> ExecutionClass:
         """Compile-only work has no physical-card requirement."""
+        if self.admission.execution_class is not None:
+            return self.admission.execution_class
         return "cpu" if tuple(self.admission.requested_checks) == ("compile",) else "npu"
 
 

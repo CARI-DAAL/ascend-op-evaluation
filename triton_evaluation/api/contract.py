@@ -28,13 +28,15 @@ from pydantic import (
     model_validator,
 )
 
+from ..methods.contracts import MethodExecution, MethodIdentity, MethodResult
+
 SchemaVersion = Literal["2.1"]
 Purpose = Literal["trial", "grade", "rollout"]
-Check = Literal["correctness", "performance", "profile", "compile"]
+Check = Literal["correctness", "performance", "profile", "compile", "method"]
 MeasurementMethod = Literal[
     "npu_event_v1", "profiler_kernel_sum_v1", "native_profiler_kernel_sum_v1"
 ]
-ResourceState = Literal["queued", "running", "completed", "failed", "timed_out"]
+ResourceState = Literal["queued", "running", "completed", "failed", "timed_out", "cancelled"]
 
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
@@ -49,7 +51,7 @@ MAX_SOURCE_BYTES = 2 * 1024 * 1024
 MAX_ERROR_MESSAGE_BYTES = 512
 MAX_SKIP_MESSAGE_BYTES = 256
 
-_CHECK_ORDER = ("compile", "correctness", "performance", "profile")
+_CHECK_ORDER = ("compile", "correctness", "performance", "profile", "method")
 
 T = TypeVar("T")
 
@@ -248,12 +250,15 @@ class EvaluationRequest(StrictModel):
 
     schema_version: SchemaVersion
     purpose: Purpose = "trial"
-    implementation: Literal["comparison", "torch", "triton", "native"] = Field(
+    implementation: Literal["comparison", "torch", "triton", "native", "method"] = Field(
         default="comparison", exclude_if=lambda value: value == "comparison"
     )
     op_name: str = Field(min_length=1, max_length=128)
     reference_code: SourceCode
     kernel_code: SourceCode
+    method_execution: MethodExecution | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
     native_candidate: NativeCandidate | None = Field(
         default=None, exclude_if=lambda value: value is None,
     )
@@ -281,6 +286,15 @@ class EvaluationRequest(StrictModel):
 
     @model_validator(mode="after")
     def _normalize_and_couple(self):
+        if self.method_execution is not None:
+            if (self.checks != ["method"] or self.implementation != "method"
+                    or self.native_candidate is not None or self.reference_code or self.kernel_code
+                    or self.correctness is not None or self.correctness_from is not None
+                    or self.performance is not None or self.profile is not None
+                    or self.purpose == "grade"):
+                raise ValueError("custom methods require an exclusive method execution")
+        elif "method" in self.checks or self.implementation == "method":
+            raise ValueError("method check requires a frozen method execution")
         if self.native_candidate is not None:
             if "performance" in self.checks and self.performance is None:
                 self.performance = PerformanceParams(
@@ -1156,6 +1170,12 @@ CompileCheckOutcome = Annotated[
 ]
 
 
+MethodCheckOutcome = Annotated[
+    CheckSucceeded[MethodResult] | CheckFailed | CheckSkipped | CheckTimedOut,
+    Field(discriminator="status"),
+]
+
+
 # ---------------------------------------------------------------------------
 # Provenance, result, and resource (design sections 4.1 and 4.5)
 # ---------------------------------------------------------------------------
@@ -1195,6 +1215,7 @@ class Provenance(StrictModel):
 
 
 class EvaluationResult(StrictModel):
+    method: MethodCheckOutcome | None = Field(default=None, exclude_if=lambda value: value is None)
     native_build: NativeBuildEvidence | None = Field(
         default=None, exclude_if=lambda value: value is None,
     )
@@ -1221,6 +1242,7 @@ class EvaluationResult(StrictModel):
 class CheckEvidence(StrictModel):
     """Validated check results available before the whole evaluation completes."""
 
+    method: MethodCheckOutcome | None = Field(default=None, exclude_if=lambda value: value is None)
     correctness: CorrectnessOutcome | None = None
     performance: PerformanceOutcome | None = None
     profile: ProfileOutcome | None = None
@@ -1245,10 +1267,14 @@ def dump_contract(model: StrictModel) -> bytes:
     return canonical_json_bytes(model.model_dump(mode="json", exclude_none=False))
 
 
-_TERMINAL_STATES = ("completed", "failed", "timed_out")
+_TERMINAL_STATES = ("completed", "failed", "timed_out", "cancelled")
 
 
 class EvaluationResource(StrictModel):
+    method_identity: MethodIdentity | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
+    cancel_requested: bool = Field(default=False, exclude_if=lambda value: value is False)
     schema_version: SchemaVersion
     evaluation_id: str = Field(min_length=1)
     revision: Annotated[int, Field(ge=1)]

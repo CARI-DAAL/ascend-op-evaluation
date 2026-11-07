@@ -6,13 +6,41 @@ from jsonschema import Draft202012Validator
 
 from ..serialization import canonical_json_bytes
 
-_KEYWORDS = frozenset({
-    "$schema", "title", "description", "default", "type", "properties", "required",
-    "additionalProperties", "items", "minItems", "maxItems", "uniqueItems", "minLength",
-    "maxLength", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
-    "enum", "const", "allOf", "anyOf", "oneOf", "not", "if", "then", "else",
-    "dependentRequired", "minProperties", "maxProperties",
-})
+_KEYWORDS = frozenset(
+    {
+        "$schema",
+        "title",
+        "description",
+        "default",
+        "type",
+        "properties",
+        "required",
+        "additionalProperties",
+        "items",
+        "minItems",
+        "maxItems",
+        "uniqueItems",
+        "minLength",
+        "maxLength",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+        "enum",
+        "const",
+        "allOf",
+        "anyOf",
+        "oneOf",
+        "not",
+        "if",
+        "then",
+        "else",
+        "dependentRequired",
+        "minProperties",
+        "maxProperties",
+    }
+)
 
 
 def validate_schema(schema, *, parameters=False):
@@ -32,7 +60,9 @@ def validate_schema(schema, *, parameters=False):
         if isinstance(node, bool):
             return
         if not isinstance(node, dict) or node.keys() - _KEYWORDS:
-            raise ValueError("unsupported JSON Schema keyword; references and patterns are disabled")
+            raise ValueError(
+                "unsupported JSON Schema keyword; references and patterns are disabled"
+            )
         if conditional and "default" in node:
             raise ValueError("conditional schema defaults are ambiguous")
         for child in node.get("properties", {}).values():
