@@ -85,6 +85,11 @@ async def test_method_identity_and_artifacts_are_caller_scoped(tmp_path):
     "schema",
     [
         {"type": "object"},
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "$schema": "http://json-schema.org/draft-07/schema#",
+        },
         {"type": "object", "additionalProperties": False, "$ref": "https://invalid.test/schema"},
         {
             "type": "object",
@@ -351,3 +356,69 @@ async def test_method_artifacts_are_attempt_bound_across_recovery(tmp_path):
         assert (
             await client.get(artifact_url, headers=trial_headers())
         ).json() == fresh.model_dump()
+
+
+async def test_alias_resolution_race_returns_the_admitted_request(tmp_path, monkeypatch):
+    app = build_app(tmp_path, None)
+    seed_worker(app, execution_class="cpu")
+    instance = app.app.state.context.instance
+    original_submit = instance.submit
+    async with app.http as client:
+        first = (
+            await client.post("/methods", json=package("first = True"), headers=trial_headers())
+        ).json()
+        second = (
+            await client.post("/methods", json=package("second = True"), headers=trial_headers())
+        ).json()
+        await client.put(
+            "/method-aliases/current",
+            json={"method_ref": first["method_ref"]},
+            headers=trial_headers(),
+        )
+
+        def concurrent_winner(request, caller, **kwargs):
+            instance.methods.alias(caller, "current", second["method_ref"])
+            frozen = instance.methods.freeze(caller, request.method_execution.submission)
+            original_submit(
+                request.model_copy(update={"method_execution": frozen}), caller, **kwargs
+            )
+            return original_submit(request, caller, **kwargs)
+
+        monkeypatch.setattr(instance, "submit", concurrent_winner)
+        submission = {"method_ref": "current"}
+        response = await client.post(
+            "/method-evaluations", json=submission, headers=trial_headers()
+        )
+        assert response.status_code == 202, response.text
+        assert response.json()["method_identity"]["method_ref"] == second["method_ref"]
+        different_session = await client.post(
+            "/method-evaluations", json=submission, headers=trial_headers(session="other")
+        )
+        assert different_session.status_code == 409
+
+
+async def test_runtime_discovery_does_not_claim_unconfigured_isolation(tmp_path):
+    app = build_app(tmp_path, None)
+    app.settings.method_capabilities = ["python", "process-isolation"]
+    seed_worker(app, execution_class="cpu")
+    async with app.http as client:
+        runtimes = (await client.get("/method-runtimes", headers=trial_headers())).json()
+        assert runtimes["runtimes"][0]["capabilities"] == ["python"]
+        method = (
+            await client.post(
+                "/methods",
+                json=package(
+                    requirements={
+                        "capabilities": ["process-isolation"],
+                    }
+                ),
+                headers=trial_headers(),
+            )
+        ).json()
+        response = await client.post(
+            "/method-evaluations",
+            json={"method_ref": method["method_ref"]},
+            headers=trial_headers(),
+        )
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "ENVIRONMENT_UNAVAILABLE"

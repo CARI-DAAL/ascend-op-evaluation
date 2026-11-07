@@ -48,6 +48,15 @@ def _registry_error(error):
     )
 
 
+def _same_submission(stored, submission):
+    return (
+        stored is not None
+        and stored.method_execution is not None
+        and canonical_json_bytes(stored.method_execution.submission.model_dump(mode="json"))
+        == canonical_json_bytes(submission.model_dump(mode="json"))
+    )
+
+
 @router.post(
     "/methods",
     response_model=RegisteredMethod,
@@ -138,14 +147,9 @@ async def submit_method(
         internal = None
         if existing is not None:
             stored = await asyncio.to_thread(
-                instance.store.request_visible, existing.evaluation_id, caller
+                instance.store.request_visible, existing.evaluation_id, caller, session
             )
-            if (
-                stored is None
-                or stored.method_execution is None
-                or canonical_json_bytes(stored.method_execution.submission.model_dump(mode="json"))
-                != canonical_json_bytes(submission.model_dump(mode="json"))
-            ):
+            if not _same_submission(stored, submission):
                 raise errors.idempotency_conflict()
             internal = stored
         if internal is None:
@@ -174,13 +178,28 @@ async def submit_method(
         raise errors.queue_unavailable() from None
     except StorageError:
         raise errors.internal() from None
+    resource = outcome.resource
     if outcome.decision == "conflict":
-        raise errors.idempotency_conflict()
+        # Another same-key submission may have won admission after this caller
+        # resolved a moving alias. Recover by the original request, not a newly
+        # resolved package; never execute an accepted logical request twice.
+        resource = await asyncio.to_thread(instance.store.lookup_idempotent, caller.caller_id, key)
+        stored = (
+            None
+            if resource is None
+            else await asyncio.to_thread(
+                instance.store.request_visible,
+                resource.evaluation_id,
+                caller,
+                session,
+            )
+        )
+        if not _same_submission(stored, submission):
+            raise errors.idempotency_conflict()
     if outcome.decision == "rate_limited":
         raise errors.rate_limited()
     if outcome.decision == "limit_exceeded":
         raise errors.limit_exceeded("caller inflight limit exceeded")
-    resource = outcome.resource
     if resource.state not in TERMINAL_STATES and wait_seconds:
         resource = (
             await wait_until_terminal(

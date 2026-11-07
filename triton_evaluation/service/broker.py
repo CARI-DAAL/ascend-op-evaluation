@@ -858,9 +858,16 @@ class EvaluationStore:
             finally:
                 pipeline.reset()
 
-    def request_visible(self, evaluation_id: str, caller: Caller) -> EvaluationRequest | None:
+    def request_visible(
+        self, evaluation_id: str, caller: Caller, session_id: str | None = None,
+    ) -> EvaluationRequest | None:
         stored = self._r.hgetall(self._key(f"resource:{evaluation_id}"))
-        if not stored or not self._visible_to(stored, caller):
+        if (not stored or stored[b"owner"].decode() != caller.caller_id
+                or not ({"trial:submit", "trial:read"} & caller.scopes)):
+            return None
+        if session_id is not None and stored[b"session_digest"].decode() != _scoped_digest(
+            caller.caller_id, session_id
+        ):
             return None
         return EvaluationRequest.model_validate_json(stored[b"canonical_request"])
 
@@ -986,7 +993,7 @@ class EvaluationStore:
                                                "updated_at_ms": str(now_ms)})
                     pipeline.hincrby(key, "progress_revision", 1)
                     pipeline.execute()
-                return self.get_visible(evaluation_id, caller)
+                return EvaluationResource.model_validate_json(self._r.hget(key, "resource"))
             except redis.WatchError:
                 continue
             finally:

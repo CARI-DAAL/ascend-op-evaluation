@@ -46,6 +46,10 @@ _KEYWORDS = frozenset(
 def validate_schema(schema, *, parameters=False):
     if not isinstance(schema, dict) or schema.get("type") != "object":
         raise ValueError("method schema must declare object type")
+    dialect = schema.get("$schema")
+    supported = "https://json-schema.org/draft/2020-12/schema"
+    if dialect is not None and dialect != supported and dialect != supported + "#":
+        raise ValueError("method schema requires JSON Schema Draft 2020-12")
     if parameters and schema.get("additionalProperties") is not False:
         raise ValueError("parameter schema must reject unknown properties")
     if len(canonical_json_bytes(schema)) > 65536:
@@ -63,6 +67,9 @@ def validate_schema(schema, *, parameters=False):
             raise ValueError(
                 "unsupported JSON Schema keyword; references and patterns are disabled"
             )
+        dialect = node.get("$schema")
+        if dialect is not None and dialect != supported and dialect != supported + "#":
+            raise ValueError("method schema requires JSON Schema Draft 2020-12")
         if conditional and "default" in node:
             raise ValueError("conditional schema defaults are ambiguous")
         for child in node.get("properties", {}).values():

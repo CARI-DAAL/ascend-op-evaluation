@@ -111,7 +111,7 @@ class MethodRegistry:
         required = descriptor.requirements
         if required.runtime != self.settings.method_runtime_id or not set(
             required.capabilities
-        ) <= set(self.settings.method_capabilities):
+        ) <= set(runtime_capabilities(self.settings)):
             raise MethodRegistryError(
                 "ENVIRONMENT_UNAVAILABLE", "required method runtime or capability is unavailable"
             )
@@ -146,7 +146,7 @@ class MethodRegistry:
             dependencies=dependencies,
             runtime_id=required.runtime,
             runtime_fingerprint=runtime_fingerprint(self.settings),
-            capabilities=sorted(self.settings.method_capabilities),
+            capabilities=runtime_capabilities(self.settings),
             submission=submission,
             limits=submission.limits,
         )
@@ -162,7 +162,7 @@ class MethodRegistry:
             "runtimes": [
                 {
                     "runtime_id": self.settings.method_runtime_id,
-                    "capabilities": sorted(self.settings.method_capabilities),
+                    "capabilities": runtime_capabilities(self.settings),
                     "identity_source": (
                         "deployment-declared; worker validates package/tool requirements"
                     ),
@@ -177,7 +177,7 @@ def runtime_fingerprint(settings):
         canonical_json_bytes(
             {
                 "id": settings.method_runtime_id,
-                "capabilities": sorted(settings.method_capabilities),
+                "capabilities": runtime_capabilities(settings),
                 "toolchain": settings.worker_toolchain_version,
                 "runtime": settings.worker_runtime_version,
                 "driver": settings.worker_driver_version,
@@ -189,3 +189,10 @@ def runtime_fingerprint(settings):
             }
         )
     )
+
+
+def runtime_capabilities(settings):
+    capabilities = set(settings.method_capabilities)
+    if not settings.engine_sandbox_config:
+        capabilities.discard("process-isolation")
+    return sorted(capabilities)
