@@ -86,7 +86,6 @@ SUBMIT_RESPONSES = {
 @router.post("/evaluations", response_model=EvaluationResource, responses=SUBMIT_RESPONSES)
 @router.post("/verify", response_model=EvaluationResource, responses=SUBMIT_RESPONSES)
 @router.post("/benchmark", response_model=EvaluationResource, responses=SUBMIT_RESPONSES)
-@router.post("/profile", response_model=EvaluationResource, responses=SUBMIT_RESPONSES)
 async def submit_evaluation(
     request: Request,
     response: Response,
@@ -108,7 +107,6 @@ async def submit_evaluation(
             and evaluation_request.triton_code is not None
             else ["performance"]
         ),
-        "profile": ["profile"],
     }.get(request.scope["route"].path.rsplit("/", 1)[-1])
     try:
         internal_request = to_evaluation_request(evaluation_request, checks=checks)
@@ -162,6 +160,24 @@ async def submit_evaluation(
         "get_evaluation", evaluation_id=resource.evaluation_id
     ).path
     return resource
+
+
+@router.post("/profile", status_code=403, responses=error_responses(401, 403))
+async def submit_profile_disabled(
+    caller: Annotated[Caller, Depends(require_submit_caller)],
+) -> None:
+    """Standalone profiling is disabled by operator policy.
+
+    Scoring only uses the correctness (verify) and performance (benchmark)
+    checks; the benchmark check already parses per-kernel latency from its
+    own profiler pass. Standalone profile jobs cost 20+ minutes of worker
+    time per call and are not part of any scored metric, so they are
+    rejected outright instead of queued.
+    """
+    raise errors.forbidden(
+        "the profile action is disabled; use /verify for correctness and"
+        " /benchmark for performance"
+    )
 
 
 @router.get(

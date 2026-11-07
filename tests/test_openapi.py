@@ -93,7 +93,7 @@ async def test_real_async_replay_and_error_responses_match_live_spec(app):
     validate(document, response_schema(recover, 200), fetched.json())
 
 
-@pytest.mark.parametrize("action", ["verify", "benchmark", "profile"])
+@pytest.mark.parametrize("action", ["verify", "benchmark"])
 async def test_tool_endpoints_share_operator_and_resource_models(app, action):
     seed_worker(app)
     async with app.http as client:
@@ -106,6 +106,21 @@ async def test_tool_endpoints_share_operator_and_resource_models(app, action):
         refused = await client.post(f"/{action}", json=request_payload())
         assert refused.status_code == 401
     for response in (accepted, refused):
+        validate(document, response_schema(operation, response.status_code), response.json())
+
+
+async def test_disabled_profile_endpoint_documents_its_actual_error_responses(app):
+    async with app.http as client:
+        document = (await client.get("/openapi.json")).json()
+        operation = document["paths"]["/profile"]["post"]
+        refused = await client.post("/profile", json=request_payload(), headers=trial_headers())
+        unauthorized = await client.post("/profile", json=request_payload())
+    assert refused.status_code == 403
+    assert unauthorized.status_code == 401
+    assert "200" not in operation["responses"] and "202" not in operation["responses"]
+    assert "requestBody" not in operation
+    assert operation["security"]
+    for response in (refused, unauthorized):
         validate(document, response_schema(operation, response.status_code), response.json())
 
 

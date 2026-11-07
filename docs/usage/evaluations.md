@@ -147,14 +147,18 @@ omit `definition.reference`. The bundled client provides `--triton-only` to
 remove that source from a loaded definition without modifying its file.
 
 `checks` defaults to correctness and performance with both sources, or performance
-with one. `/verify` requires both sources; `/benchmark` and `/profile` also support
-single implementations. A single-source result reports `correctness_verified:
+with one. `/verify` requires both sources; `/benchmark` and explicit profile checks
+through `/evaluations` also support single implementations. The standalone `/profile`
+shortcut is disabled by operator policy and returns 403 after authentication.
+A single-source result reports `correctness_verified:
 false` and no comparison speedup. Compile checks remain syntax/import checks;
 they do not generate inputs or establish device correctness.
 
 `Idempotency-Key` and `X-Session-ID` are optional. A key enables recovery-safe
 retries on the same instance; without a key each submission is new work. A session
-groups quotas and is not an authorization credential.
+groups quotas and is not an authorization credential. An inflight-limit HTTP 413
+is retryable and includes `Retry-After: 1`. An oversized request body also returns
+413, but is non-retryable and has no retry delay; reduce that request before retrying.
 
 ## Select checks and retrieve evidence early
 

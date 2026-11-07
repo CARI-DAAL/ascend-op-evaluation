@@ -1,9 +1,9 @@
 """Stable error codes and the API error boundary.
 
 Every non-2xx response is a single-line, byte-bounded, redacted
-``ErrorEnvelope``. The initial code policy is frozen here: a code's phase may
-be narrowed to its failing check at the resource layer, but its retryable
-value never varies by call site.
+``ErrorEnvelope``. A code's phase may be narrowed to its failing check at the
+resource layer. Inflight-limit errors are retryable; the body-limit middleware
+uses the same HTTP 413 code for an oversized request that must be changed.
 """
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -21,7 +21,7 @@ def error_responses(*statuses: int, model: type[BaseModel] = ErrorEnvelope) -> d
     responses = {}
     for status in statuses:
         response = {"model": model, "description": HTTPStatus(status).phrase}
-        if status in {429, 503}:
+        if status in {413, 429, 503}:
             response["headers"] = {"Retry-After": {"schema": {"type": "string", "const": "1"}}}
         elif status == 401 and model is ErrorEnvelope:
             response["headers"] = {
@@ -81,7 +81,11 @@ def idempotency_conflict() -> ApiError:
 
 
 def limit_exceeded(message: str) -> ApiError:
-    return ApiError(413, _error("LIMIT_EXCEEDED", "request", False, message))
+    # Inflight/quota 413s are wait-and-retry; the body-size 413 in middleware
+    # stays non-retryable (a too-large kernel cannot become smaller by waiting).
+    return ApiError(
+        413, _error("LIMIT_EXCEEDED", "request", True, message), RETRY_AFTER_ONE
+    )
 
 
 def rate_limited() -> ApiError:

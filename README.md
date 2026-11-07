@@ -84,7 +84,7 @@ unsupported external resources and validation limits.
 | --- | --- |
 | `POST /verify` | Correctness comparison; requires both implementations |
 | `POST /benchmark` | Single-source timing or correctness plus comparative timing |
-| `POST /profile` | Profiling evidence |
+| `POST /profile` | Disabled by operator policy; authenticated calls return 403 |
 | `POST /evaluations` | Explicit selection of checks, including compile prechecks |
 | `GET /evaluations/{evaluation_id}` | Recover the admitted resource |
 
@@ -92,6 +92,11 @@ All evaluation routes use `Authorization: Bearer`. `Idempotency-Key` is optional
 when supplied, retry the same request against its original instance. A submission
 returns 200 for a terminal resource or 202 with a recovery `Location`. Inspect
 each check result: a completed evaluation can establish that a candidate is wrong.
+
+The standalone `/profile` shortcut does not queue work. Explicit profile checks
+through `/evaluations` remain available. Inflight-limit HTTP 413 responses are
+retryable and include `Retry-After: 1`; oversized request bodies also return 413
+but are non-retryable and must be reduced before resubmission.
 
 FastAPI generates `/openapi.json` and `/docs` from request/response models.
 `/livez`, `/readyz` and observer-authenticated `/internal/metrics` expose health

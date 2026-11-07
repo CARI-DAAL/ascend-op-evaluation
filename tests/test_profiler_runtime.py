@@ -555,3 +555,73 @@ def test_probe_reaps_owned_forking_constructor_group(tmp_path, monkeypatch, elf_
             os.kill(descendant, 9)
             os.waitpid(descendant, 0)
         assert libc.prctl(36, old_subreaper.value, 0, 0, 0) == 0
+
+
+def _vendor_msprof(tmp_path: Path) -> tuple[Path, Path]:
+    binary = tmp_path / "cann-9.0.0" / "tools" / "profiler" / "bin" / "msprof"
+    script = tmp_path / "cann-9.0.0" / runtime._MSPROF_PY_RELATIVE
+    binary.parent.mkdir(parents=True)
+    script.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o750)
+    script.write_text("# msprof\n")
+    script.chmod(0o755)
+    return binary, script
+
+
+def test_msprof_export_permission_accepts_self_owned_vendor_layout(tmp_path, monkeypatch):
+    binary, _script = _vendor_msprof(tmp_path)
+    monkeypatch.setattr(
+        runtime.shutil, "which", lambda name: str(binary) if name == "msprof" else None
+    )
+    runtime.check_msprof_export_permission()
+
+
+def test_msprof_export_permission_allows_non_vendor_test_double(tmp_path, monkeypatch):
+    tool = tmp_path / "msprof"
+    tool.write_text("x")
+    tool.chmod(0o755)
+    monkeypatch.setattr(
+        runtime.shutil, "which", lambda name: str(tool) if name == "msprof" else None
+    )
+    runtime.check_msprof_export_permission()
+
+
+def test_msprof_export_permission_requires_path(monkeypatch):
+    monkeypatch.setattr(runtime.shutil, "which", lambda name: None)
+    with pytest.raises(ValueError, match="not on PATH"):
+        runtime.check_msprof_export_permission()
+
+
+def test_msprof_export_permission_requires_vendor_companion(tmp_path, monkeypatch):
+    binary, script = _vendor_msprof(tmp_path)
+    script.unlink()
+    monkeypatch.setattr(
+        runtime.shutil, "which", lambda name: str(binary) if name == "msprof" else None
+    )
+    with pytest.raises(ValueError, match="msprof.py is missing"):
+        runtime.check_msprof_export_permission()
+
+
+def test_msprof_export_permission_refuses_foreign_uid(tmp_path, monkeypatch):
+    binary, _script = _vendor_msprof(tmp_path)
+    foreign_uid = 65534 if os.getuid() != 65534 else 65533
+    try:
+        os.chown(binary, foreign_uid, -1)
+    except PermissionError:
+        pytest.skip("cannot assign a foreign uid to the controlled msprof")
+    monkeypatch.setattr(
+        runtime.shutil, "which", lambda name: str(binary) if name == "msprof" else None
+    )
+    with pytest.raises(ValueError, match="msprof owner must be root"):
+        runtime.check_msprof_export_permission()
+
+
+def test_msprof_export_permission_refuses_other_writable_script(tmp_path, monkeypatch):
+    binary, script = _vendor_msprof(tmp_path)
+    script.chmod(0o666)
+    monkeypatch.setattr(
+        runtime.shutil, "which", lambda name: str(binary) if name == "msprof" else None
+    )
+    with pytest.raises(ValueError, match="group/other-writable"):
+        runtime.check_msprof_export_permission()

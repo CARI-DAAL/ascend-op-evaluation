@@ -25,7 +25,6 @@ def app(tmp_path, release_catalog_files):
     ("/evaluations", ["correctness"]),
     ("/verify", ["correctness"]),
     ("/benchmark", ["correctness", "performance"]),
-    ("/profile", ["profile"]),
 ])
 async def test_all_entrypoints_submit_and_recover_same_resource(app, path, checks):
     seed_worker(app)
@@ -115,16 +114,18 @@ async def test_health_alias_has_same_readiness_as_readyz(app):
     assert health.json() == ready.json() == {"ready": True}
 
 
-async def test_profile_options_use_endpoint_checks_and_evaluation_rejects_mismatch(app):
+async def test_profile_entrypoint_is_disabled_and_evaluation_rejects_profile_options(app):
     seed_worker(app)
     body = request_payload(profile={"mode": "deep"})
     async with app.http as client:
         profile = await client.post("/profile", json=body, headers=trial_headers())
         invalid = await client.post("/evaluations", json=body, headers=trial_headers(key="invalid"))
-    assert profile.status_code == 202, profile.text
+    assert profile.status_code == 403, profile.text
+    assert "disabled" in profile.json()["error"]["message"]
     assert invalid.status_code == 422
     assert invalid.json()["error"]["code"] == "INVALID_REQUEST"
     assert "REF" not in invalid.text
+    assert not app.store._r.keys(f"{app.settings.redis_prefix}:resource:*")
 
 
 async def test_mounted_tool_uses_its_declared_checks(app):

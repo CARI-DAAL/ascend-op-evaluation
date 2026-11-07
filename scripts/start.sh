@@ -27,7 +27,9 @@ set +a
 # Optionally source the CANN toolkit env so torch_npu and the skill scripts resolve
 if [[ -n "${CANN_SET_ENV_PATH:-}" && -r "${CANN_SET_ENV_PATH}" ]]; then
   # shellcheck disable=SC1090
+  set +u
   source "${CANN_SET_ENV_PATH}"
+  set -u
 fi
 
 # CANN's set_env.sh adds <toolkit>/lib64, but on this install libhccl.so (loaded by
@@ -44,6 +46,25 @@ if [[ -n "${CANN_SET_ENV_PATH:-}" ]]; then
 fi
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+
+# Path-based interpreters are relative to this checkout, regardless of the
+# launching shell's working directory.
+if [[ "${PYTHON_BIN}" == */* && "${PYTHON_BIN}" != /* ]]; then
+  PYTHON_BIN="${ROOT_DIR}/${PYTHON_BIN}"
+fi
+
+# The CANN profiler's analysis stage spawns a bare ``python3`` resolved from
+# PATH (it needs pandas/sqlite for the CSV export). A stack started from a
+# shell whose PATH lacks this interpreter's bin dir silently loses every
+# benchmark to INTERNAL "no parseable kernel_details.csv" — the workers run,
+# but msprof's export subprocesses die before logging. Pin the interpreter's
+# bin dir at the front of PATH so the stack is independent of the launching
+# shell.
+case "${PYTHON_BIN}" in
+  */*) PYTHON_BIN_DIR="$(cd "$(dirname "${PYTHON_BIN}")" && pwd)"
+       export PATH="${PYTHON_BIN_DIR}:${PATH}" ;;
+esac
+
 API_HOST="${TRITON_EVAL_API_HOST:-127.0.0.1}"
 API_PORT="${TRITON_EVAL_API_PORT:-11907}"
 CARDS="${TRITON_EVAL_CARDS:-0}"
@@ -63,11 +84,6 @@ if [[ -n "${TRITON_EVAL_ENGINE_DIR:-}" && ! -d "${TRITON_EVAL_ENGINE_DIR}" ]]; t
   exit 2
 fi
 
-# Workers launch from the repository root; resolve their path-based interpreter
-# there before probing from a temporary directory.
-if [[ "${PYTHON_BIN}" == */* && "${PYTHON_BIN}" != /* ]]; then
-  PYTHON_BIN="${ROOT_DIR}/${PYTHON_BIN}"
-fi
 # Host attempts execute from temporary directories. A sandbox owns its import
 # context and may expose the package only inside that sandbox.
 "${PYTHON_BIN}" "${ROOT_DIR}/scripts/deployment_preflight.py" --engine-import-context

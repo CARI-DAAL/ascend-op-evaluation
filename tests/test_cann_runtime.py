@@ -39,6 +39,10 @@ def canonical_cann(tmp_path, elf_binding):  # noqa: F811
     msprof = root / "tools/profiler/bin/msprof"
     msprof.write_text("#!/bin/sh\nexit 0\n")
     msprof.chmod(0o755)
+    exporter = root / runtime._MSPROF_PY_RELATIVE
+    exporter.parent.mkdir(parents=True, exist_ok=True)
+    exporter.write_text("# Controlled CANN export companion; no device execution.\n")
+    exporter.chmod(0o755)
     (root / "opp/version.info").write_text("controlled existing stack 9.1.1\n")
     for relative in runtime.CANN_REQUIRED_LIBRARIES:
         shutil.copyfile(library, root / relative)

@@ -527,8 +527,15 @@ fi
 printf 'ld=%s\\n' "${{LD_LIBRARY_PATH:-}}"
 printf 'args=%s\\n' "$*"
 printf 'cwd=%s\\n' "$PWD"
+printf 'subprocess-python=%s\\n' "$(python3)"
 """,
     )
+    # msprof invokes python3 by name. The selected bin may already appear later
+    # in PATH, but must take precedence over an unrelated ambient interpreter.
+    _write_executable(tmp_path / "python3", "#!/bin/sh\nprintf selected\n")
+    other_bin = tmp_path / "other-bin"
+    other_bin.mkdir()
+    _write_executable(other_bin / "python3", "#!/bin/sh\nprintf ambient\n")
     log_dir = tmp_path / "logs"
     env_file = tmp_path / "service.env"
     interpreter = (
@@ -547,6 +554,7 @@ printf 'cwd=%s\\n' "$PWD"
     env = os.environ.copy()
     env["TRITON_EVAL_ENV_FILE"] = str(env_file)
     env["LD_LIBRARY_PATH"] = "baseline-ld"
+    env["PATH"] = f"{other_bin}:{os.environ['PATH']}:{tmp_path}"
 
     result = subprocess.run(
         ["bash", str(PROJECT_ROOT / "scripts/start.sh")], cwd=tmp_path, env=env,
@@ -559,6 +567,8 @@ printf 'cwd=%s\\n' "$PWD"
     assert arch_library in (log_dir / "worker_8.log").read_text()
     assert "args=-m uvicorn scripts.run_api:app" in (log_dir / "api.log").read_text()
     assert "args=-m scripts.run_worker --card 8" in (log_dir / "worker_8.log").read_text()
+    assert "subprocess-python=selected" in (log_dir / "api.log").read_text()
+    assert "subprocess-python=selected" in (log_dir / "worker_8.log").read_text()
     cpu_logs = sorted(log_dir.glob("worker_cpu_*.log"))
     assert len(cpu_logs) == cpu_workers
     for cpu_log in cpu_logs:

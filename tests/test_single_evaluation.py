@@ -151,14 +151,20 @@ def test_materialize_torch_only_does_not_create_a_missing_candidate(tmp_path):
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("implementation", ["torch", "triton"])
-@pytest.mark.parametrize("endpoint", ["evaluations", "benchmark", "profile"])
-async def test_single_http_worker_and_recovery(tmp_path, implementation, endpoint):
+@pytest.mark.parametrize(("endpoint", "check"), [
+    ("evaluations", "performance"), ("benchmark", "performance"), ("evaluations", "profile"),
+])
+async def test_single_http_worker_and_recovery(tmp_path, implementation, endpoint, check):
     app = build_app(tmp_path, None)
     seed_worker(app)
     worker = build_worker(
         app.store, app.settings, harness_for(implementation), app.clock,
     )
     body = payload(implementation)
+    if check == "profile":
+        # The standalone shortcut is disabled; explicit profile checks retain
+        # the same admission, worker evidence and recovery contract.
+        body["checks"] = ["profile"]
     async with app.http as client:
         submitted = await client.post(f"/{endpoint}", json=body, headers=trial_headers())
         assert submitted.status_code == 202, submitted.text
@@ -171,7 +177,6 @@ async def test_single_http_worker_and_recovery(tmp_path, implementation, endpoin
     assert resource["state"] == "completed"
     result = resource["result"]
     assert result["correctness"] is None
-    check = "profile" if endpoint == "profile" else "performance"
     assert result[check]["data"]["implementation"] == implementation
     assert result[check]["data"]["correctness_verified"] is False
     assert "speedup" not in json.dumps(result[check])
