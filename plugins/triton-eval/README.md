@@ -123,3 +123,40 @@ flags) also apply to `evaluate`. Deep profile controls include `--metric-groups`
 and `--no-per-core`; inspect subcommand help for the exact accepted values.
 These controls require a matching updated service; operator source and input
 formats are unchanged.
+
+## Native AscendC projects
+
+Use `--native-project path/to/native.json` instead of `--triton`. This manifest
+contains an explicit list of UTF-8 files relative to its own directory:
+
+```json
+{
+  "kind": "native",
+  "files": ["build.sh", "kernels.asc", "extension.cpp", "entry.py"],
+  "build": ["bash", "build.sh"],
+  "entrypoint": "entry:run",
+  "build_timeout_seconds": 300,
+  "kernel_names": ["my_kernel"],
+  "event_timing": false
+}
+```
+
+The client packages those file contents without compiling or importing them.
+Paths must be relative POSIX paths without traversal or symlinks; source limits
+are 128 files and 2 MiB. The manifest is limited to 1 MiB. The client requires
+POSIX no-follow file APIs for this packaging mode. The worker must provide a
+compatible native toolchain and dependencies, and the entrypoint returns tensors.
+
+```bash
+python3 "$TRITON_EVAL_CLI" benchmark \
+  --definition definition.json --workloads workload.jsonl \
+  --native-project project/native.json --warmup 3 --repeats 5
+```
+
+Native timing defaults to profiler (`native_profiler_kernel_sum_v1`), with
+manual warmup, one capture per measured call and the mean of per-call kernel
+sums. It does not claim CANNBench equivalence. Event timing additionally requires
+`event_timing: true` to declare correct stream coverage. Use `--candidate-only`
+for explicitly unverified single-source measurement. Baseline cache and
+`--correctness-from` reuse are unsupported for native projects in this release.
+Build diagnostics are returned in `result.native_build`.

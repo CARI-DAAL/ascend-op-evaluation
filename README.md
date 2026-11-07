@@ -1,13 +1,18 @@
 # triton-evaluation
 
-Evaluate Triton-Ascend operators against a PyTorch reference for correctness,
-performance and profiling. Supply an **input definition, named workloads and
-optional Triton source**. The input format follows the pinned NPUKernelBench
-protocol; the reference lives in `definition.reference`. Implementations expose
-`run(*args)` in the order declared by `definition.inputs`.
+Evaluate Triton-Ascend and native AscendC operators against a PyTorch reference
+for correctness, performance and profiling. Supply an **input definition, named
+workloads and an optional candidate implementation**. The input format follows
+the pinned NPUKernelBench
+protocol; the reference lives in `definition.reference`. Triton and reference
+sources expose `run(*args)` in the order declared by `definition.inputs`.
+Native projects declare a Python callable entrypoint receiving the same arguments.
 
 The evaluation service runs separately on an Ascend host. Accepted work is stored
 in Redis and can be recovered by ID after a client disconnect.
+
+NPU process names distinguish native/AscendC (`AscC`) and Triton (`Trit`) jobs,
+their phase and a task suffix; see the [process label guide](docs/operations/process-labels.md).
 
 [Quick start](#quick-start) · [API](#api) · [Deployment](#deploy) ·
 [Development](#contributing) · [Documentation](#documentation)
@@ -51,6 +56,12 @@ Triton implementation without a reference comparison. `verify` requires both
 implementations; `profile` supports either source selection. Single-source
 measurements are explicitly correctness-unverified and report no speedup.
 
+For a native AscendC project, use `--native-project path/to/native.json`
+in place of `--triton`. The project is built inside the admitted attempt. Native
+comparison and profiler timing have explicit method identities; see the
+[native candidate guide](docs/usage/native-candidates.md) for the file manifest,
+parameters, first-release limits and server validation plan.
+
 The CLI waits for a result and writes JSON to stdout. Client wait expiry does not
 cancel accepted work; recover it on the original instance:
 
@@ -71,10 +82,11 @@ All submission endpoints accept one input protocol:
 | `definition` | Ordered named inputs, axes, optional metadata and optional Torch `reference` source |
 | `workloads` | Nonempty array of official workload objects, including named `inputs` |
 | `triton_code` | Optional Triton source defining `run(*args)` |
+| `candidate` | Optional native source project, build argv and Python callable entrypoint; mutually exclusive with `triton_code` |
 | `seed` | Shared per-workload RNG seed; defaults to the official value `200` |
 | `custom_inputs_code` | Optional explicit custom-generator source; otherwise use the reference's declared entrypoint |
 
-At least one of `definition.reference` and `triton_code` is required. Supported
+At least one of `definition.reference`, `triton_code` and `candidate` is required. Supported
 inputs include random tensors, scalars, tensor lists and custom generation.
 Input generation executes on the assigned NPU after admission. The
 [request guide](docs/usage/evaluations.md) specifies distributions, axes,

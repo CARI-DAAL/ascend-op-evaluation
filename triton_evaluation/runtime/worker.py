@@ -28,6 +28,7 @@ from triton_evaluation.api.contract import (
     ErrorInfo,
     EvaluationRequest,
     EvaluationResult,
+    NativeBuildEvidence,
 )
 from triton_evaluation.config import Settings
 from triton_evaluation.evaluators.base import LeaseLostError
@@ -36,6 +37,7 @@ from triton_evaluation.runtime import health
 from triton_evaluation.runtime.correctness_evidence import write_handoff
 from triton_evaluation.runtime.execution_environment import build_execution_environment
 from triton_evaluation.runtime.precheck import run_precheck
+from triton_evaluation.runtime.process_title import evaluation_process, identify_request, task_stage
 from triton_evaluation.runtime.verdict_cache import VerdictCache
 from triton_evaluation.serialization import canonical_json_bytes, sha256_hex
 from triton_evaluation.service.broker import EvaluationStore
@@ -145,7 +147,10 @@ class FencedProgress:
         self.saved: dict[str, dict] = {}
 
     def begin(self, check: Check) -> bool:
-        return self._store.set_active_check(self._lease, check)
+        accepted = self._store.set_active_check(self._lease, check)
+        if accepted:
+            task_stage(check)
+        return accepted
 
     def save(self, check: Check, outcome: CheckOutcome) -> bool:
         if not self._store.save_check_outcome(self._lease, check, outcome):
@@ -239,7 +244,8 @@ class Worker:
             self._maintenance()
             return False
         increment(self.metrics, "worker_attempts_total")
-        self._run_attempt(lease, do_sleep)
+        with evaluation_process(lease.evaluation_id, lease.attempt_id):
+            self._run_attempt(lease, do_sleep)
         # Suspicious endings require a canary immediately after the attempt.
         # Healthy attempts pass through without probing.
         if self._health is not None:
@@ -284,6 +290,7 @@ class Worker:
         try:
             try:
                 request = self._parse_and_verify(lease)
+                identify_request(request)
             except _CorruptedRequestError:
                 self._commit_protocol_failure(
                     lease, requested_checks=lease.requested_checks, persisted={}, code="INTERNAL",
@@ -306,6 +313,13 @@ class Worker:
             )
             work_dir = tempfile.mkdtemp(prefix=f"eval_{digest[:24]}_")
             progress = FencedProgress(self.store, lease)
+            native_build = None
+
+            def record_native_build(evidence):
+                nonlocal native_build
+                if not self.store.save_native_build(lease, evidence):
+                    raise LeaseLostError("native build evidence publication was fenced out")
+                native_build = evidence
             with LeaseKeeper(
                 self.store, lease, self.settings,
                 identity=self.identity, sleep=do_sleep, metrics=self.metrics,
@@ -317,6 +331,8 @@ class Worker:
                     )
                     pinned = lease.pinned
                     reuse_kwargs = {}
+                    if request.native_candidate is not None:
+                        reuse_kwargs["on_native_build"] = record_native_build
                     if request.correctness_from is not None:
                         def reuse_correctness():
                             evidence = self.store.correctness_for_attempt(
@@ -355,6 +371,7 @@ class Worker:
                     validated = complete_evaluation(
                         requested_checks=request.checks,
                         outcomes={check: getattr(validated, check) for check in request.checks},
+                        native_build=validated.native_build,
                         pinned=pinned, execution_environment=environment,
                         **self._policy_provenance(request),
                     )
@@ -376,6 +393,7 @@ class Worker:
                         code="EVALUATOR_EXECUTION_FAILED",
                         phase="execution",
                         message="evaluator failed before a subject outcome",
+                        native_build=native_build, request=request,
                     )
                     if self._health is not None:
                         self._health.mark_suspicious()
@@ -390,7 +408,10 @@ class Worker:
             if retryable_failure and self._health is not None:
                 self._health.mark_suspicious()
             if self._clock() >= lease.deadline_at_ms:
-                self._commit_deadline(lease, request.checks, progress.saved, request=request)
+                self._commit_deadline(
+                    lease, request.checks, progress.saved, request=request,
+                    native_build=native_build,
+                )
                 return
             if (
                 self.settings.engine_failure_requeue
@@ -451,7 +472,9 @@ class Worker:
         override = request.reference_device_policy
         effective = override or self.settings.reference_device_policy
         kwargs = {"reference_device_policy": effective}
-        if override is not None and override != self.settings.reference_device_policy:
+        if request.native_candidate is not None:
+            kwargs["correctness_algorithm_override"] = f"native_tensor_v1:{effective}"
+        elif override is not None and override != self.settings.reference_device_policy:
             kwargs["correctness_algorithm_override"] = (
                 self.settings.correctness_algorithm_for(override)
             )
@@ -460,10 +483,11 @@ class Worker:
     def _commit_deadline(
         self, lease: AttemptLease, requested_checks, persisted: dict,
         request: EvaluationRequest | None = None,
+        native_build: NativeBuildEvidence | None = None,
     ) -> None:
         result = complete_evaluation(
             requested_checks=requested_checks, outcomes=persisted,
-            pinned=lease.pinned,
+            pinned=lease.pinned, native_build=native_build,
             failure=CheckTimedOut(status="timeout", error=ErrorInfo(
                 code="DEADLINE_EXCEEDED", phase="deadline", check=None,
                 retryable=False,
@@ -483,13 +507,16 @@ class Worker:
         code: str,
         phase: str,
         message: str,
+        native_build: NativeBuildEvidence | None = None,
+        request: EvaluationRequest | None = None,
     ) -> None:
         result = complete_evaluation(
             requested_checks=requested_checks, outcomes=persisted,
-            pinned=lease.pinned,
+            pinned=lease.pinned, native_build=native_build,
             failure=CheckFailed(status="failed", error=ErrorInfo(
                 code=code, phase=phase, check=None, retryable=code != "INTERNAL",
                 message=message,
             )),
+            **(self._policy_provenance(request) if request is not None else {}),
         )
         self.store.commit_terminal(lease, "failed", result)

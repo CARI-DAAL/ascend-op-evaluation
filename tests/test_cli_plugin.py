@@ -652,3 +652,169 @@ def test_profiler_method_and_metrics_reach_the_agent(inputs, cache):
         "method": "profiler", "use_baseline_cache": False,
     })
     assert output["result"]["performance"]["data"]["per_case"][0]["kernel_metrics"] == metrics
+
+
+def native_project(inputs):
+    project = inputs[0] / "native"
+    project.mkdir()
+    (project / "entry.py").write_text("def run(x): return x\n")
+    (project / "build.sh").write_text("echo must-not-run-locally > client-executed\n")
+    manifest = project / "native.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "kind": "native",
+                "files": ["build.sh", "entry.py"],
+                "build": ["bash", "build.sh"],
+                "entrypoint": "entry:run",
+                "build_timeout_seconds": 300,
+                "kernel_names": ["add_custom"],
+                "event_timing": False,
+            }
+        )
+    )
+    return manifest
+
+
+def test_native_project_packages_explicit_sources_without_executing(inputs):
+    manifest = native_project(inputs)
+    with server(lambda _: (202, resource(), {})) as (url, calls):
+        result, _ = run_cli(
+            inputs,
+            url,
+            "--native-project",
+            str(manifest),
+            "--no-wait",
+            action="benchmark",
+            sources=("torch",),
+        )
+    assert result.returncode == 0, result.stdout
+    body = json.loads(calls[0][3])
+    assert body["candidate"] == {
+        "kind": "native",
+        "build": ["bash", "build.sh"],
+        "entrypoint": "entry:run",
+        "build_timeout_seconds": 300,
+        "kernel_names": ["add_custom"],
+        "event_timing": False,
+        "files": {
+            "entry.py": "def run(x): return x\n",
+            "build.sh": "echo must-not-run-locally > client-executed\n",
+        },
+    }
+    assert "triton_code" not in body
+    assert "performance" not in body
+    assert not (manifest.parent / "client-executed").exists()
+    assert "correctness not verified" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    "bad_path", ["../outside.py", "/outside.py", "a/../entry.py", "a//entry.py", "a\\entry.py"]
+)
+def test_native_project_rejects_paths_without_submission(inputs, bad_path):
+    manifest = native_project(inputs)
+    data = json.loads(manifest.read_text())
+    data["files"] = [bad_path]
+    manifest.write_text(json.dumps(data))
+    with server(lambda _: (202, resource(), {})) as (url, calls):
+        result, output = run_cli(
+            inputs,
+            url,
+            "--native-project",
+            str(manifest),
+            action="verify",
+            sources=("torch",),
+        )
+    assert result.returncode == 2
+    assert output["error"]["code"] == "INVALID_INPUT"
+    assert calls == []
+
+
+@pytest.mark.parametrize("kind", ["file", "directory", "oversized"])
+def test_native_project_rejects_linked_or_oversized_sources(inputs, kind):
+    manifest = native_project(inputs)
+    source = manifest.parent / "entry.py"
+    if kind == "file":
+        source.unlink()
+        source.symlink_to(inputs[2])
+    elif kind == "directory":
+        (manifest.parent / "linked").symlink_to(inputs[0], target_is_directory=True)
+        data = json.loads(manifest.read_text())
+        data["files"] = ["linked/triton.py"]
+        manifest.write_text(json.dumps(data))
+    else:
+        source.write_bytes(b"x" * (2 * 1024 * 1024 + 1))
+    with server(lambda _: (202, resource(), {})) as (url, calls):
+        result, _ = run_cli(inputs, url, "--native-project", str(manifest), sources=("torch",))
+    assert result.returncode == 2
+    assert calls == []
+
+
+def test_native_candidate_only_preserves_definition_and_explicit_method(inputs):
+    manifest = native_project(inputs)
+    original = inputs[1].read_text()
+    with server(lambda _: (202, resource(), {})) as (url, calls):
+        result, _ = run_cli(
+            inputs,
+            url,
+            "--native-project",
+            str(manifest),
+            "--candidate-only",
+            "--method",
+            "profiler",
+            "--no-wait",
+            action="benchmark",
+            sources=("torch",),
+        )
+    assert result.returncode == 0
+    payload = json.loads(calls[0][3])
+    assert "reference" not in payload["definition"]
+    assert payload["performance"] == {"method": "profiler"}
+    assert inputs[1].read_text() == original
+    assert "correctness not verified" in result.stderr
+
+
+@pytest.mark.parametrize("flag", ["--use-baseline-cache", "--method", "--correctness-from"])
+def test_native_unsupported_reuse_or_event_is_rejected_before_network(inputs, flag):
+    manifest = native_project(inputs)
+    extra = [flag]
+    if flag == "--method":
+        extra.append("event")
+    elif flag == "--correctness-from":
+        extra.append(EID)
+    with server(lambda _: (202, resource(), {})) as (url, calls):
+        result, output = run_cli(
+            inputs,
+            url,
+            "--native-project",
+            str(manifest),
+            *extra,
+            sources=("torch",),
+            action="benchmark",
+        )
+    assert result.returncode == 2
+    assert output["error"]["code"] == "INVALID_ARGUMENT"
+    assert calls == []
+
+
+def test_native_explicit_event_declaration_reaches_service(inputs):
+    manifest = native_project(inputs)
+    value = json.loads(manifest.read_text())
+    value["event_timing"] = True
+    manifest.write_text(json.dumps(value))
+    with server(lambda _: (202, resource(), {})) as (url, calls):
+        result, _ = run_cli(
+            inputs,
+            url,
+            "--native-project",
+            str(manifest),
+            "--method",
+            "event",
+            "--no-wait",
+            sources=("torch",),
+            action="benchmark",
+        )
+    assert result.returncode == 0
+    payload = json.loads(calls[0][3])
+    assert payload["candidate"]["event_timing"] is True
+    assert payload["performance"]["method"] == "event"

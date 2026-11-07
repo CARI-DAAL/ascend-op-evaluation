@@ -705,3 +705,79 @@ def test_canonical_source_replacement_cannot_change_admitted_request_identity(
     assert not evaluator.calls
     failed = read_resource(store, "failed")
     assert failed.result.correctness.error.code == "INTERNAL"
+
+
+@pytest.mark.parametrize("ending", ["exception", "deadline"])
+def test_native_build_and_comparator_survive_later_failure(
+    store, settings, clock, make_command, ending,
+):
+    from triton_evaluation.api.contract import NativeBuildEvidence
+    from triton_evaluation.operator_input import OperatorRequest, to_evaluation_request
+    from triton_evaluation.service.terminal_results import complete_evaluation
+
+    request = to_evaluation_request(OperatorRequest.model_validate({
+        "definition": {"inputs": {}, "reference": "def run(): return 1"},
+        "workloads": [{"inputs": {}}],
+        "candidate": {"files": {"entry.py": "def run(): return 1"},
+                      "build": ["python3", "-c", "pass"], "entrypoint": "entry:run"},
+        "reference_device_policy": "npu-strict",
+    }))
+    resource = store.create_or_replay(make_command(request=request)).resource
+    evidence = NativeBuildEvidence(outcome="compiled", duration_ms=1,
+                                   stdout="retained build diagnostic", artifact_sha256="a" * 64)
+
+    class LaterFailure:
+        def run(self, request, work_dir, device_id, deadline_at, lease_valid,
+                execution_environment, pinned, progress, **kwargs):
+            kwargs["on_native_build"](evidence)
+            assert progress.begin("correctness")
+            correctness = CheckSucceeded[CorrectnessResult](
+                status="succeeded", data=CorrectnessResult(
+                    comparison_method="native_tensor_v1", outcome="correct", passed=True,
+                    passed_cases=1, total_cases=1, failures=[],
+                ),
+            )
+            assert progress.save("correctness", correctness)
+            if ending == "exception":
+                raise RuntimeError("later performance adapter failed")
+            clock.advance_ms(int(deadline_at.timestamp() * 1000) - clock.now_ms + 1)
+            return complete_evaluation(
+                requested_checks=request.checks, outcomes={"correctness": correctness},
+                pinned=pinned, execution_environment=execution_environment, native_build=evidence,
+            )
+
+    worker = build_worker(store, settings, LaterFailure(), clock)
+    assert worker.run_once()
+    if ending == "deadline":
+        store.expire_due_resources(limit=10)
+    got = store.get_visible(resource.evaluation_id, make_caller())
+    assert got.state == ("failed" if ending == "exception" else "timed_out")
+    assert got.result.native_build == evidence
+    assert got.result.correctness.data.comparison_method == "native_tensor_v1"
+    assert got.result.provenance.correctness_algorithm == "native_tensor_v1:npu-strict"
+    assert got.result.provenance.reference_device_policy == "npu-strict"
+
+
+def test_replacement_attempt_does_not_inherit_native_build_logs(
+    store, settings, clock, make_command, make_worker,
+):
+    from test_native_candidate import payload
+
+    from triton_evaluation.api.contract import NativeBuildEvidence
+    from triton_evaluation.operator_input import OperatorRequest, to_evaluation_request
+
+    request = to_evaluation_request(OperatorRequest.model_validate(payload()))
+    resource = store.create_or_replay(make_command(request=request)).resource
+    first = store.claim_next(make_worker())
+    evidence = NativeBuildEvidence(outcome="compiled", duration_ms=1, stdout="first attempt only")
+    assert store.save_native_build(first, evidence)
+    clock.advance_ms(settings.lease_seconds * 1000 + 1)
+    store.recover_expired_leases(limit=10)
+    second = store.claim_next(make_worker())
+    assert second is not None and second.attempt_id != first.attempt_id
+    assert not store.save_native_build(first, evidence)
+    clock.advance_ms(second.deadline_at_ms - clock.now_ms + 1)
+    store.expire_due_resources(limit=10)
+    got = store.get_visible(resource.evaluation_id, make_caller())
+    assert got.result.native_build is None
+    assert got.result.provenance.correctness_algorithm == "native_tensor_v1:cpu-first"

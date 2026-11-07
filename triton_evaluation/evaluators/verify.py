@@ -116,6 +116,9 @@ class VerifyEvaluator:
         if remaining_seconds(deadline_at) <= 0:
             return engine_timeout("correctness", "resource deadline expired before correctness ran")
 
+        if getattr(request, "native_candidate", None) is not None:
+            return self._run_verify(request, work_dir, device_id, deadline_at, lease_valid)
+
         verdict = self._decoy_verdict(request, work_dir, device_id, deadline_at, lease_valid)
         if isinstance(verdict, EngineCheckResult):
             return verdict

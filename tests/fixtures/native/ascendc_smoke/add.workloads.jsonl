@@ -1,0 +1,2 @@
+{"uuid": "add-0", "inputs": {"x": {"type": "random", "shape": [17], "dtype": "float32"}, "y": {"type": "random", "shape": [17], "dtype": "float32"}}}
+{"uuid": "add-1", "inputs": {"x": {"type": "random", "shape": [257], "dtype": "float32"}, "y": {"type": "random", "shape": [257], "dtype": "float32"}}}

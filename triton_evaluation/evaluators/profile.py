@@ -6,6 +6,7 @@ Raw envelopes are returned unchanged; the shaping boundary validates their
 identities and counts before publishing evidence.
 Any timeout or failure aborts the whole check as an infrastructure outcome.
 """
+import json
 import sys
 from pathlib import Path
 
@@ -94,6 +95,16 @@ class ProfileEvaluator:
             "--output",
             str(out_path),
         ]
+        native = getattr(request, "native_candidate", None)
+        if native is not None:
+            if not native.kernel_names:
+                return engine_failure(
+                    "profile", "native op/deep profiling requires explicit kernel_names",
+                    code="INVALID_REQUEST", phase="request", retryable=False,
+                )
+            cmd.extend([
+                "--candidate-kind", "native", "--kernel-names", json.dumps(native.kernel_names),
+            ])
         if case_indices is not None:
             cmd.extend(["--case-indices", *(str(index) for index in case_indices)])
         if params.metric_groups is not None:

@@ -96,6 +96,8 @@ class BenchmarkEvaluator:
             "--repeats", str(params.repeats),
             "--measurement-method", params.method,
         ]
+        if getattr(request, "native_candidate", None) is not None:
+            command.append("--native-profile")
         if single:
             command += ["--implementation", request.implementation]
         if params.case_indices is not None:

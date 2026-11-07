@@ -17,6 +17,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .process_title import CONTEXT_ENV as PROCESS_CONTEXT_ENV
+from .process_title import sanitized_context
+
 from .profiler_runtime import (
     CANN_ENV_KEYS,
     derive_cann_environment,
@@ -68,6 +71,7 @@ RUNTIME_ENV = frozenset(
         "TORCH_DEVICE_BACKEND_AUTOLOAD",
         "OMP_NUM_THREADS",
         "OPENBLAS_NUM_THREADS",
+        PROCESS_CONTEXT_ENV,
         *CACHE_ENV_KEYS,
         *PROFILER_RUNTIME_ENV_KEYS,
         *TIMING_REUSE_ENV_KEYS,
@@ -551,6 +555,12 @@ def isolate_command(
     if hashlib.sha256(manifest).hexdigest() != expected_digest:
         raise ValueError("sandbox manifest digest differs from the pinned deployment")
     sandbox = EngineSandbox.model_validate_json(manifest)
+    if PROCESS_CONTEXT_ENV in env:
+        # Observability metadata is per-attempt, not part of the immutable runtime.
+        # Pass only sanitized IDs/labels through --clearenv; never inherit secrets.
+        sandbox = sandbox.model_copy(update={"environment": {
+            **sandbox.environment, PROCESS_CONTEXT_ENV: sanitized_context(env[PROCESS_CONTEXT_ENV]),
+        }})
     overlay_path, overlay_digest = (
         env.get(OVERLAY_CONFIG_ENV),
         env.get(OVERLAY_DIGEST_ENV),

@@ -97,6 +97,8 @@ class CleanInputGroups(Sequence):
         return len(self.groups)
 
     def _before_case(self, index):
+        from triton_evaluation.runtime.process_title import set_stage
+        set_stage("inputs", case=index + 1)
         if self.fresh:
             # Built-in workload generation already resets RNGs per case and
             # allocates fresh storage. Avoid copying NPU tensors or RNG states.
@@ -208,15 +210,22 @@ def trace_case(index, operators, max_kernels):
 
 
 def _capture_case(config, reference, model_type, raw, device, index, implementation):
+    from triton_evaluation.runtime.process_title import set_stage
+    set_stage("profile", case=index + 1)
     import torch
 
     inputs = model = None
     try:
-        if implementation == "comparison":
-            inputs = benchmark._prepare_candidate_inputs_shared(reference.Model, raw)
+        if implementation in {"comparison", "native"}:
+            inputs = benchmark._prepare_candidate_inputs_shared(
+                getattr(reference, "Model", None), raw
+            )
         else:
             inputs = raw
-        inputs = benchmark._move_inputs_to_device(inputs, device)
+        inputs = benchmark.prepare_measurement_inputs(
+            inputs, device, native=getattr(config, "native_profile", False),
+            reference_model=reference.Model if implementation == "torch" else None,
+        )
         init_inputs = reference.get_init_inputs()
         if implementation == "comparison":
             # Match _instantiate_bench_models, including its candidate seed.
@@ -227,6 +236,7 @@ def _capture_case(config, reference, model_type, raw, device, index, implementat
         operators, _, _ = benchmark.measure_single(benchmark.MeasureContext(
             model=model, inputs=inputs, warmup=config.warmup, repeats=config.repeats,
             profile_name=f"trace_case{index + 1}", device=device, method="profiler",
+            native_profile=config.native_profile,
         ))
         return operators
     finally:
@@ -245,7 +255,7 @@ def run_measurements(config, *, implementation="comparison", trace_indices=None,
     The optional progress callback also receives bounded per-case snapshots
     during timing, before a later case or trace can be interrupted.
     """
-    if implementation not in {"comparison", "torch", "triton"}:
+    if implementation not in {"comparison", "torch", "triton", "native"}:
         raise ValueError("invalid measurement implementation")
     if type(max_kernels) is not int or not 1 <= max_kernels <= 1000:
         raise ValueError("max_kernels must be within 1..1000")
@@ -275,6 +285,7 @@ def run_measurements(config, *, implementation="comparison", trace_indices=None,
                 performance = single_benchmark.measure_implementation(
                     op_name=config.op_name, verify_dir=config.verify_dir,
                     triton_impl_name=config.triton_impl_name, implementation=implementation,
+                    native_profile=config.native_profile,
                     warmup=config.warmup, repeats=config.repeats,
                     method=config.measurement_method, device=device,
                     case_indices=sorted(timing_indices), prepared=(reference, model_type, groups),
@@ -316,7 +327,8 @@ def run_measurements(config, *, implementation="comparison", trace_indices=None,
             # Release before advancing the lazy provider to the next workload.
             raw = None
     result = {
-        "mode": "trace", "measurement_method": "profiler_kernel_sum_v1",
+        "mode": "trace", "measurement_method": (
+            "native_profiler_kernel_sum_v1" if config.native_profile else "profiler_kernel_sum_v1"),
         "total_cases": len(groups),
         "counts": {
             "selected": len(cases),
@@ -336,13 +348,17 @@ def _write_checkpoint(path, result):
 
 def main():
     parser = benchmark._build_argparser()
-    parser.add_argument("--implementation", choices=("comparison", "torch", "triton"),
+    parser.add_argument("--implementation", choices=("comparison", "torch", "triton", "native"),
                         default="comparison")
     parser.add_argument("--trace-only", action="store_true")
     parser.add_argument("--trace-case-indices")
     parser.add_argument("--trace-output", required=True)
     parser.add_argument("--max-trace-kernels", type=int, default=200)
     args = parser.parse_args()
+    from triton_evaluation.runtime.process_title import infer_backend, set_stage
+    infer_backend(implementation=args.implementation, native=args.native_profile)
+    if args.trace_only:
+        set_stage("profile")
     if args.reference_only:
         parser.error("reference-only baselines require the isolated benchmark runner")
     if not args.trace_only and not args.output:
@@ -367,5 +383,6 @@ def main():
 
 
 if __name__ == "__main__":
-    benchmark._set_process_title("EvalEngine")
+    from triton_evaluation.runtime.process_title import set_stage
+    set_stage("benchmark", initialize=True)
     sys.exit(main())

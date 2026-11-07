@@ -1,0 +1,10 @@
+{
+  "example_only": true,
+  "note": "概念示例，不是当前服务接口；方法名称与参数应以目标服务 schema 为准。",
+  "data": {"method": "generator", "version": "1", "parameters": {"seed": 200, "generator_ref": "ARTIFACT_REFERENCE"}},
+  "build": {"method": "command", "version": "1", "parameters": {"argv": ["bash", "build.sh"], "source_ref": "SOURCE_ARTIFACT", "timeout_seconds": 600}},
+  "execute": {"method": "entrypoint", "version": "1", "parameters": {"entrypoint_ref": "CALLABLE_OR_EXECUTABLE", "device_count": 1}},
+  "compare": {"method": "allclose", "version": "1", "parameters": {"atol": 0.00001, "rtol": 0.001, "check_dtype": true}},
+  "measure": {"method": "device_event", "version": "1", "parameters": {"warmup": 5, "repeat": 20, "statistic": "median"}},
+  "diagnostics": []
+}

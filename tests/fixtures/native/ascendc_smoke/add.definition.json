@@ -1,0 +1,10 @@
+{
+  "name": "native_add",
+  "axes": {},
+  "inputs": {
+    "x": {},
+    "y": {}
+  },
+  "outputs": {},
+  "reference": "def run(x, y): return x + y"
+}

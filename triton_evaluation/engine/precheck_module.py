@@ -15,6 +15,8 @@ _INCONCLUSIVE_MISSING = frozenset({"torch", "torch_npu", "triton"})
 
 
 def main() -> int:
+    from triton_evaluation.runtime.process_title import set_stage
+    set_stage("load", initialize=True)
     module_path, impl_name = sys.argv[1], sys.argv[2]
     try:
         source = open(module_path, encoding="utf-8").read()

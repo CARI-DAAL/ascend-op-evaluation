@@ -1,0 +1,9 @@
+{
+  "name": "native_reduce_sum",
+  "axes": {},
+  "inputs": {
+    "x": {}
+  },
+  "outputs": {},
+  "reference": "def run(x): return x.sum()"
+}

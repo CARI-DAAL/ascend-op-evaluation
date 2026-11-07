@@ -227,7 +227,7 @@ def build_runner_source() -> str:
             parser.add_argument("--verify-dir", required=True)
             parser.add_argument("--op-name", required=True)
             parser.add_argument("--triton-impl-name", required=True)
-            parser.add_argument("--implementation", choices=("comparison", "torch", "triton"), default="comparison")
+            parser.add_argument("--implementation", choices=("comparison", "torch", "triton", "native"), default="comparison")
             mode = parser.add_mutually_exclusive_group(required=True)
             mode.add_argument("--describe-cases", action="store_true")
             mode.add_argument("--case-idx", type=int)
@@ -235,6 +235,11 @@ def build_runner_source() -> str:
 
             sys.path.insert(0, args.engine_dir)
             sys.path.insert(0, args.verify_dir)
+            from triton_evaluation.runtime.process_title import set_stage, infer_backend
+            set_stage("inputs" if args.describe_cases else "profile",
+                      case=None if args.case_idx is None else args.case_idx + 1,
+                      initialize=True)
+            infer_backend(implementation=args.implementation)
             import torch
             from _common_utils import describe_input, enforce_conv_fp32
             from _common_utils import ensure_npu_ambient_device
@@ -276,7 +281,11 @@ def build_runner_source() -> str:
             from _common_utils import invoke_model, prepare_candidate_inputs
             raw_inputs = groups[index]
             model_inputs = raw_inputs if args.implementation == "torch" else prepare_candidate_inputs(getattr(reference, "Model", None), raw_inputs)
-            inputs = [to_npu(value, torch) for value in model_inputs]
+            if getattr(model_type, "_native_candidate", False):
+                from triton_evaluation.engine.native_support import copy_inputs
+                inputs = copy_inputs(model_inputs, "npu:0")
+            else:
+                inputs = [to_npu(value, torch) for value in model_inputs]
             with torch.no_grad():
                 invoke_model(model, inputs)
             if hasattr(torch, "npu"):
@@ -423,11 +432,20 @@ class ProfileConfig:
     case_indices: list[int] | None = None
     metric_groups: list[str] | None = None
     include_per_core: bool = True
+    candidate_kind: str = "triton"
+    kernel_names: list[str] | None = None
 
 
 def validate_profile_config(config: ProfileConfig) -> None:
-    if config.implementation not in {"comparison", "torch", "triton"}:
+    if config.implementation not in {"comparison", "torch", "triton", "native"}:
         raise ValueError("invalid implementation")
+    if config.candidate_kind not in {"triton", "native"}:
+        raise ValueError("invalid candidate kind")
+    if config.candidate_kind == "native" and (
+        not isinstance(config.kernel_names, list) or not config.kernel_names
+        or any(not isinstance(name, str) or not name for name in config.kernel_names)
+    ):
+        raise ValueError("native op/deep profiling requires explicit kernel_names")
     if config.profile_mode not in {"op", "deep"}:
         raise ValueError("profile_mode must be 'op' or 'deep'")
     if config.case_idx is not None and (type(config.case_idx) is not int or config.case_idx < 0):
@@ -536,6 +554,8 @@ def run_profile(
     )
     runner_path = write_runner(config.verify_dir)
     env = dict(os.environ)
+    from triton_evaluation.runtime.process_title import process_environment
+    env.update(process_environment())
     cases = discover_fn(
         runner_path=runner_path,
         engine_dir=config.engine_dir,
@@ -554,12 +574,15 @@ def run_profile(
 
     kernel_names = None
     if config.implementation != "torch":
-        kernel_path = Path(config.verify_dir) / (
-            f"{config.op_name}_{config.triton_impl_name}.py"
-        )
-        kernel_names = extract_triton_kernel_names(kernel_path.read_text(encoding="utf-8"))
-        if not kernel_names:
-            raise RuntimeError("kernel source contains no @triton.jit/@jit function")
+        if config.candidate_kind == "native":
+            kernel_names = config.kernel_names
+        else:
+            kernel_path = Path(config.verify_dir) / (
+                f"{config.op_name}_{config.triton_impl_name}.py"
+            )
+            kernel_names = extract_triton_kernel_names(kernel_path.read_text(encoding="utf-8"))
+            if not kernel_names:
+                raise RuntimeError("kernel source contains no @triton.jit/@jit function")
 
     by_index = {int(case["case_idx"]): case for case in cases}
     for index in selected:
@@ -654,7 +677,9 @@ def _config_from_args() -> ProfileConfig:
     parser.add_argument("--op_name", required=True)
     parser.add_argument("--verify_dir", required=True)
     parser.add_argument("--triton_impl_name", required=True)
-    parser.add_argument("--implementation", choices=("comparison", "torch", "triton"), default="comparison")
+    parser.add_argument("--implementation", choices=("comparison", "torch", "triton", "native"), default="comparison")
+    parser.add_argument("--candidate-kind", choices=("triton", "native"), default="triton")
+    parser.add_argument("--kernel-names")
     parser.add_argument("--profile-mode", choices=("op", "deep"), required=True)
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--case-idx", type=int)
@@ -670,6 +695,8 @@ def _config_from_args() -> ProfileConfig:
         verify_dir=os.path.abspath(args.verify_dir),
         triton_impl_name=args.triton_impl_name,
         profile_mode=args.profile_mode,
+        candidate_kind=args.candidate_kind,
+        kernel_names=json.loads(args.kernel_names) if args.kernel_names else None,
         implementation=args.implementation,
         case_idx=args.case_idx,
         case_indices=args.case_indices,
@@ -685,6 +712,8 @@ def _config_from_args() -> ProfileConfig:
 
 def main() -> int:
     config = _config_from_args()
+    from triton_evaluation.runtime.process_title import infer_backend
+    infer_backend(implementation=config.implementation, native=config.candidate_kind == "native")
     try:
         result, exit_code = run_profile(config)
         atomic_write_json(config.output, result)
@@ -707,5 +736,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    _set_process_title("EvalEngine")
+    from triton_evaluation.runtime.process_title import set_stage
+    set_stage("profile", initialize=True)
     raise SystemExit(main())

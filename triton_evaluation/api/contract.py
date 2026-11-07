@@ -11,9 +11,11 @@ non-finite ordinary floats; correctness samples represent NaN/Inf as explicit
 string sentinels. Recorded resource examples live in the test suite.
 """
 import math
+import re
 import statistics
 from collections.abc import Callable
 from datetime import datetime
+from pathlib import PurePosixPath
 from typing import Annotated, Generic, Literal, TypeVar
 
 from pydantic import (
@@ -29,7 +31,9 @@ from pydantic import (
 SchemaVersion = Literal["2.1"]
 Purpose = Literal["trial", "grade", "rollout"]
 Check = Literal["correctness", "performance", "profile", "compile"]
-MeasurementMethod = Literal["npu_event_v1", "profiler_kernel_sum_v1"]
+MeasurementMethod = Literal[
+    "npu_event_v1", "profiler_kernel_sum_v1", "native_profiler_kernel_sum_v1"
+]
 ResourceState = Literal["queued", "running", "completed", "failed", "timed_out"]
 
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
@@ -90,6 +94,57 @@ def redacted_text(max_bytes: int) -> Callable[[str], str]:
 # ---------------------------------------------------------------------------
 # Request parameters and purpose context
 # ---------------------------------------------------------------------------
+
+
+class NativeBuildEvidence(StrictModel):
+    outcome: Literal["compiled", "compile_error", "timed_out", "infrastructure_error"]
+    duration_ms: float = Field(ge=0)
+    exit_code: int | None = None
+    stdout: Annotated[str, AfterValidator(utf8_len(16384))] = ""
+    stderr: Annotated[str, AfterValidator(utf8_len(16384))] = ""
+    logs_truncated: bool = False
+    artifact_sha256: Digest | None = None
+
+
+class NativeCandidate(StrictModel):
+    """A text source project built privately inside one leased attempt."""
+
+    kind: Literal["native"] = "native"
+    files: dict[str, SourceCode] = Field(min_length=1, max_length=128)
+    build: list[Annotated[str, Field(min_length=1, max_length=4096)]] = Field(
+        min_length=1, max_length=128,
+    )
+    entrypoint: str = Field(min_length=3, max_length=256)
+    build_timeout_seconds: int = Field(default=300, ge=1, le=3600)
+    kernel_names: list[Annotated[str, Field(min_length=1, max_length=256)]] | None = Field(
+        default=None, min_length=1, max_length=128,
+    )
+    event_timing: bool = False
+
+    @model_validator(mode="after")
+    def valid_project(self):
+        if sum(len(value.encode("utf-8")) for value in self.files.values()) > MAX_SOURCE_BYTES:
+            raise ValueError("native sources exceed the 2 MiB limit")
+        for name in self.files:
+            path = PurePosixPath(name)
+            if (not name or len(name) > 256 or "\\" in name or "\0" in name
+                    or path.is_absolute() or path.as_posix() != name
+                    or any(part in {".", ".."} for part in path.parts)):
+                raise ValueError("native source paths must be normalized relative POSIX paths")
+            if any(str(parent) in self.files for parent in path.parents):
+                raise ValueError("native file paths overlap a directory")
+        if any("\0" in arg for arg in self.build):
+            raise ValueError("native build arguments must not contain NUL")
+        if not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*", self.entrypoint):
+            raise ValueError("native entrypoint must be module:function")
+        module = self.entrypoint.split(":")[0].replace(".", "/")
+        if module + ".py" not in self.files and module + "/__init__.py" not in self.files:
+            raise ValueError("native entrypoint Python source must be included")
+        if self.kernel_names is not None and any(
+            not re.fullmatch(r"[A-Za-z0-9_.$:<>-]+", name) for name in self.kernel_names
+        ):
+            raise ValueError("native kernel_names must be literal kernel names or prefixes")
+        return self
 
 
 class CorrectnessParams(StrictModel):
@@ -193,12 +248,18 @@ class EvaluationRequest(StrictModel):
 
     schema_version: SchemaVersion
     purpose: Purpose = "trial"
-    implementation: Literal["comparison", "torch", "triton"] = Field(
+    implementation: Literal["comparison", "torch", "triton", "native"] = Field(
         default="comparison", exclude_if=lambda value: value == "comparison"
     )
     op_name: str = Field(min_length=1, max_length=128)
     reference_code: SourceCode
     kernel_code: SourceCode
+    native_candidate: NativeCandidate | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
+    native_case_count: Annotated[int, Field(ge=1, le=128)] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
     triton_impl_name: str = Field(
         default="triton_ascend_impl", min_length=1, max_length=128
     )
@@ -220,6 +281,32 @@ class EvaluationRequest(StrictModel):
 
     @model_validator(mode="after")
     def _normalize_and_couple(self):
+        if self.native_candidate is not None:
+            if "performance" in self.checks and self.performance is None:
+                self.performance = PerformanceParams(
+                    method="profiler", repeats=20, use_baseline_cache=False,
+                )
+            if self.implementation not in {"comparison", "native"}:
+                raise ValueError("native candidate requires comparison or native implementation")
+            if self.correctness_from is not None:
+                raise ValueError("native candidates cannot reuse correctness evidence")
+            if self.native_case_count is None:
+                raise ValueError("native candidates require declared native_case_count")
+            if self.performance is not None:
+                if self.performance.use_baseline_cache:
+                    raise ValueError("native candidates require use_baseline_cache=false")
+                if self.performance.method == "event" and not self.native_candidate.event_timing:
+                    raise ValueError("native Event timing requires event_timing=true")
+                if self.performance.method == "profiler" and self.performance.repeats > 100:
+                    raise ValueError("native profiler supports at most 100 repeats")
+            if "profile" in self.checks:
+                mode = self.profile.mode if self.profile is not None else "op"
+                if mode in {"op", "deep"} and not self.native_candidate.kernel_names:
+                    raise ValueError("native op/deep profiling requires kernel_names")
+                if mode == "trace" and "performance" in self.checks:
+                    raise ValueError("native performance and trace must be requested separately")
+        elif self.implementation == "native":
+            raise ValueError("native implementation requires native_candidate")
         if len(set(self.checks)) != len(self.checks):
             raise ValueError("checks must not contain duplicates")
         self.checks = sorted(self.checks, key=_CHECK_ORDER.index)
@@ -437,6 +524,9 @@ class CorrectnessCoverage(StrictModel):
 
 
 class CorrectnessResult(StrictModel):
+    comparison_method: Literal["native_tensor_v1"] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
     outcome: CorrectnessDomainOutcome
     passed: bool
     decoy: bool = False
@@ -590,6 +680,12 @@ class BenchmarkKernelMetrics(StrictModel):
 
 
 class PerformanceCase(StrictModel):
+    implementation_samples_ms: list[Annotated[float, Field(gt=0)]] | None = Field(
+        default=None, min_length=1, max_length=100, exclude_if=lambda value: value is None,
+    )
+    reference_samples_ms: list[Annotated[float, Field(gt=0)]] | None = Field(
+        default=None, min_length=1, max_length=100, exclude_if=lambda value: value is None,
+    )
     baseline_cache_hit: bool | None = Field(default=None, exclude_if=lambda value: value is None)
     case_idx: Annotated[int, Field(ge=0)]
     input_shapes: list[InputShape]
@@ -613,8 +709,30 @@ class PerformanceCase(StrictModel):
     reference_timing_policy_sha256: Digest | None = None
 
     @model_validator(mode="after")
+    def _native_samples(self):
+        native = self.measurement_method == "native_profiler_kernel_sum_v1"
+        for name, latency in (("implementation_samples_ms", self.implementation_latency_ms),
+                              ("reference_samples_ms", self.reference_latency_ms)):
+            samples = getattr(self, name)
+            if native:
+                if samples is None or not math.isclose(
+                    statistics.mean(samples), latency, rel_tol=0, abs_tol=5.01e-5
+                ):
+                    raise ValueError("native latency must equal the mean of captured samples")
+            elif samples is not None:
+                raise ValueError("native sample fields require native profiler timing")
+        if native:
+            if len(self.implementation_samples_ms) != len(self.reference_samples_ms):
+                raise ValueError("native reference and candidate sample counts must match")
+            if self.reference_latency_samples_ms is not None or self.baseline_cache_hit:
+                raise ValueError("native profiling requires fresh native reference samples")
+        return self
+
+    @model_validator(mode="after")
     def _kernel_metrics_require_profiler(self):
-        if self.kernel_metrics is not None and self.measurement_method != "profiler_kernel_sum_v1":
+        if self.kernel_metrics is not None and self.measurement_method not in {
+            "profiler_kernel_sum_v1", "native_profiler_kernel_sum_v1"
+        }:
             raise ValueError("kernel metrics require profiler timing")
         return self
 
@@ -727,6 +845,9 @@ _Unverified = Annotated[Literal[False], BeforeValidator(_unverified_only)]
 
 
 class SinglePerformanceCase(StrictModel):
+    measurement_samples_ms: list[Annotated[float, Field(gt=0)]] | None = Field(
+        default=None, min_length=1, max_length=100, exclude_if=lambda value: value is None,
+    )
     case_idx: Annotated[int, Field(ge=0)]
     input_shapes: list[InputShape]
     latency_ms: Annotated[float, Field(gt=0)]
@@ -737,7 +858,7 @@ class SinglePerformanceCase(StrictModel):
 
 
 class SinglePerformanceResult(PerformanceCompletion):
-    implementation: Literal["torch", "triton"]
+    implementation: Literal["torch", "triton", "native"]
     correctness_verified: _Unverified
     measurement_method: MeasurementMethod
     selected_cases: Annotated[int, Field(ge=1)]
@@ -748,7 +869,19 @@ class SinglePerformanceResult(PerformanceCompletion):
 
     @model_validator(mode="after")
     def _case_arithmetic(self):
-        if self.measurement_method != "profiler_kernel_sum_v1" and any(
+        native = self.measurement_method == "native_profiler_kernel_sum_v1"
+        for case in self.per_case:
+            samples = case.measurement_samples_ms
+            if native:
+                if samples is None or not math.isclose(
+                    statistics.mean(samples), case.latency_ms, rel_tol=0, abs_tol=5.01e-5
+                ):
+                    raise ValueError("native latency must equal the mean of captured samples")
+            elif samples is not None:
+                raise ValueError("native sample fields require native profiler timing")
+        if self.measurement_method not in {
+            "profiler_kernel_sum_v1", "native_profiler_kernel_sum_v1"
+        } and any(
             case.kernel_metrics is not None for case in self.per_case
         ):
             raise ValueError("kernel metrics require profiler timing")
@@ -898,7 +1031,7 @@ def _check_profile_tallies(counts: ProfileCounts, cases: list) -> None:
 
 
 class OpProfileResult(StrictModel):
-    implementation: Literal["torch", "triton"] | None = Field(
+    implementation: Literal["torch", "triton", "native"] | None = Field(
         default=None, exclude_if=lambda value: value is None,
     )
     correctness_verified: _Unverified | None = Field(
@@ -917,7 +1050,7 @@ class OpProfileResult(StrictModel):
 
 
 class DeepProfileResult(StrictModel):
-    implementation: Literal["torch", "triton"] | None = Field(
+    implementation: Literal["torch", "triton", "native"] | None = Field(
         default=None, exclude_if=lambda value: value is None,
     )
     correctness_verified: _Unverified | None = Field(
@@ -977,14 +1110,14 @@ class TraceProfileCase(StrictModel):
 class TraceProfileResult(StrictModel):
     """Kernel durations from torch_npu profiler, without msprof op/deep counters."""
 
-    implementation: Literal["torch", "triton"] | None = Field(
+    implementation: Literal["torch", "triton", "native"] | None = Field(
         default=None, exclude_if=lambda value: value is None,
     )
     correctness_verified: _Unverified | None = Field(
         default=None, exclude_if=lambda value: value is None,
     )
     mode: Literal["trace"]
-    measurement_method: Literal["profiler_kernel_sum_v1"]
+    measurement_method: Literal["profiler_kernel_sum_v1", "native_profiler_kernel_sum_v1"]
     total_cases: Annotated[int, Field(ge=1)]
     counts: ProfileCounts
     cases: list[TraceProfileCase]
@@ -1062,6 +1195,9 @@ class Provenance(StrictModel):
 
 
 class EvaluationResult(StrictModel):
+    native_build: NativeBuildEvidence | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
     correctness: CorrectnessOutcome | None
     performance: PerformanceOutcome | None
     profile: ProfileOutcome | None

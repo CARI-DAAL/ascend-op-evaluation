@@ -26,6 +26,7 @@ Shaping rules enforced here (design sections 4.2-4.5 and 5):
 
 import math
 import re
+from functools import partial
 from typing import Annotated, Literal, get_args
 
 from pydantic import (
@@ -314,6 +315,7 @@ class _VerifyResult(StrictModel):
     failed_cases: Annotated[int, Field(ge=0)]
     failures: list[_VerifyFailure]
     coverage: _VerifyCoverage | None = None
+    comparison_method: Literal["native_tensor_v1"] | None = None
 
     @model_validator(mode="after")
     def _counts_and_identity(self):
@@ -345,7 +347,9 @@ class _DecoyResult(StrictModel):
     coverage: _VerifyCoverage | None = None
 
 
-def _coarse_kind(failure: _VerifyFailure) -> str:
+def _coarse_kind(failure: _VerifyFailure, *, native: bool = False) -> str:
+    if native and failure.kind in {"value_mismatch", "non_finite_mismatch"}:
+        return failure.kind
     if failure.kind == "shape_mismatch":
         return "shape_mismatch"
     if failure.kind in _EXPERIMENTAL_KINDS:
@@ -381,7 +385,7 @@ def _stable_rank(point: SampleElement) -> tuple:
     return (0, -abs(point.diff), point.idx)
 
 
-def _case_failure(failure: _VerifyFailure) -> CaseFailure:
+def _case_failure(failure: _VerifyFailure, *, native: bool = False) -> CaseFailure:
     sample = [
         SampleElement(
             idx=point.idx,
@@ -394,7 +398,7 @@ def _case_failure(failure: _VerifyFailure) -> CaseFailure:
     sample.sort(key=_stable_rank)
     return CaseFailure(
         case_idx=failure.case_idx - 1,
-        kind=_coarse_kind(failure),
+        kind=_coarse_kind(failure, native=native),
         metrics=_case_metrics(failure.metrics),
         sample=sample,
     )
@@ -468,7 +472,8 @@ def shape_correctness(raw: dict[str, object], decoy: bool) -> CorrectnessResult:
         domain_failure = _domain_failure(attributed)
 
     case_failures = _checked(
-        lambda: [_case_failure(failure) for failure in mismatches], "correctness"
+        lambda: [_case_failure(failure, native=result.comparison_method == "native_tensor_v1")
+                 for failure in mismatches], "correctness"
     )
     if outcome is None:
         outcome = (
@@ -486,6 +491,8 @@ def shape_correctness(raw: dict[str, object], decoy: bool) -> CorrectnessResult:
             failures=case_failures,
             domain_failure=domain_failure,
             coverage=_public_correctness_coverage(result.coverage),
+            **({"comparison_method": result.comparison_method}
+               if result.comparison_method is not None else {}),
         ),
         "correctness",
     )
@@ -502,6 +509,7 @@ class _ShapeMeasurement(StrictModel):
     latency_samples_ms: list[float] | None = None
     latency_samples_source: str | None = None
     latency_samples_proof_sha256: str | None = None
+    measurement_samples_ms: list[float] | None = None
     # Engine-private per-case record of which reference path served the case
     # (cached_manifest | historical_validated | fresh_measurements |
     # original_measurements); not part of the public contract.
@@ -662,7 +670,7 @@ def shape_performance(raw: dict[str, object]) -> PerformanceResult:
         if not (reference > 0 and implementation > 0):
             raise ShapingError("benchmark result contains a non-positive latency")
         per_case.append(
-            PerformanceCase(
+            _checked(partial(PerformanceCase,
                 case_idx=case.case_idx - 1,
                 input_shapes=shapes,
                 implementation_latency_ms=implementation,
@@ -674,7 +682,11 @@ def shape_performance(raw: dict[str, object]) -> PerformanceResult:
                 reference_latency_samples_ms=case.framework.latency_samples_ms,
                 reference_latency_samples_source=case.framework.latency_samples_source,
                 reference_timing_policy_sha256=case.framework.latency_samples_proof_sha256,
-            )
+                **({"implementation_samples_ms": case.implementation.measurement_samples_ms}
+                   if case.implementation.measurement_samples_ms is not None else {}),
+                **({"reference_samples_ms": case.framework.measurement_samples_ms}
+                   if case.framework.measurement_samples_ms is not None else {}),
+            ), "benchmark")
         )
     if not per_case:
         details = [

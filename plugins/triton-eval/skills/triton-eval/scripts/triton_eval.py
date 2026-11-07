@@ -10,6 +10,7 @@ import math
 import os
 import queue
 import re
+import stat
 import sys
 import tempfile
 import threading
@@ -92,7 +93,11 @@ def arguments(argv):
             command.add_argument("--custom-inputs", type=Path)
             command.add_argument("--seed", type=int, default=200)
             command.add_argument("--triton-only", action="store_true")
-            command.add_argument("--triton", type=Path)
+            command.add_argument("--candidate-only", action="store_true")
+            candidate = command.add_mutually_exclusive_group()
+            candidate.add_argument("--triton", type=Path)
+            candidate.add_argument("--native-project", type=Path,
+                                   help="JSON manifest with explicit project file paths")
             command.add_argument("--workloads", type=Path, required=True)
             command.add_argument("--idempotency-key")
             command.add_argument("--session-id")
@@ -121,7 +126,7 @@ def arguments(argv):
             command.add_argument("--repeats", type=int)
             command.add_argument(
                 "--measurement-method", "--method", choices=("event", "profiler"),
-                help=("timing backend (service default: event); "
+                help=("timing backend (Triton default: event; native default: profiler); "
                       "profiler returns available pipe counters"),
             )
             cache = command.add_mutually_exclusive_group()
@@ -134,7 +139,7 @@ def arguments(argv):
                 help=("bypass comparison baseline caching; "
                       "single-source measurements are always fresh"),
             )
-            command.set_defaults(use_baseline_cache=True)
+            command.set_defaults(use_baseline_cache=None)
     discovery = commands.add_parser("version")
     discovery.add_argument("--url", default=os.environ.get("EVALUATION_URL"))
     discovery.add_argument(
@@ -146,6 +151,9 @@ def arguments(argv):
         return args
     if args.command not in {"get", "progress"} and args.triton_only and args.triton is None:
         raise ClientError("INVALID_ARGUMENT", "--triton-only requires --triton")
+    if (args.command not in {"get", "progress"} and args.candidate_only
+            and args.triton is None and args.native_project is None):
+        raise ClientError("INVALID_ARGUMENT", "--candidate-only requires a candidate")
     if args.wait_for and (args.no_wait or args.command == "progress"):
         raise ClientError("INVALID_ARGUMENT", "--wait-for requires a waiting evaluation or get")
     return args
@@ -219,6 +227,78 @@ def read_text(path: Path, label: str) -> str:
         return path.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         raise ClientError("INVALID_INPUT", f"cannot read {label} as UTF-8") from None
+
+
+def read_native_project(manifest_path: Path) -> dict:
+    """Read only explicitly named UTF-8 sources; never run the build locally."""
+    try:
+        absolute = manifest_path.absolute()
+        if any(path.is_symlink() for path in (absolute, *absolute.parents)):
+            raise ValueError("linked manifest")
+        fd = os.open(absolute, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise ValueError("nonregular manifest")
+            data = stream.read(1024 * 1024 + 1)
+        if len(data) > 1024 * 1024:
+            raise ValueError("manifest budget exceeded")
+        manifest = json_value(data.decode("utf-8"))
+    except (AttributeError, OSError, ValueError, UnicodeError):
+        raise ClientError(
+            "INVALID_INPUT", "native manifest must be a regular UTF-8 file of at most 1 MiB "
+            "without symlinks; native packaging requires POSIX no-follow file APIs",
+        ) from None
+    fields = {
+        "kind", "files", "build", "entrypoint", "build_timeout_seconds",
+        "kernel_names", "event_timing",
+    }
+    if not isinstance(manifest, dict) or manifest.keys() - fields:
+        raise ClientError("INVALID_INPUT", "invalid native project manifest fields")
+    paths = manifest.get("files")
+    if (not isinstance(paths, list) or not 1 <= len(paths) <= 128
+            or any(not isinstance(path, str) for path in paths)
+            or len(set(paths)) != len(paths)):
+        raise ClientError("INVALID_INPUT", "native files must be a nonempty unique path list")
+    sources = {}
+    total = 0
+    try:
+        root = manifest_path.absolute().parent
+        if manifest_path.is_symlink() or any(parent.is_symlink() for parent in root.parents):
+            raise ValueError("linked project")
+        root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            for path in paths:
+                parts = path.split("/")
+                if (not path or "\\" in path or "\x00" in path
+                        or any(part in ("", ".", "..") for part in parts)):
+                    raise ValueError("invalid project path")
+                parent_fd = os.dup(root_fd)
+                try:
+                    for part in parts[:-1]:
+                        next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                          dir_fd=parent_fd)
+                        os.close(parent_fd)
+                        parent_fd = next_fd
+                    fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                                 dir_fd=parent_fd)
+                    with os.fdopen(fd, "rb") as source:
+                        if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+                            raise ValueError("nonregular source")
+                        data = source.read(2 * 1024 * 1024 + 1 - total)
+                    total += len(data)
+                    if total > 2 * 1024 * 1024:
+                        raise ValueError("native source budget exceeded")
+                    sources[path] = data.decode("utf-8")
+                finally:
+                    os.close(parent_fd)
+        finally:
+            os.close(root_fd)
+    except (OSError, ValueError, UnicodeError):
+        raise ClientError(
+            "INVALID_INPUT", "native files must be regular UTF-8 files inside the project "
+            "without symlinks, totaling at most 2 MiB",
+        ) from None
+    return {**manifest, "kind": manifest.get("kind", "native"), "files": sources}
 
 
 def json_value(data):
@@ -464,14 +544,19 @@ class Client:
             if not isinstance(definition, dict):
                 raise ClientError("INVALID_INPUT", "definition file must contain a JSON object")
             original_reference = definition.get("reference")
-            if self.args.triton_only:
+            candidate_present = bool(self.args.triton or self.args.native_project)
+            candidate_only = self.args.triton_only or self.args.candidate_only
+            if candidate_only:
                 definition.pop("reference", None)
             reference = definition.get("reference")
-            if not reference and self.args.triton is None:
-                raise ClientError("INVALID_ARGUMENT", "provide definition.reference or --triton")
-            if self.args.command == "verify" and (not reference or self.args.triton is None):
+            if not reference and not candidate_present:
                 raise ClientError(
-                    "INVALID_ARGUMENT", "verify requires definition.reference and --triton"
+                    "INVALID_ARGUMENT", "provide definition.reference or --triton/--native-project"
+                )
+            if self.args.command == "verify" and (not reference or not candidate_present):
+                raise ClientError(
+                    "INVALID_ARGUMENT",
+                    "verify requires definition.reference and --triton/--native-project",
                 )
             text = read_text(self.args.workloads, "workloads file").strip()
             workloads = (
@@ -486,6 +571,8 @@ class Client:
             payload = {"definition": definition, "workloads": workloads, "seed": self.args.seed}
             if self.args.triton is not None:
                 payload["triton_code"] = read_text(self.args.triton, "triton source")
+            if self.args.native_project is not None:
+                payload["candidate"] = read_native_project(self.args.native_project)
             if self.args.custom_inputs is not None:
                 payload["custom_inputs_code"] = read_text(
                     self.args.custom_inputs, "custom inputs source"
@@ -499,23 +586,33 @@ class Client:
                     raise ClientError(
                         "INVALID_INPUT", "custom inputs require custom_inputs_entrypoint"
                     )
-                if (self.args.triton_only and self.args.custom_inputs is None
+                if (candidate_only and self.args.custom_inputs is None
                         and original_reference):
                     payload["custom_inputs_code"] = original_reference
                 if not (reference or payload.get("custom_inputs_code")):
                     raise ClientError(
                         "INVALID_INPUT", "custom inputs require reference or --custom-inputs source"
                     )
+            if self.args.native_project is not None:
+                if getattr(self.args, "use_baseline_cache", None) is True:
+                    raise ClientError("INVALID_ARGUMENT", "native timing does not reuse baselines")
+                if getattr(self.args, "correctness_from", None) is not None:
+                    raise ClientError("INVALID_ARGUMENT", "native correctness reuse is unsupported")
+                if (getattr(self.args, "measurement_method", None) == "event"
+                        and payload["candidate"].get("event_timing") is not True):
+                    raise ClientError(
+                        "INVALID_ARGUMENT", "native Event timing requires event_timing=true"
+                    )
             apply_controls(payload, self.args)
             expected_checks = {
                 "verify": ["correctness"],
                 "benchmark": (
-                    ["correctness", "performance"] if reference and self.args.triton
+                    ["correctness", "performance"] if reference and candidate_present
                     else ["performance"]
                 ),
                 "profile": ["profile"],
             }.get(self.args.command, payload.get("checks") or (
-                ["correctness", "performance"] if reference and self.args.triton
+                ["correctness", "performance"] if reference and candidate_present
                 else ["performance"]
             ))
             if self.args.wait_for is not None and self.args.wait_for not in expected_checks:
@@ -559,7 +656,7 @@ class Client:
             if resource["state"] in TERMINAL or self.args.no_wait:
                 status = exit_status(resource)
                 single_input = self.args.command != "get" and (
-                    not reference or self.args.triton is None
+                    not reference or not candidate_present
                 )
                 result = resource.get("result") or {}
                 unverified = any(
