@@ -14,6 +14,7 @@ from ..versioning import service_version
 from . import errors
 from .contract import ErrorEnvelope
 from .dependencies import AppContext
+from .method_routes import router as method_router
 from .middleware import RequestIdBodyLimitMiddleware, new_request_id
 from .routes import router
 
@@ -67,6 +68,7 @@ def create_app(context: AppContext) -> FastAPI:
     app.state.context = context
     app.add_middleware(RequestIdBodyLimitMiddleware)
     app.include_router(router)
+    app.include_router(method_router)
     _install_exception_handlers(app)
     return app
 

@@ -6,6 +6,7 @@ new admissions, replays nor rejected requests execute it here.
 """
 from triton_evaluation.api.contract import EvaluationProgress, EvaluationRequest, EvaluationResource
 from triton_evaluation.config import Settings
+from triton_evaluation.methods.registry import MethodRegistry
 from triton_evaluation.service.admission import admit
 from triton_evaluation.service.broker import EvaluationStore
 from triton_evaluation.service.metrics import increment
@@ -38,6 +39,7 @@ class EvaluationInstance:
     ) -> None:
         self.settings = settings
         self.store = store
+        self.methods = MethodRegistry(store._r, settings)
         self.metrics = metrics
         self._algorithms = AlgorithmVersions(
             correctness=settings.effective_correctness_algorithm_version,

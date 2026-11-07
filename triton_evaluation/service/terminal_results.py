@@ -23,6 +23,7 @@ from triton_evaluation.api.contract import (
     ErrorInfo,
     EvaluationResult,
     ExecutionEnvironment,
+    MethodCheckOutcome,
     NativeBuildEvidence,
     PerformanceOutcome,
     ProfileOutcome,
@@ -32,9 +33,10 @@ from triton_evaluation.api.contract import (
 from triton_evaluation.runtime.execution_environment import is_complete_execution_environment
 from triton_evaluation.service.models import PinnedProvenance
 
-_CHECK_ORDER = ("compile", "correctness", "performance", "profile")
+_CHECK_ORDER = ("compile", "correctness", "performance", "profile", "method")
 _OUTCOME_ADAPTERS = {
     "compile": TypeAdapter(CompileCheckOutcome),
+    "method": TypeAdapter(MethodCheckOutcome),
     "correctness": TypeAdapter(CorrectnessOutcome),
     "performance": TypeAdapter(PerformanceOutcome),
     "profile": TypeAdapter(ProfileOutcome),

@@ -35,6 +35,7 @@ class CanonicalAdmission:
     requested_checks: Sequence[Check]
     # Passive metadata retained for previously admitted grade records.
     catalog_binding: GradeContext | None
+    execution_class: str | None = None
 
 
 def admit(request: EvaluationRequest, caller: Caller) -> CanonicalAdmission:
@@ -53,4 +54,7 @@ def admit(request: EvaluationRequest, caller: Caller) -> CanonicalAdmission:
         reference_digest=sha256_hex(request.reference_code.encode("utf-8")),
         requested_checks=tuple(request.checks),
         catalog_binding=None,
+        execution_class=(
+            request.method_execution.device if request.method_execution is not None else None
+        ),
     )
