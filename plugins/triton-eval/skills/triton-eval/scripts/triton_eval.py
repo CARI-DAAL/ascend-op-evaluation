@@ -25,7 +25,7 @@ from pathlib import Path
 # equal to the version declared by the plugin manifests shipping it.
 __version__ = "0.4.0"
 
-TERMINAL = {"completed", "failed", "timed_out"}
+TERMINAL = {"completed", "failed", "timed_out", "cancelled"}
 STATES = TERMINAL | {"queued", "running"}
 ID = re.compile(r"ev_[0-9a-f]{32}\Z")
 RETRYABLE = {429, 502, 503, 504}

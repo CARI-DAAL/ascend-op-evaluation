@@ -33,6 +33,17 @@ def check(**data):
     return {"status": "succeeded", "data": data}
 
 
+def test_get_recovers_cancelled_legacy_evaluation(inputs):
+    body = {
+        "evaluation_id": EID, "state": "cancelled",
+        "result": {"correctness": {"status": "failed", "error": {"code": "CANCELLED"}}},
+    }
+    with server(lambda calls: (200, body, {})) as (url, calls):
+        result, output = run_cli(inputs, url, action="get")
+    assert result.returncode == 2
+    assert output == body
+
+
 @contextmanager
 def server(responder):
     calls = []

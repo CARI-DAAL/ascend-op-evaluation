@@ -142,21 +142,24 @@ def complete_evaluation(
                     ),
                 ),
             )
+    custom_method = requested_set == {"method"}
     provenance = Provenance(
         schema_version="2.1",
         evaluator_build=pinned.evaluator_build,
         correctness_algorithm=(
+            "custom-method-v1" if custom_method else
             correctness_algorithm_override or pinned.algorithms.correctness
         ),
-        decoy_algorithm=pinned.algorithms.decoy,
-        benchmark_algorithm=pinned.algorithms.benchmark,
-        profiler_algorithm=pinned.algorithms.profiler,
+        decoy_algorithm="not-applicable" if custom_method else pinned.algorithms.decoy,
+        benchmark_algorithm="custom-method-v1" if custom_method else pinned.algorithms.benchmark,
+        profiler_algorithm="custom-method-v1" if custom_method else pinned.algorithms.profiler,
         manifest_id=pinned.manifest_id,
         problem_id=pinned.problem_id,
         execution_environment=execution_environment,
-        reference_device_policy=reference_device_policy,
+        reference_device_policy=None if custom_method else reference_device_policy,
         grade_eligible=(
             complete
+            and not custom_method
             and pinned.purpose == "grade"
             and pinned.manifest_id is not None
             and pinned.problem_id is not None

@@ -50,8 +50,8 @@ markers = [
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-# engine/ is vendored (Huawei, CANN license) — do not lint or reformat it.
-extend-exclude = ["triton_evaluation/engine"]
+# Preserve vendored engine and fixed upstream example source bytes/headers.
+extend-exclude = ["triton_evaluation/engine", "examples/custom_methods/cannbench/vendor"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
