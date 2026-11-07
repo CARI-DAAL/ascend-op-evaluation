@@ -1,0 +1,11 @@
+Name,Type,Duration(us),Start Time(us),Task ID
+warm,CannBenchCacheClean,1,0,0
+a,custom,0.5,1000,1
+a,custom,0.5,2000,2
+b,custom,100,3000,3
+warm,CannBenchCacheClean,1,4000,4
+a,custom,100,5000,5
+b,custom,1,6000,6
+warm,CannBenchCacheClean,1,7000,7
+a,custom,100,8000,8
+b,custom,100,9000,9

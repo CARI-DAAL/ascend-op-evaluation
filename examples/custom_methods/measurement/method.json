@@ -1,0 +1,69 @@
+{
+  "contract_version": "custom-method-v1",
+  "descriptor": {
+    "name": "launch-aggregation",
+    "version": "1.0.0",
+    "kind": "measurement",
+    "entrypoint": "measurement:run",
+    "parameters_schema": {
+      "type": "object",
+      "properties": {
+        "aggregation": {
+          "type": "string",
+          "enum": [
+            "mean_call_total",
+            "median_call_total",
+            "sum_kernel_medians"
+          ],
+          "default": "median_call_total"
+        }
+      },
+      "additionalProperties": false
+    },
+    "inputs": {
+      "launches": {
+        "required": true,
+        "media_type": "application/json"
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "required": [
+        "metric",
+        "unit",
+        "value",
+        "samples",
+        "aggregation"
+      ],
+      "properties": {
+        "value": {
+          "type": "number",
+          "minimum": 0
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "requirements": {
+      "runtime": "worker-python-v1",
+      "device": "cpu",
+      "capabilities": [
+        "python"
+      ]
+    },
+    "output_artifacts": {
+      "aggregation.json": {
+        "required": true,
+        "media_type": "application/json"
+      }
+    }
+  },
+  "files": [
+    "measurement.py"
+  ]
+}

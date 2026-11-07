@@ -1,0 +1,62 @@
+{
+  "contract_version": "custom-method-v1",
+  "descriptor": {
+    "name": "json-tree-checker",
+    "version": "1.0.0",
+    "kind": "checker",
+    "entrypoint": "checker:run",
+    "parameters_schema": {
+      "type": "object",
+      "properties": {
+        "atol": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0
+        },
+        "rtol": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "inputs": {
+      "actual": {
+        "required": true,
+        "media_type": "application/json"
+      },
+      "reference": {
+        "required": true,
+        "media_type": "application/json"
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "passed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "passed"
+      ]
+    },
+    "requirements": {
+      "runtime": "worker-python-v1",
+      "device": "cpu",
+      "capabilities": [
+        "python"
+      ]
+    },
+    "output_artifacts": {
+      "comparison.json": {
+        "required": true,
+        "media_type": "application/json"
+      }
+    }
+  },
+  "files": [
+    "checker.py"
+  ]
+}
