@@ -62,6 +62,7 @@ from .base import (
     ProgressSink,
 )
 from .benchmark import BenchmarkEvaluator
+from .method import MethodEvaluator
 from .profile import ProfileEvaluator
 from .shaping import (
     ShapingError,
@@ -155,11 +156,13 @@ def _skipped(check: Check, code: str, depends_on: Check | None, message: str):
 
 class EvaluationEvaluator:
     def __init__(
-        self, *, verify: VerifyEvaluator, benchmark: BenchmarkEvaluator, profile: ProfileEvaluator
+        self, *, verify: VerifyEvaluator, benchmark: BenchmarkEvaluator, profile: ProfileEvaluator,
+        method: MethodEvaluator | None = None,
     ):
         self.verify = verify
         self.benchmark = benchmark
         self.profile = profile
+        self.method = method
 
     @staticmethod
     def _slot(check: Check, produce, lease_valid, progress: ProgressSink):
@@ -188,9 +191,23 @@ class EvaluationEvaluator:
         precheck: Callable[[], str | None] | None = None,
         reuse_correctness: Callable[[], CheckSucceeded[CorrectnessResult]] | None = None,
         on_native_build: Callable | None = None,
+        on_method_artifacts: Callable | None = None,
+        method_settings=None,
     ) -> EvaluationResult:
         """Run correctness, conditional performance, then independent profile."""
         requested = list(request.checks)
+        if getattr(request, "method_execution", None) is not None:
+            method = self.method or MethodEvaluator(runner=getattr(self.verify, "runner", None))
+            outcome = self._slot(
+                "method",
+                lambda: method.run(request, work_dir, device_id, deadline_at, lease_valid,
+                                   settings=method_settings, on_artifacts=on_method_artifacts),
+                lease_valid, progress,
+            )
+            return complete_evaluation(
+                requested_checks=requested, outcomes={"method": outcome}, pinned=pinned,
+                execution_environment=execution_environment,
+            )
         outcomes: dict[str, object] = {}
         infra_broken = False
         trace_engine = None

@@ -301,6 +301,9 @@ class Worker:
             deadline_at = datetime.fromtimestamp(
                 lease.deadline_at_ms / 1000, tz=timezone.utc
             )
+            if self.store.is_cancel_requested(lease):
+                self.store.finish_cancelled(lease)
+                return
             if self._clock() >= lease.deadline_at_ms:
                 # Late delivery: expire rather than start past the deadline.
                 self._commit_deadline(lease, request.checks, {}, request=request)
@@ -331,6 +334,12 @@ class Worker:
                     )
                     pinned = lease.pinned
                     reuse_kwargs = {}
+                    if getattr(request, "method_execution", None) is not None:
+                        def publish_method_artifacts(artifacts):
+                            if not self.store.save_method_artifacts(lease, artifacts):
+                                raise LeaseLostError("method artifact publication was fenced out")
+                        reuse_kwargs["on_method_artifacts"] = publish_method_artifacts
+                        reuse_kwargs["method_settings"] = self.settings
                     if request.native_candidate is not None:
                         reuse_kwargs["on_native_build"] = record_native_build
                     if request.correctness_from is not None:
@@ -376,12 +385,17 @@ class Worker:
                         **self._policy_provenance(request),
                     )
                 except LeaseLostError:
+                    # Engine cleanup finishes before cancellation is acknowledged.
+                    if self.store.finish_cancelled(lease):
+                        return
                     # Fenced work is discarded; the reaper owns recovery.
                     self.store.note_fenced_write()
                     if self._health is not None:
                         self._health.mark_suspicious()
                     return
                 except Exception as error:  # noqa: BLE001 — redacted, never a crash
+                    if self.store.finish_cancelled(lease):
+                        return
                     logger.warning(
                         "evaluator protocol failure (%s) on attempt %s",
                         type(error).__name__, lease.attempt_id,
@@ -399,11 +413,16 @@ class Worker:
                         self._health.mark_suspicious()
                     return
                 if not keeper.is_valid():
+                    if self.store.finish_cancelled(lease):
+                        return
                     self.store.note_fenced_write()
                     if self._health is not None:
                         self._health.mark_suspicious()
                     return
 
+            if self.store.is_cancel_requested(lease):
+                self.store.finish_cancelled(lease)
+                return
             retryable_failure = _retryable_engine_failure(validated)
             if retryable_failure and self._health is not None:
                 self._health.mark_suspicious()

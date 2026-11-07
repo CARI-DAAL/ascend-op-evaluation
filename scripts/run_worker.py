@@ -13,6 +13,7 @@ from triton_evaluation.config import Settings, command_environment
 from triton_evaluation.evaluators.base import run_script
 from triton_evaluation.evaluators.benchmark import BenchmarkEvaluator
 from triton_evaluation.evaluators.evaluation import EvaluationEvaluator
+from triton_evaluation.evaluators.method import MethodEvaluator
 from triton_evaluation.evaluators.profile import ProfileEvaluator
 from triton_evaluation.evaluators.verify import VerifyEvaluator
 from triton_evaluation.runtime.baseline_cache import BaselineCache
@@ -62,6 +63,7 @@ def build_worker(card: int | None, settings: Settings | None = None) -> Worker:
             baseline_cache=baseline_cache, runner=runner,
         ),
         profile=ProfileEvaluator(settings.engine_dir, runner=runner),
+        method=MethodEvaluator(runner=runner, settings=settings),
     )
     return Worker(
         store, evaluator, device_id=card, settings=settings, metrics=metrics,
