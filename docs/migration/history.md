@@ -20,7 +20,8 @@ retired compile experiments and host-specific deployment snapshots remain in Git
 | Machine-specific deployment snapshot | [deploy/nb2-build-prep](https://github.com/CARI-DAAL/triton-op-evaluation/tree/9bec91c7652a1654756990f1098513cc7ba5666e/deploy/nb2-build-prep) |
 | Round-two local validation reports | [docs/validation/round2-v3](https://github.com/CARI-DAAL/triton-op-evaluation/tree/9bec91c7652a1654756990f1098513cc7ba5666e/docs/validation/round2-v3) |
 
-Current decisions live in [adr/](../adr) and [architecture/](../architecture).
+Current decisions live in [adr/](../adr); implementation explanations live in
+[explanation/](../explanation).
 Retired tool envelopes, observation fixtures and the legacy bridge archive,
 including their provenance and upstream license, remain in
 [the fixed Git snapshot](https://github.com/CARI-DAAL/triton-op-evaluation/tree/5d8baf7/tests/fixtures/kernel_eval).
