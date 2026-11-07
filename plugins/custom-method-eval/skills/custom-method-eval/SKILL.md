@@ -8,6 +8,7 @@ description: Register and run versioned external checker, measurement or harness
 Use the bundled [standard-library CLI](scripts/custom_method_eval.py). Resolve
 its path from this skill directory; it needs no service or Torch installation.
 The service must implement `custom-method-v1`.
+Use `runtimes` to inspect its declared runtime capabilities and registry limits.
 
 ## Method and input preparation
 

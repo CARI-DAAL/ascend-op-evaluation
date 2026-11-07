@@ -17,6 +17,7 @@ The service does not import submitted code to read its descriptor.
 | Operation | Endpoint |
 | --- | --- |
 | Register source package | `POST /methods` |
+| Discover runtime/registry limits | `GET /method-runtimes` |
 | Read frozen package | `GET /methods/{method_ref}` |
 | Set caller-owned alias | `PUT /method-aliases/{alias}` |
 | Upload/read input or dependency | `POST /method-artifacts`, `GET /method-artifacts/{artifact_ref}` |
@@ -33,6 +34,11 @@ same-key replay preserves the original accepted execution even after an alias mo
 Method and submission JSON explicitly carry `contract_version: "custom-method-v1"`.
 The outer evaluation resource continues to use the existing envelope; its custom
 `method_identity` and `result.method` do not retrofit method claims onto old records.
+
+Use `custom_method_eval.py runtimes` to inspect deployment-declared capabilities
+and registry budgets before preparing a package. Registry limits are caller-scoped
+and include package, input artifact and alias storage; re-uploading identical
+materials does not create an unlimited second copy.
 
 ## A runnable checker example
 
@@ -111,6 +117,10 @@ inputs. Frozen admission is bounded at 8 MiB. Default output limits are 64 KiB
 logs, 1 MiB artifacts and 32 files; selected limits and truncation/missing states
 are explicit. Large upstream tasks or profiler exports must fit these documented
 limits; do not silently drop requested tasks or trace data to fit.
+Output artifacts belong to the execution's retained evidence. To use one as a
+later method input, download it and register those bytes with artifact-upload;
+the service verifies the same content digest. An output ref is not automatically
+a global input-registry entry.
 
 ## Runtime and trust
 

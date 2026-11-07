@@ -46,7 +46,7 @@ project with the upstream `build.sh` / `cann_bench` package contract.
 python3 examples/custom_methods/cannbench/prepare_harness.py \
   --upstream /path/to/cann-bench --task-path tasks/level1/exp \
   --candidate /path/to/submission --candidate-files candidate-files.json \
-  --torch-version 2.9.0 --torch-npu-version 2.9.0.post8 \
+  --runtime-packages worker-packages.json --npu-arch ascend910_93 \
   --output /tmp/cannbench-method
 ```
 
@@ -59,11 +59,23 @@ input map `{"candidate":"sha256:..."}`, the desired supported parameters, and an
 explicit adequate parent deadline (for example `--deadline-seconds 3600`). The
 parent deadline always bounds the longer per-build/per-operator settings.
 
+`worker-packages.json` is an operator-supplied exact distribution/version map for
+the intended worker, not versions inferred from the client machine. It must cover
+the pinned upstream's core Python and local build dependencies (the packer lists
+these in `REQUIRED_RUNTIME_PACKAGES`); add optional dependencies needed by the
+selected task. The full upstream pins Torch 2.10.0 (2.10.0+cpu on x86_64) and
+torch_npu 2.10.0.post4. The numeric-only CPU example was separately tested with
+2.9.0+cpu; that does not qualify the full framework on a 2.9 runtime.
+
 The bridge runs the original staged or single upstream CLI, on logical device 0
 of the service-assigned NPU. It creates a private venv for upstream wheel
 installation, keeps declared worker packages accessible read-only, and sets the
 upstream-supported `MC2_OPP_INSTALL_ROOT` to a private directory for `.run` packages.
 It does not modify `ASCEND_OPP_PATH` or install into the shared interpreter.
+It builds/installs the frozen `cann_bench_utils` warmup/cache helper into that
+private venv without dependency downloads, using the explicitly selected NPU_ARCH.
+The method additionally requires the deployment-declared `soc-<NPU_ARCH>`
+capability; the operator must verify this against the actual allocated hardware.
 
 The runtime must declare Python, NPU and **process-isolation** capabilities and
 provide compatible CANN headers, compilers, libraries, Torch/NPU packages and
