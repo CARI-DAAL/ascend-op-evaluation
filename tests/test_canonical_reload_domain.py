@@ -13,8 +13,7 @@ import json
 
 import pytest
 import rfc8785
-
-from triton_evaluation.serialization import (
+from ascend_op_eval.serialization import (
     canonical_json_bytes,
     load_canonical,
 )

@@ -68,8 +68,8 @@ def probe(output: Path, physical_device: int, samples: int = 8) -> int:
             name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
             for name in (
                 "scripts/probe_profiler_latency.py",
-                "triton_evaluation/engine/benchmark.py",
-                "triton_evaluation/runtime/profiler_runtime.py",
+                "packages/ascend-op-eval/src/ascend_op_eval/engine/benchmark.py",
+                "packages/ascend-op-eval/src/ascend_op_eval/runtimes/profiler_runtime.py",
             )
         },
     }
@@ -77,13 +77,12 @@ def probe(output: Path, physical_device: int, samples: int = 8) -> int:
     write_report(target, report)
     cleanup = None
     try:
-        from triton_evaluation.runtime.profiler_runtime import describe_runtime
+        from ascend_op_eval.runtimes.profiler_runtime import describe_runtime
 
         report["profiler_runtime"] = describe_runtime()
         import torch
         import torch_npu
-
-        from triton_evaluation.engine import benchmark
+        from ascend_op_eval.engine import benchmark
 
         versions = {}
         for name in ("torch", "torch-npu", "triton", "triton-ascend"):
@@ -205,10 +204,16 @@ def probe(output: Path, physical_device: int, samples: int = 8) -> int:
                         "main_thread": True,
                         "process_id": os.getpid(),
                         "helper_sha256": report["source_sha256"][
-                            "triton_evaluation/runtime/profiler_runtime.py"
+                            "packages/ascend-op-eval/src/ascend_op_eval/runtimes/profiler_runtime.py"
                         ],
-                        "helper_path": str(ROOT / "triton_evaluation/runtime/profiler_runtime.py"),
-                        "service_package_path": str(ROOT / "triton_evaluation"),
+                        "helper_path": str(
+                            ROOT
+                            / "packages/ascend-op-eval/src/ascend_op_eval"
+                            / "runtimes/profiler_runtime.py"
+                        ),
+                        "service_package_path": str(
+                            ROOT / "packages/ascend-op-eval/src/ascend_op_eval"
+                        ),
                         "physical_device": str(physical_device),
                         "visible_devices": visible,
                         "reference_device_policy": report["execution_conditions"][
@@ -280,8 +285,8 @@ def main() -> int:
 
 def isolated_probe(output: Path, physical_device: int) -> int:
     """Run this exact tracked probe through the production invocation boundary."""
-    from triton_evaluation.evaluators.base import run_script
-    from triton_evaluation.runtime.sandbox import (
+    from ascend_op_eval.evaluators.base import run_script
+    from ascend_op_eval.runtimes.sandbox import (
         CONFIG_ENV,
         DIGEST_ENV,
         OVERLAY_CONFIG_ENV,

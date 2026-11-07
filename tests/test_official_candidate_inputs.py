@@ -5,11 +5,10 @@ import types
 from pathlib import Path
 
 import pytest
-
-from triton_evaluation.engine import benchmark, verify
-from triton_evaluation.engine._common_utils import invoke_model, prepare_candidate_inputs
-from triton_evaluation.runtime.reference_cache import value_sha256
-from triton_evaluation.runtime.reference_diagnostics import _read_trace
+from ascend_op_eval.engine import benchmark, verify
+from ascend_op_eval.engine._common_utils import invoke_model, prepare_candidate_inputs
+from ascend_op_eval.execution.reference_cache import value_sha256
+from ascend_op_eval.execution.reference_diagnostics import _read_trace
 
 torch = pytest.importorskip("torch")
 
@@ -168,7 +167,7 @@ def test_native_measurement_keeps_reference_defaults(reference, monkeypatch, tmp
 
 
 def test_native_copy_preserves_only_the_reference_owned_absent_object(reference):
-    from triton_evaluation.engine.native_support import copy_inputs
+    from ascend_op_eval.engine.native_support import copy_inputs
 
     raw = reference.get_input_groups()[0]
     copied = copy_inputs(raw, "cpu", reference_model=reference.Model)

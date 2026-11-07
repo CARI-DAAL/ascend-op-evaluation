@@ -4,11 +4,10 @@ import json
 from pathlib import Path
 
 import pytest
+from ascend_op_eval.api.contract import EvaluationRequest, EvaluationResult
+from ascend_op_eval.control.admission import ForbiddenError, admit
+from ascend_op_eval.control.instance import EvaluationInstance
 from conftest import make_caller, make_completed_result, make_request
-
-from triton_evaluation.api.contract import EvaluationRequest, EvaluationResult
-from triton_evaluation.service.admission import ForbiddenError, admit
-from triton_evaluation.service.instance import EvaluationInstance
 
 
 def published_v21_resource_validator():
@@ -124,7 +123,7 @@ def _result_with_compile(version="2.1"):
 
 
 def test_performance_measurement_method_consistency():
-    from triton_evaluation.api.contract import PerformanceResult
+    from ascend_op_eval.api.contract import PerformanceResult
 
     base = {
         "aggregation": "geometric_mean_v1",
@@ -155,7 +154,7 @@ def test_performance_measurement_method_consistency():
 
 
 def test_dump_contract_does_not_mutate_model():
-    from triton_evaluation.api.contract import dump_contract
+    from ascend_op_eval.api.contract import dump_contract
 
     validated = EvaluationResult.model_validate(
         _result_with_compile(),
@@ -251,6 +250,12 @@ async def test_leased_compile_http_body_validates_against_published_schema(
     import time
 
     import jsonschema
+    from ascend_op_eval.evaluators.benchmark import BenchmarkEvaluator
+    from ascend_op_eval.evaluators.evaluation import EvaluationEvaluator
+    from ascend_op_eval.evaluators.profile import ProfileEvaluator
+    from ascend_op_eval.evaluators.verify import VerifyEvaluator
+    from ascend_op_eval.execution import verdict_cache
+    from ascend_op_eval.execution.worker import Worker
     from conftest import FakeClock
     from test_api import (
         build_app,
@@ -261,13 +266,6 @@ async def test_leased_compile_http_body_validates_against_published_schema(
         seed_worker,
         trial_headers,
     )
-
-    from triton_evaluation.evaluators.benchmark import BenchmarkEvaluator
-    from triton_evaluation.evaluators.evaluation import EvaluationEvaluator
-    from triton_evaluation.evaluators.profile import ProfileEvaluator
-    from triton_evaluation.evaluators.verify import VerifyEvaluator
-    from triton_evaluation.runtime import verdict_cache
-    from triton_evaluation.runtime.worker import Worker
 
     settings = make_test_settings(tmp_path)
     app = build_app(tmp_path, release_catalog_files, settings=settings,

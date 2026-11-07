@@ -6,9 +6,8 @@ import weakref
 from types import SimpleNamespace
 
 import pytest
-
-from triton_evaluation import operator_input as operator_source
-from triton_evaluation.engine import benchmark
+from ascend_op_eval import operator_input as operator_source
+from ascend_op_eval.engine import benchmark
 
 
 class Payload:
@@ -115,7 +114,7 @@ def test_generated_operator_groups_release_each_workload(monkeypatch, indices):
 
 @pytest.mark.parametrize("miss_at", [None, 2])
 def test_reference_cache_lookup_releases_each_workload(monkeypatch, tmp_path, miss_at):
-    from triton_evaluation.runtime import reference_cache
+    from ascend_op_eval.execution import reference_cache
 
     loaded, fallback = [], []
 

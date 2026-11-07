@@ -47,7 +47,7 @@
     "validation_commands": [
       "python -m ruff check .",
       "python -m pytest -m 'not npu' -q",
-      "python -m compileall -q triton_evaluation scripts plugins",
+      "python -m compileall -q ascend_op_eval scripts plugins",
       "git diff --check"
     ]
   },
@@ -61,19 +61,19 @@
       "goal": "调用方和运维可以准确识别正在运行的服务、客户端及构建，正式启动可校验构建身份。",
       "context": [
         "pyproject.toml",
-        "triton_evaluation/config.py",
-        "triton_evaluation/api/app.py",
-        "triton_evaluation/api/routes.py",
-        "triton_evaluation/api/auth.py",
-        "plugins/triton-eval/plugin.json",
-        "plugins/triton-eval/.claude-plugin/plugin.json",
-        "plugins/triton-eval/skills/triton-eval/scripts/triton_eval.py",
-        "docker/Dockerfile",
-        "docker/compose.yaml",
+        "ascend_op_eval/config.py",
+        "ascend_op_eval/api/app.py",
+        "ascend_op_eval/api/routes.py",
+        "ascend_op_eval/api/auth.py",
+        "plugins/ascend-op-eval/plugin.json",
+        "plugins/ascend-op-eval/.claude-plugin/plugin.json",
+        "plugins/ascend-op-eval/skills/ascend-op-eval/scripts/ascend_op_eval.py",
+        "deploy/images/Dockerfile",
+        "deploy/compose/compose.yaml",
         "scripts/deployment_preflight.py",
         "scripts/run_api.py",
         "scripts/run_worker.py",
-        "scripts/start.sh",
+        "deploy/host/start.sh",
         ".github/workflows/evaluation-api-v2.yml"
       ],
       "steps": [
@@ -118,28 +118,28 @@
           "commit": "2cd61075395f3d78565d9a4a3964764c389748e8",
           "state": "已提交到分支 feat/release-identity（实现提交 2cd6107，evidence 中的 commit 字段由紧随其后的一次 docs 提交回填）；下一个 agent 以实际文件为准",
           "new_files": [
-            "triton_evaluation/versioning.py",
+            "ascend_op_eval/versioning.py",
             "scripts/release_manifest.py",
-            "docs/operations/versioning.md",
+            "docs/reference/release-identity.md",
             "tests/test_versioning.py",
             "tests/test_version_discovery.py"
           ],
           "changed_files": [
-            "triton_evaluation/config.py",
-            "triton_evaluation/api/app.py",
-            "triton_evaluation/api/contract.py",
-            "triton_evaluation/api/dependencies.py",
-            "triton_evaluation/api/routes.py",
+            "ascend_op_eval/config.py",
+            "ascend_op_eval/api/app.py",
+            "ascend_op_eval/api/contract.py",
+            "ascend_op_eval/api/dependencies.py",
+            "ascend_op_eval/api/routes.py",
             "scripts/run_api.py",
             "scripts/run_worker.py",
             "scripts/deployment_preflight.py",
-            "docker/compose.yaml",
+            "deploy/compose/compose.yaml",
             ".env.example",
-            "docker/.env.example",
+            "deploy/compose/.env.example",
             ".github/workflows/evaluation-api-v2.yml",
-            "plugins/triton-eval/skills/triton-eval/scripts/triton_eval.py",
-            "plugins/triton-eval/skills/triton-eval/SKILL.md",
-            "plugins/triton-eval/README.md",
+            "plugins/ascend-op-eval/skills/ascend-op-eval/scripts/ascend_op_eval.py",
+            "plugins/ascend-op-eval/skills/ascend-op-eval/SKILL.md",
+            "plugins/ascend-op-eval/README.md",
             "docs/README.md",
             "docs/operations/deployment.md",
             "scripts/README.md",
@@ -149,7 +149,7 @@
           "branch": "feat/release-identity"
         },
         "summary": [
-          "triton_evaluation/versioning.py 为统一版本模块：service_version（安装包元数据，未安装时显式为 0+uninstalled）、source_digest（安装包 Python 源码摘要）、declared/installed dependencies、api_versions=('legacy',)、storage read/write=('legacy',)/'legacy'、DEFAULT_PROTOCOL=None、CAPABILITIES 仅列已实现能力，并提供发布清单 schema、canonicalization、load/validate、manifest_mismatches、release_identity、unverified_identity、startup_identity。",
+          "ascend_op_eval/versioning.py 为统一版本模块：service_version（安装包元数据，未安装时显式为 0+uninstalled）、source_digest（安装包 Python 源码摘要）、declared/installed dependencies、api_versions=('legacy',)、storage read/write=('legacy',)/'legacy'、DEFAULT_PROTOCOL=None、CAPABILITIES 仅列已实现能力，并提供发布清单 schema、canonicalization、load/validate、manifest_mismatches、release_identity、unverified_identity、startup_identity。",
           "发布清单 schema 1.0 字段：schema_version、service_version、client_version、source_revision、source_digest、dependencies、evaluator_build、image_reference、api_versions、default_api_version、storage{read_versions,write_version}、default_protocol、capabilities。校验按精确键集合与模式进行，未知字段拒绝。canonical 字节用现有 rfc8785 序列化器，键顺序不影响结果。",
           "scripts/release_manifest.py 提供 generate / bind / verify / consistency。generate 的服务版本与依赖 pin 来自 pyproject.toml，client_version 来自三份插件 manifest 与 CLI __version__（不一致即失败），并与安装包元数据交叉核对；build 身份由 bind 在构建后绑定（--image 取 sha256 digest，--build 用于宿主机 reviewed git 构建），清单不需要包含自身 digest。",
           "config 新增 release_mode（dev|release，默认 dev）与 release_manifest（绝对路径，不允许 ..）；release 模式必须配置清单路径。startup_identity 在 release 模式下任何不匹配都拒绝启动并列出原因码，dev 模式启动并显式记录未验证身份，不存在从 release 静默降级的路径。",
@@ -157,7 +157,7 @@
           "GET /version 使用现有 capability 鉴权（任一有效调用方），返回类型化 VersionInfo（service_version、api_versions、default_api_version、evaluator_build、storage、default_protocol、capabilities、release{mode,verified,unverified_reasons,manifest_digest,source_revision,source_digest}），出现在 OpenAPI 中，不含 redis_url、capability 路径或 worker toolchain 等部署配置；无可用 worker 时仍返回 200。FastAPI info.version 改为服务发布号。",
           "Compose 部署增加 TRITON_EVAL_RELEASE_MODE=release、TRITON_EVAL_RELEASE_MANIFEST=/opt/triton-eval/release-manifest.json，以及由 TRITON_EVAL_RELEASE_MANIFEST_HOST 提供的只读挂载；deployment_preflight 新增该必需输入，校验渲染出的 release 模式、清单路径、只读挂载来源，以及清单绑定的 evaluator_build 与镜像引用是否就是本次部署的产物。",
           "独立 CLI 增加 __version__ = 0.4.0、离线 --version（无服务、无 token、无服务包依赖）与 version 子命令（GET /version，容忍新增响应字段，缺少契约字段则报 INVALID_RESPONSE）。",
-          "CI 增加 `python -m scripts.release_manifest consistency` 作为发布声明一致性门禁；新增 docs/operations/versioning.md 并在 docs/README、scripts/README、deployment.md、插件 README/SKILL 中引用。"
+          "CI 增加 `python -m scripts.release_manifest consistency` 作为发布声明一致性门禁；新增 docs/reference/release-identity.md 并在 docs/README、scripts/README、deployment.md、插件 README/SKILL 中引用。"
         ],
         "commands": [
           {
@@ -177,7 +177,7 @@
             "result": "155 passed（test_deployment 使用本机真实 docker compose config 渲染）"
           },
           {
-            "command": "python3 -m compileall -q triton_evaluation scripts plugins",
+            "command": "python3 -m compileall -q ascend_op_eval scripts plugins",
             "result": "无输出（通过）"
           },
           {
@@ -213,9 +213,9 @@
           "无持久化格式、Redis namespace 或序列化变更，不需要数据迁移。"
         ],
         "handoff": {
-          "version_module": "triton_evaluation.versioning：常量 API_VERSIONS / DEFAULT_API_VERSION / STORAGE_READ_VERSIONS / STORAGE_WRITE_VERSION / DEFAULT_PROTOCOL / CAPABILITIES / ZERO_BUILD；函数 service_version、source_digest、digest_sources、declared_dependencies、installed_dependencies、build_manifest、bind_build、validate_manifest、load_manifest、canonical_manifest、manifest_digest、manifest_mismatches、release_identity、unverified_identity、startup_identity；类型 ReleaseIdentity、ManifestError、ReleaseVerificationError。",
+          "version_module": "ascend_op_eval.versioning：常量 API_VERSIONS / DEFAULT_API_VERSION / STORAGE_READ_VERSIONS / STORAGE_WRITE_VERSION / DEFAULT_PROTOCOL / CAPABILITIES / ZERO_BUILD；函数 service_version、source_digest、digest_sources、declared_dependencies、installed_dependencies、build_manifest、bind_build、validate_manifest、load_manifest、canonical_manifest、manifest_digest、manifest_mismatches、release_identity、unverified_identity、startup_identity；类型 ReleaseIdentity、ManifestError、ReleaseVerificationError。",
           "next_ticket_fields": "EVV-02 需要填充：api_versions 增加 3.0 与协商规则、default_api_version 的选择语义、default_protocol（评测协议 canonical digest，发布清单应指向默认协议 artifact）、storage read/write 版本改为真实内部格式标识。改动这些常量会同时改变 /version、发布清单与启动校验，请一并更新 tests/test_versioning.py 中“仅声明已实现身份”的断言。",
-          "api_surface": "GET /version → VersionInfo（triton_evaluation/api/contract.py）；CLI：triton_eval.py --version（离线）与 triton_eval.py version --url --capability-file。"
+          "api_surface": "GET /version → VersionInfo（ascend_op_eval/api/contract.py）；CLI：triton_eval.py --version（离线）与 triton_eval.py version --url --capability-file。"
         },
         "remaining": [
           "容器镜像构建演练：在 aarch64 + Ascend wheel index 环境执行 docker build → push → release_manifest bind --image <digest> → 容器内 run_api/run_worker release 模式启动，确认 source_digest 与依赖身份在镜像内通过。完成后方可将本 ticket 置为 done。",
@@ -234,21 +234,21 @@
       ],
       "goal": "客户端显式选择兼容契约，每个 evaluation 和 attempt 都保留准确身份，升级后仍能恢复原任务。",
       "context": [
-        "triton_evaluation/api/contract.py",
-        "triton_evaluation/api/operator.py",
-        "triton_evaluation/api/routes.py",
-        "triton_evaluation/api/errors.py",
-        "triton_evaluation/api/middleware.py",
-        "triton_evaluation/service/admission.py",
-        "triton_evaluation/service/instance.py",
-        "triton_evaluation/service/models.py",
-        "triton_evaluation/service/broker.py",
-        "triton_evaluation/service/terminal_results.py",
-        "triton_evaluation/runtime/worker.py",
-        "triton_evaluation/runtime/execution_environment.py",
-        "triton_evaluation/runtime/input_generation.py",
-        "triton_evaluation/serialization.py",
-        "plugins/triton-eval/skills/triton-eval/scripts/triton_eval.py",
+        "ascend_op_eval/api/contract.py",
+        "ascend_op_eval/api/operator.py",
+        "ascend_op_eval/api/routes.py",
+        "ascend_op_eval/api/errors.py",
+        "ascend_op_eval/api/middleware.py",
+        "ascend_op_eval/service/admission.py",
+        "ascend_op_eval/service/instance.py",
+        "ascend_op_eval/service/models.py",
+        "ascend_op_eval/service/broker.py",
+        "ascend_op_eval/service/terminal_results.py",
+        "ascend_op_eval/runtime/worker.py",
+        "ascend_op_eval/runtimes/execution_environment.py",
+        "ascend_op_eval/execution/input_generation.py",
+        "ascend_op_eval/serialization.py",
+        "plugins/ascend-op-eval/skills/ascend-op-eval/scripts/ascend_op_eval.py",
         "docs/operations/recovery.md"
       ],
       "steps": [
@@ -310,20 +310,20 @@
       ],
       "goal": "部署前能够判断升级和回滚的可行性，缓存只复用身份匹配的证据，历史任务和幂等记录持续可恢复。",
       "context": [
-        "triton_evaluation/service/broker.py",
-        "triton_evaluation/service/instance.py",
-        "triton_evaluation/runtime/baseline_cache.py",
-        "triton_evaluation/runtime/verdict_cache.py",
-        "triton_evaluation/runtime/correctness_evidence.py",
-        "triton_evaluation/runtime/reference_cache.py",
-        "triton_evaluation/runtime/reference_timing_reuse.py",
-        "triton_evaluation/runtime/execution_environment.py",
-        "triton_evaluation/evaluators/benchmark.py",
+        "ascend_op_eval/service/broker.py",
+        "ascend_op_eval/service/instance.py",
+        "ascend_op_eval/runtime/baseline_cache.py",
+        "ascend_op_eval/runtime/verdict_cache.py",
+        "ascend_op_eval/runtime/correctness_evidence.py",
+        "ascend_op_eval/execution/reference_cache.py",
+        "ascend_op_eval/execution/reference_timing_reuse.py",
+        "ascend_op_eval/runtimes/execution_environment.py",
+        "ascend_op_eval/evaluators/benchmark.py",
         "scripts/deployment_preflight.py",
         "scripts/npu_release_gate.py",
         "docs/operations/recovery.md",
         "docs/operations/reference-cache.md",
-        "docs/operations/npu-validation.md"
+        "docs/development/npu-validation.md"
       ],
       "steps": [
         "扩展前一 ticket 的 storage_version 检查，定义发布支持的 read_versions/write_version、Redis 元数据和不兼容写入拒绝。历史 namespace 保持稳定，不随服务 minor 自动变化；选择新 namespace 时必须保留原实例恢复路径。",

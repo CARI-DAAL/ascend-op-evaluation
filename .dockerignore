@@ -23,3 +23,8 @@ build
 dist
 .coverage
 htmlcov
+
+.scratch
+deploy/compose/.env
+**/build
+**/*.egg-info

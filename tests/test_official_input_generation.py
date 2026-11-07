@@ -16,8 +16,7 @@ from typing import Any, Optional
 
 import pytest
 import torch
-
-from triton_evaluation.runtime.input_generation import InputGenerationError, generate_inputs
+from ascend_op_eval.execution.input_generation import InputGenerationError, generate_inputs
 
 OFFICIAL_SOURCE = (
     "def _rand_tensor(\n"
@@ -627,7 +626,7 @@ def test_custom_module_rng_is_before_seed_and_callback_after_family(monkeypatch)
 
 
 def test_adapter_order_identity_and_deferred_custom_execution():
-    from triton_evaluation.operator_input import OperatorRequest, to_evaluation_request
+    from ascend_op_eval.operator_input import OperatorRequest, to_evaluation_request
 
     payload = {
         "definition": {
@@ -674,7 +673,7 @@ def test_adapter_order_identity_and_deferred_custom_execution():
 
 @pytest.mark.parametrize("mode", ["torch", "triton", "comparison"])
 def test_adapter_model_contracts(mode):
-    from triton_evaluation.operator_input import OperatorRequest, to_evaluation_request
+    from ascend_op_eval.operator_input import OperatorRequest, to_evaluation_request
 
     payload = {
         "definition": {"inputs": {"x": {"dtype": "float32", "shape": ["2"]}}},
@@ -724,7 +723,7 @@ def test_fp4_generation_uses_float32_clamp_then_cast(monkeypatch):
     assert namespace["_rand_tensor"]([4], dtype, torch.device("cpu")) == "packed-fp4"
     expected_calls = list(calls)
     calls.clear()
-    from triton_evaluation.runtime.input_generation import _rand_tensor
+    from ascend_op_eval.execution.input_generation import _rand_tensor
 
     monkeypatch.setattr(torch, "randn", TorchNamespace().randn)
     dtype = torch.float4_e2m1fn_x2
@@ -741,7 +740,7 @@ def test_global_family_draw_even_for_explicit_distribution(monkeypatch):
 
 
 def test_embedded_generator_preserves_reference_globals():
-    from triton_evaluation.operator_input import OperatorRequest, to_evaluation_request
+    from ascend_op_eval.operator_input import OperatorRequest, to_evaluation_request
 
     request = OperatorRequest.model_validate(
         {
@@ -799,7 +798,7 @@ def test_noncustom_workload_ignores_custom_source(monkeypatch):
 
 
 def test_noncustom_request_embeds_reference_once():
-    from triton_evaluation.operator_input import OperatorRequest, to_evaluation_request
+    from ascend_op_eval.operator_input import OperatorRequest, to_evaluation_request
 
     reference = "def run(x): return x  # embedded-once"
     request = OperatorRequest.model_validate(
@@ -819,7 +818,7 @@ def test_noncustom_request_embeds_reference_once():
 
 def test_float_range_is_ignored_like_upstream(monkeypatch):
     # Official Nonzero workloads put range on float32; upstream applies it only to integers.
-    from triton_evaluation.operator_input import OperatorRequest, normalize_workloads
+    from ascend_op_eval.operator_input import OperatorRequest, normalize_workloads
 
     spec = {"type": "random", "shape": [17], "dtype": "float32", "range": [-10, 10]}
     request = OperatorRequest.model_validate(
@@ -834,7 +833,7 @@ def test_float_range_is_ignored_like_upstream(monkeypatch):
 
 
 def test_reference_callback_source_used_when_no_override(monkeypatch):
-    from triton_evaluation.operator_input import OperatorRequest, to_evaluation_request
+    from ascend_op_eval.operator_input import OperatorRequest, to_evaluation_request
 
     reference = (
         "import torch\ndef build(axes, device): "
@@ -872,7 +871,7 @@ def official_axes(axes, values):
 
 
 def api_axes(axes, values):
-    from triton_evaluation.operator_input import Definition, resolve_axes
+    from ascend_op_eval.operator_input import Definition, resolve_axes
 
     return resolve_axes(Definition.model_validate({"axes": axes, "inputs": {}}), values)
 
@@ -913,7 +912,7 @@ def test_axis_expressions_rejected_where_upstream_fails(axes):
 
 
 def api_case(spec):
-    from triton_evaluation.operator_input import OperatorRequest, normalize_workloads
+    from ascend_op_eval.operator_input import OperatorRequest, normalize_workloads
 
     request = OperatorRequest.model_validate(
         {

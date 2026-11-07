@@ -18,9 +18,8 @@ import json
 from pathlib import Path
 
 import pytest
-
-from triton_evaluation.engine import benchmark
-from triton_evaluation.runtime.reference_cache import (
+from ascend_op_eval.engine import benchmark
+from ascend_op_eval.execution.reference_cache import (
     CacheDeployment,
     CacheMeasurement,
     ReferenceCache,

@@ -19,24 +19,23 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from pydantic import ValidationError
-
-from triton_evaluation.api.contract import (
+from ascend_op_eval.api.contract import (
     EvaluationRequest,
     PerformanceCase,
     PerformanceParams,
 )
-from triton_evaluation.config import Settings
-from triton_evaluation.engine import benchmark
-from triton_evaluation.evaluators import benchmark as benchmark_evaluator_module
-from triton_evaluation.evaluators.benchmark import BenchmarkEvaluator
-from triton_evaluation.evaluators.shaping import ShapingError, shape_performance
-from triton_evaluation.runtime.reference_cache import (
+from ascend_op_eval.config import Settings
+from ascend_op_eval.engine import benchmark
+from ascend_op_eval.evaluators import benchmark as benchmark_evaluator_module
+from ascend_op_eval.evaluators.benchmark import BenchmarkEvaluator
+from ascend_op_eval.evaluators.shaping import ShapingError, shape_performance
+from ascend_op_eval.execution.reference_cache import (
     CacheDeployment,
     CacheMeasurement,
     ReferenceCache,
     sha256,
 )
+from pydantic import ValidationError
 
 torch = pytest.importorskip("torch")
 

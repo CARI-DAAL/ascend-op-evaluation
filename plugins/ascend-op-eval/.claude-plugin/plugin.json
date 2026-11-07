@@ -1,0 +1,7 @@
+{
+  "name": "ascend-op-eval",
+  "version": "0.4.0",
+  "description": "Measure PyTorch or Triton operators, compare correctness and speedup, and recover evaluations.",
+  "repository": "https://github.com/CARI-Fields/triton-op-evaluation",
+  "skills": "./skills/"
+}

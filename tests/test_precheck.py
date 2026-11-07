@@ -6,9 +6,8 @@ from unittest import mock
 
 import pytest
 import redis
-
-from triton_evaluation.evaluators.base import ScriptOutcome
-from triton_evaluation.runtime import precheck, verdict_cache
+from ascend_op_eval.evaluators.base import ScriptOutcome
+from ascend_op_eval.execution import precheck, verdict_cache
 
 
 @pytest.fixture
@@ -22,7 +21,11 @@ def precheck_settings(settings):
         update={
             "verdict_cache_enabled": True,
             "cann_fingerprint": "cann-test",
-            "engine_dir": str(Path(__file__).resolve().parents[1] / "triton_evaluation" / "engine"),
+            "engine_dir": str(
+                Path(__file__).resolve().parents[1]
+                / "packages/ascend-op-eval/src/ascend_op_eval"
+                / "engine"
+            ),
         }
     )
 
@@ -186,7 +189,7 @@ def test_precheck_never_calls_candidate_input_factories(cache, precheck_settings
 def test_precheck_lost_lease_kills_candidate_process_group(cache, precheck_settings, tmp_path):
     import time
 
-    from triton_evaluation.evaluators.base import LeaseLostError
+    from ascend_op_eval.evaluators.base import LeaseLostError
 
     child_marker = tmp_path / "child-survived"
     source = (
@@ -289,7 +292,9 @@ def test_bare_builtin_min_max_are_not_tensor_methods(tmp_path):
         "        return out\n",
         encoding="utf-8",
     )
-    engine = _P(__file__).resolve().parents[1] / "triton_evaluation" / "engine"
+    engine = (
+        _P(__file__).resolve().parents[1] / "packages/ascend-op-eval/src/ascend_op_eval" / "engine"
+    )
     result = subprocess.run(
         [sys.executable, str(engine / "validate_triton_impl.py"), str(kernel), "--json"],
         capture_output=True,

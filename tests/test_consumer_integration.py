@@ -13,12 +13,11 @@ from pathlib import Path
 
 import httpx
 import pytest
+from ascend_op_eval.api.contract import EvaluationResult
 from conftest import make_provenance
 from contract_fixtures import CONTRACT_ROOT
 from test_api import TRIAL_TOKEN, build_app, seed_worker
 from test_worker import StubEvaluator, build_worker
-
-from triton_evaluation.api.contract import EvaluationResult
 
 
 @pytest.fixture

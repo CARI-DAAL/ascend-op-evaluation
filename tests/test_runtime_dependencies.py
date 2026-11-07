@@ -2,11 +2,10 @@
 from threading import Event
 from unittest import mock
 
+from ascend_op_eval.control.broker import EvaluationStore
+from ascend_op_eval.execution.worker import LeaseKeeper
 from conftest import make_caller, make_completed_result
 from test_worker import StubEvaluator, build_worker, wait_until
-
-from triton_evaluation.runtime.worker import LeaseKeeper
-from triton_evaluation.service.broker import EvaluationStore
 
 
 def test_worker_metrics_failure_still_publishes_success(

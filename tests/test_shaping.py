@@ -13,13 +13,12 @@ import math
 from pathlib import Path
 
 import pytest
-
-from triton_evaluation.api.contract import (
+from ascend_op_eval.api.contract import (
     DeepProfileResult,
     OpProfileResult,
 )
-from triton_evaluation.engine._divergence import classify_divergence
-from triton_evaluation.evaluators.shaping import (
+from ascend_op_eval.engine._divergence import classify_divergence
+from ascend_op_eval.evaluators.shaping import (
     ShapingError,
     UnattributedFailure,
     shape_correctness,
@@ -697,7 +696,7 @@ def test_benchmark_mismatched_measurement_method_fails_closed():
 
 
 def test_benchmark_measurement_method_round_trips_through_evaluation_result():
-    from triton_evaluation.api.contract import EvaluationResult, dump_contract
+    from ascend_op_eval.api.contract import EvaluationResult, dump_contract
 
     performance = shape_performance(load("benchmark-event-timing.json"))
     result = EvaluationResult.model_validate(
@@ -742,7 +741,7 @@ def _engine_style_traceback(tail: str) -> str:
 
 def test_unattributed_failure_keeps_tail_under_budget():
     """The tail carries the exception message; a head-only 512B cut hides it."""
-    from triton_evaluation.evaluators.shaping import MAX_MESSAGE_BYTES
+    from ascend_op_eval.evaluators.shaping import MAX_MESSAGE_BYTES
 
     detail = _engine_style_traceback(
         "输出数量不一致 (shape mismatch): framework=3, impl=1"

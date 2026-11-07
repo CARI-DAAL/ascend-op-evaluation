@@ -94,7 +94,7 @@ def test_probe_source_never_imports_service_frameworks():
     source = PROBE.read_text(encoding="utf-8")
     for banned in (
         "import fastapi", "import pydantic", "import redis",
-        "import triton_evaluation", "from triton_evaluation",
+        "import ascend_op_eval", "from ascend_op_eval",
         "from fastapi", "from pydantic", "from redis",
     ):
         assert banned not in source

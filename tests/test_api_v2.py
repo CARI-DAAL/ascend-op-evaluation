@@ -2,6 +2,7 @@
 import json
 
 import pytest
+from ascend_op_eval.api.contract import ErrorEnvelope
 from test_api import (
     OBSERVER_TOKEN,
     build_app,
@@ -11,8 +12,6 @@ from test_api import (
     seed_worker,
     trial_headers,
 )
-
-from triton_evaluation.api.contract import ErrorEnvelope
 
 pytestmark = pytest.mark.anyio
 
@@ -27,9 +26,8 @@ GRADE_BODY = {
 
 
 def grade_payload():
+    from ascend_op_eval.serialization import sha256_hex
     from conftest import CATALOG_REFERENCE_CODE
-
-    from triton_evaluation.serialization import sha256_hex
 
     return GRADE_BODY | {
         "reference_code": CATALOG_REFERENCE_CODE,

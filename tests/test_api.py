@@ -10,16 +10,15 @@ from pathlib import Path
 import fakeredis
 import httpx
 import pytest
+from ascend_op_eval.api import create_app
+from ascend_op_eval.api.contract import ErrorEnvelope, EvaluationResource
+from ascend_op_eval.api.dependencies import AppContext
+from ascend_op_eval.config import Settings
+from ascend_op_eval.control.broker import EvaluationStore
+from ascend_op_eval.control.instance import EvaluationInstance
+from ascend_op_eval.control.models import AlgorithmVersions, WorkerIdentity, new_worker_id
+from ascend_op_eval.control.security import CapabilityRegistry
 from conftest import FakeClock, make_completed_result
-
-from triton_evaluation.api import create_app
-from triton_evaluation.api.contract import ErrorEnvelope, EvaluationResource
-from triton_evaluation.api.dependencies import AppContext
-from triton_evaluation.config import Settings
-from triton_evaluation.service.broker import EvaluationStore
-from triton_evaluation.service.instance import EvaluationInstance
-from triton_evaluation.service.models import AlgorithmVersions, WorkerIdentity, new_worker_id
-from triton_evaluation.service.security import CapabilityRegistry
 
 pytestmark = pytest.mark.anyio
 
@@ -110,7 +109,7 @@ def build_app(tmp_path, catalog_files, clock=None, settings=None):
     server = fakeredis.FakeServer()
     client = fakeredis.FakeStrictRedis(server=server)
     clock = clock or FakeClock()
-    from triton_evaluation.service.metrics import RedisMetrics
+    from ascend_op_eval.control.metrics import RedisMetrics
 
     metrics = RedisMetrics(client, settings.redis_prefix)
     store = EvaluationStore(client, settings, clock=clock, metrics=metrics)
@@ -164,7 +163,7 @@ def request_payload(**overrides):
 
 
 def internal_request(**overrides):
-    from triton_evaluation.operator_input import OperatorRequest, to_evaluation_request
+    from ascend_op_eval.operator_input import OperatorRequest, to_evaluation_request
 
     return to_evaluation_request(OperatorRequest.model_validate(request_payload(**overrides)))
 

@@ -3,6 +3,8 @@ import asyncio
 from pathlib import Path
 
 import pytest
+from ascend_op_eval.api.contract import EvaluationResource
+from ascend_op_eval.execution.worker import Worker
 from conftest import make_caller, make_completed_result
 from test_api import (
     algorithms,
@@ -11,9 +13,6 @@ from test_api import (
     seed_worker,
     trial_headers,
 )
-
-from triton_evaluation.api.contract import EvaluationResource
-from triton_evaluation.runtime.worker import Worker
 
 pytestmark = pytest.mark.anyio
 
@@ -83,17 +82,16 @@ async def test_api_object_recreation_recovers_by_id(app):
 
 def _rebuild(app):
     import httpx
-
-    from triton_evaluation.api import create_app
-    from triton_evaluation.service.broker import EvaluationStore
-    from triton_evaluation.service.metrics import RedisMetrics
-    from triton_evaluation.service.security import CapabilityRegistry
+    from ascend_op_eval.api import create_app
+    from ascend_op_eval.control.broker import EvaluationStore
+    from ascend_op_eval.control.metrics import RedisMetrics
+    from ascend_op_eval.control.security import CapabilityRegistry
 
     metrics = RedisMetrics(app.store._r, app.settings.redis_prefix)
     store = EvaluationStore(app.store._r, app.settings, clock=app.clock,
                             metrics=metrics)
-    from triton_evaluation.api.dependencies import AppContext
-    from triton_evaluation.service.instance import EvaluationInstance
+    from ascend_op_eval.api.dependencies import AppContext
+    from ascend_op_eval.control.instance import EvaluationInstance
 
     instance = EvaluationInstance(
         settings=app.settings, store=store,
@@ -138,7 +136,7 @@ async def test_worker_replacement_after_lease_expiry(app):
 
 
 def _identity(app):
-    from triton_evaluation.service.models import WorkerIdentity, new_worker_id
+    from ascend_op_eval.control.models import WorkerIdentity, new_worker_id
 
     return WorkerIdentity(new_worker_id(), app.settings.evaluator_build,
                           algorithms(app.settings))

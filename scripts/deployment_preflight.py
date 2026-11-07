@@ -5,6 +5,7 @@ Validate an explicit private IPv4 bind, immutable images, mounted capabilities
 and durable local Redis. Consumer sandbox networking and endpoint
 selection belong to the consumer and are not deployment inputs here.
 """
+
 import argparse
 import ipaddress
 import json
@@ -27,21 +28,34 @@ REDIS_IMAGE = (
 # EXEC acknowledgement under --appendfsync always is the first-2xx durability
 # boundary: an accepted evaluation survives a container crash.
 REDIS_COMMAND = [
-    "redis-server", "--bind", "127.0.0.1", "--port", "6379", "--save", "",
-    "--appendonly", "yes", "--appendfsync", "always",
-    "--aof-use-rdb-preamble", "yes",
+    "redis-server",
+    "--bind",
+    "127.0.0.1",
+    "--port",
+    "6379",
+    "--save",
+    "",
+    "--appendonly",
+    "yes",
+    "--appendfsync",
+    "always",
+    "--aof-use-rdb-preamble",
+    "yes",
 ]
 REDIS_VOLUME = "triton-eval-redis-v2"
 REDIS_URL = "redis://127.0.0.1:6379/7"
 REDIS_PREFIX = "triton-eval:v2.1"
 _REQUIRED_ENV = (
-    "TRITON_EVAL_API_HOST", "TRITON_EVAL_API_PORT",
-    "TRITON_EVAL_CAPABILITY_SECRET_PATH", "TRITON_EVAL_IMAGE",
-    "TRITON_EVAL_EVALUATOR_BUILD", "TRITON_EVAL_RELEASE_MANIFEST_HOST",
+    "ASCEND_OP_EVAL_API_HOST",
+    "ASCEND_OP_EVAL_API_PORT",
+    "ASCEND_OP_EVAL_CAPABILITY_SECRET_PATH",
+    "ASCEND_OP_EVAL_IMAGE",
+    "ASCEND_OP_EVAL_EVALUATOR_BUILD",
+    "ASCEND_OP_EVAL_RELEASE_MANIFEST_HOST",
 )
 # The manifest describes the image being deployed, so it is mounted into the
 # container instead of being built into it.
-CONTAINER_MANIFEST = "/opt/triton-eval/release-manifest.json"
+CONTAINER_MANIFEST = "/opt/ascend-op-eval/release-manifest.json"
 
 
 CommandRunner = Callable[[list[str]], tuple[int, str, str]]
@@ -63,19 +77,22 @@ class DeploymentConfig:
 def check_engine_import_context(interpreter: str, env: Mapping[str, str]) -> None:
     """Check host engine imports from an attempt cwd, without exposing diagnostics."""
     # A configured sandbox owns its package visibility; this is a host-only probe.
-    if env.get("TRITON_EVAL_ENGINE_SANDBOX_CONFIG"):
+    if env.get("ASCEND_OP_EVAL_ENGINE_SANDBOX_CONFIG"):
         return
     if os.sep in interpreter and not Path(interpreter).is_absolute():
         interpreter = str(Path(interpreter).absolute())
     remedy = (
         f"from repository root {PROJECT_ROOT}, run "
-        f"{shlex.quote(interpreter)} -m pip install -e . --no-deps"
+        f"{shlex.quote(interpreter)} -m pip install -e packages/ascend-op-eval --no-deps"
     )
     try:
         with tempfile.TemporaryDirectory(prefix="triton-eval-import-") as cwd:
             result = subprocess.run(
-                [interpreter, "-c", "import triton_evaluation"],
-                cwd=cwd, env=dict(env), capture_output=True, timeout=60,
+                [interpreter, "-c", "import ascend_op_eval"],
+                cwd=cwd,
+                env=dict(env),
+                capture_output=True,
+                timeout=60,
                 check=False,
             )
     except subprocess.TimeoutExpired:
@@ -84,13 +101,11 @@ def check_engine_import_context(interpreter: str, env: Mapping[str, str]) -> Non
         raise PreflightError(f"engine import probe interpreter unavailable; {remedy}") from None
     if result.returncode != 0:
         raise PreflightError(
-            f"engine cannot import triton_evaluation from an attempt directory; {remedy}"
+            f"engine cannot import ascend_op_eval from an attempt directory; {remedy}"
         )
 
 
-def inspect_deployment(
-    env: Mapping[str, str], runner: CommandRunner
-) -> DeploymentConfig:
+def inspect_deployment(env: Mapping[str, str], runner: CommandRunner) -> DeploymentConfig:
     """Validate rendered runtime settings and deployment assets before startup."""
     missing = [name for name in _REQUIRED_ENV if not env.get(name)]
     if missing:
@@ -104,14 +119,14 @@ def inspect_deployment(
     _validate_secret(env)
 
     _verify_local_image(runner, REDIS_IMAGE)
-    _verify_local_image(runner, env["TRITON_EVAL_IMAGE"])
+    _verify_local_image(runner, env["ASCEND_OP_EVAL_IMAGE"])
 
     return DeploymentConfig(
         api_host=api_host,
         api_port=API_PORT,
-        capability_file=Path(env["TRITON_EVAL_CAPABILITY_SECRET_PATH"]),
+        capability_file=Path(env["ASCEND_OP_EVAL_CAPABILITY_SECRET_PATH"]),
         redis_image=REDIS_IMAGE,
-        evaluator_build=env["TRITON_EVAL_EVALUATOR_BUILD"],
+        evaluator_build=env["ASCEND_OP_EVAL_EVALUATOR_BUILD"],
     )
 
 
@@ -123,30 +138,42 @@ def _run(runner: CommandRunner, argv: list[str]) -> str:
 
 
 def _validate_bind(env: Mapping[str, str]) -> ipaddress.IPv4Address:
-    if env["TRITON_EVAL_API_PORT"] != str(API_PORT):
-        raise PreflightError("TRITON_EVAL_API_PORT must be the production port")
+    if env["ASCEND_OP_EVAL_API_PORT"] != str(API_PORT):
+        raise PreflightError("ASCEND_OP_EVAL_API_PORT must be the production port")
     try:
-        address = ipaddress.IPv4Address(env["TRITON_EVAL_API_HOST"])
+        address = ipaddress.IPv4Address(env["ASCEND_OP_EVAL_API_HOST"])
     except ValueError:
-        raise PreflightError("TRITON_EVAL_API_HOST must be a private IPv4 address") from None
+        raise PreflightError("ASCEND_OP_EVAL_API_HOST must be a private IPv4 address") from None
     private_networks = (
         ipaddress.IPv4Network("10.0.0.0/8"),
         ipaddress.IPv4Network("172.16.0.0/12"),
         ipaddress.IPv4Network("192.168.0.0/16"),
     )
     if not any(address in network for network in private_networks):
-        raise PreflightError("TRITON_EVAL_API_HOST must be an explicit private IPv4 address")
+        raise PreflightError("ASCEND_OP_EVAL_API_HOST must be an explicit private IPv4 address")
     return address
 
 
 def _render_compose(env: Mapping[str, str], runner: CommandRunner) -> dict:
-    compose_file = env.get("TRITON_EVAL_COMPOSE_FILE", str(PROJECT_ROOT / "docker/compose.yaml"))
-    env_file = env.get("TRITON_EVAL_ENV_FILE", "/dev/null")
+    compose_file = env.get(
+        "ASCEND_OP_EVAL_COMPOSE_FILE", str(PROJECT_ROOT / "deploy/compose/compose.yaml")
+    )
+    env_file = env.get("ASCEND_OP_EVAL_ENV_FILE", "/dev/null")
     payload = _run(
         runner,
-        ["docker", "compose", "--project-directory", str(PROJECT_ROOT),
-         "--env-file", env_file, "-f", compose_file,
-         "config", "--format", "json"],
+        [
+            "docker",
+            "compose",
+            "--project-directory",
+            str(PROJECT_ROOT),
+            "--env-file",
+            env_file,
+            "-f",
+            compose_file,
+            "config",
+            "--format",
+            "json",
+        ],
     )
     try:
         return json.loads(payload)
@@ -166,21 +193,19 @@ def _validate_redis_service(rendered: dict) -> None:
     if list(command) != REDIS_COMMAND:
         raise PreflightError("redis command must enable durable AOF persistence")
     volumes = redis.get("volumes") or []
-    if not any(
-        v.get("source") == REDIS_VOLUME and v.get("target") == "/data" for v in volumes
-    ):
+    if not any(v.get("source") == REDIS_VOLUME and v.get("target") == "/data" for v in volumes):
         raise PreflightError("redis must persist into the named data volume")
     if REDIS_VOLUME not in (rendered.get("volumes") or {}):
         raise PreflightError("compose must declare the redis data volume")
 
 
 def _validate_eval_service(rendered: dict, env: Mapping[str, str], api_host) -> None:
-    service = rendered.get("services", {}).get("triton-eval")
+    service = rendered.get("services", {}).get("ascend-op-eval")
     if not isinstance(service, dict):
         raise PreflightError("compose must define the eval service")
     if service.get("network_mode") != "host":
         raise PreflightError("eval service must stay on the host network")
-    image = env["TRITON_EVAL_IMAGE"]
+    image = env["ASCEND_OP_EVAL_IMAGE"]
     if "@sha256:" not in image:
         raise PreflightError("eval image must be a digest reference")
     digest = image.split("@sha256:")[-1]
@@ -189,21 +214,22 @@ def _validate_eval_service(rendered: dict, env: Mapping[str, str], api_host) -> 
     if service.get("image") != image:
         raise PreflightError("rendered eval image must match the deployment input")
     settings_env = service.get("environment") or {}
-    if settings_env.get("TRITON_EVAL_IMAGE") != image:
+    if settings_env.get("ASCEND_OP_EVAL_IMAGE") != image:
         raise PreflightError("runtime image identity must match the immutable image")
-    build = env["TRITON_EVAL_EVALUATOR_BUILD"]
+    build = env["ASCEND_OP_EVAL_EVALUATOR_BUILD"]
     git_sha = build.removeprefix("git:")
     is_reviewed_git_build = (
-        build.startswith("git:") and len(git_sha) == 40
+        build.startswith("git:")
+        and len(git_sha) == 40
         and all(char in "0123456789abcdef" for char in git_sha)
     )
     if build != image.rsplit("@", 1)[1] and not is_reviewed_git_build:
         raise PreflightError("evaluator build must equal the immutable image's sha256 digest")
-    if settings_env.get("TRITON_EVAL_EVALUATOR_BUILD") != build:
+    if settings_env.get("ASCEND_OP_EVAL_EVALUATOR_BUILD") != build:
         raise PreflightError("rendered evaluator build must match the deployment input")
-    if settings_env.get("TRITON_EVAL_API_HOST") != str(api_host):
+    if settings_env.get("ASCEND_OP_EVAL_API_HOST") != str(api_host):
         raise PreflightError("rendered API host must equal the configured instance address")
-    if settings_env.get("TRITON_EVAL_API_PORT") != str(API_PORT):
+    if settings_env.get("ASCEND_OP_EVAL_API_PORT") != str(API_PORT):
         raise PreflightError("rendered API port must be the production port")
     _validate_instance_settings(settings_env, env)
     _validate_mounts(service.get("volumes") or [], settings_env, env)
@@ -215,52 +241,61 @@ def _validate_release_identity(
     settings_env: Mapping[str, str], volumes: list[dict], env: Mapping[str, str]
 ) -> None:
     """Require release-mode startup bound to a manifest for this exact image."""
-    if settings_env.get("TRITON_EVAL_RELEASE_MODE") != "release":
+    if settings_env.get("ASCEND_OP_EVAL_RELEASE_MODE") != "release":
         raise PreflightError("deployed service must start in release mode")
-    if settings_env.get("TRITON_EVAL_RELEASE_MANIFEST") != CONTAINER_MANIFEST:
+    if settings_env.get("ASCEND_OP_EVAL_RELEASE_MANIFEST") != CONTAINER_MANIFEST:
         raise PreflightError("rendered release manifest path must match the validated mount")
-    host_path = Path(env["TRITON_EVAL_RELEASE_MANIFEST_HOST"])
+    host_path = Path(env["ASCEND_OP_EVAL_RELEASE_MANIFEST_HOST"])
     mount = {volume.get("target"): volume for volume in volumes}.get(CONTAINER_MANIFEST)
     if mount is None:
         raise PreflightError(f"required read-only mount missing: {CONTAINER_MANIFEST}")
     source = mount.get("source")
-    if (mount.get("read_only") is not True or mount.get("type") != "bind"
-            or not isinstance(source, str) or Path(source).resolve() != host_path.resolve()):
+    if (
+        mount.get("read_only") is not True
+        or mount.get("type") != "bind"
+        or not isinstance(source, str)
+        or Path(source).resolve() != host_path.resolve()
+    ):
         raise PreflightError(
             f"release manifest mount must be the validated read-only host path: "
             f"{CONTAINER_MANIFEST}"
         )
 
     try:
-        from triton_evaluation.versioning import ManifestError, load_manifest
+        from ascend_op_eval.versioning import ManifestError, load_manifest
     except ImportError:
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-        from triton_evaluation.versioning import ManifestError, load_manifest
+        from ascend_op_eval.versioning import ManifestError, load_manifest
 
     try:
         manifest = load_manifest(host_path)
     except ManifestError as error:
         raise PreflightError(f"release manifest failed validation: {error.reason}") from None
-    if manifest["evaluator_build"] != env["TRITON_EVAL_EVALUATOR_BUILD"]:
+    if manifest["evaluator_build"] != env["ASCEND_OP_EVAL_EVALUATOR_BUILD"]:
         raise PreflightError("release manifest must bind the deployed evaluator build")
-    if manifest["image_reference"] != env["TRITON_EVAL_IMAGE"]:
+    if manifest["image_reference"] != env["ASCEND_OP_EVAL_IMAGE"]:
         raise PreflightError("release manifest must bind the deployed image reference")
 
 
 def _validate_runtime_settings(settings_env: Mapping[str, str]) -> None:
     """Use the runtime parser with only the environment this container receives."""
     try:
-        from triton_evaluation.config import Settings
+        from ascend_op_eval.config import Settings
     except ImportError:
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-        from triton_evaluation.config import Settings
+        from ascend_op_eval.config import Settings
 
     from pydantic_settings import EnvSettingsSource
 
     class RenderedSettings(Settings):
         @classmethod
         def settings_customise_sources(
-            cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings,
+            cls,
+            settings_cls,
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            file_secret_settings,
         ):
             source = EnvSettingsSource(settings_cls)
             source.env_vars = {name.lower(): value for name, value in settings_env.items()}
@@ -273,29 +308,32 @@ def _validate_runtime_settings(settings_env: Mapping[str, str]) -> None:
 
 
 def _validate_instance_settings(settings_env: Mapping[str, str], env: Mapping[str, str]) -> None:
-    redis_url = env.get("TRITON_EVAL_REDIS_URL", REDIS_URL)
+    redis_url = env.get("ASCEND_OP_EVAL_REDIS_URL", REDIS_URL)
     if re.fullmatch(r"redis://127\.0\.0\.1:6379/(0|[1-9][0-9]*)", redis_url) is None:
         raise PreflightError("Redis URL must use the local managed Redis without credentials")
-    if settings_env.get("TRITON_EVAL_REDIS_URL") != redis_url:
+    if settings_env.get("ASCEND_OP_EVAL_REDIS_URL") != redis_url:
         raise PreflightError("rendered Redis URL must equal the configured local database")
-    if (env.get("TRITON_EVAL_REDIS_PREFIX", REDIS_PREFIX) != REDIS_PREFIX
-            or settings_env.get("TRITON_EVAL_REDIS_PREFIX") != REDIS_PREFIX):
+    if (
+        env.get("ASCEND_OP_EVAL_REDIS_PREFIX", REDIS_PREFIX) != REDIS_PREFIX
+        or settings_env.get("ASCEND_OP_EVAL_REDIS_PREFIX") != REDIS_PREFIX
+    ):
         raise PreflightError("Redis namespace must be triton-eval:v2.1")
 
-    cards = env.get("TRITON_EVAL_CARDS", "0")
+    cards = env.get("ASCEND_OP_EVAL_CARDS", "0")
     if re.fullmatch(r"[0-9]+(?:,[0-9]+)*", cards) is None:
         raise PreflightError("cards must be a nonempty comma-separated decimal device list")
     device_ids = [int(card) for card in cards.split(",")]
     if len(set(device_ids)) != len(device_ids):
         raise PreflightError("cards must contain unique device IDs")
-    if settings_env.get("TRITON_EVAL_CARDS") != cards:
+    if settings_env.get("ASCEND_OP_EVAL_CARDS") != cards:
         raise PreflightError("rendered cards must equal the configured device list")
 
 
-def _validate_mounts(volumes: list[dict], settings_env: Mapping[str, str],
-                     env: Mapping[str, str]) -> None:
+def _validate_mounts(
+    volumes: list[dict], settings_env: Mapping[str, str], env: Mapping[str, str]
+) -> None:
     runtime_paths = {
-        "TRITON_EVAL_CAPABILITY_SECRET_PATH": "/run/secrets/triton-eval",
+        "ASCEND_OP_EVAL_CAPABILITY_SECRET_PATH": "/run/secrets/ascend-op-eval",
     }
     if any(settings_env.get(name) != path for name, path in runtime_paths.items()):
         raise PreflightError("runtime secret path must match the validated mounts")
@@ -304,7 +342,7 @@ def _validate_mounts(volumes: list[dict], settings_env: Mapping[str, str],
         if "docker.sock" in str(volume.get("source", "")):
             raise PreflightError("the Docker socket must not be mounted")
     mounts = {v.get("target"): v for v in volumes}
-    for name in ("TRITON_EVAL_CAPABILITY_SECRET_PATH",):
+    for name in ("ASCEND_OP_EVAL_CAPABILITY_SECRET_PATH",):
         target = runtime_paths[name]
         mount = mounts.get(target)
         if mount is None:
@@ -312,27 +350,29 @@ def _validate_mounts(volumes: list[dict], settings_env: Mapping[str, str],
         if mount.get("read_only") is not True:
             raise PreflightError(f"mount must be read-only: {target}")
         source = mount.get("source")
-        if (mount.get("type") != "bind" or not isinstance(source, str)
-                or Path(source).resolve() != Path(env[name]).resolve()):
+        if (
+            mount.get("type") != "bind"
+            or not isinstance(source, str)
+            or Path(source).resolve() != Path(env[name]).resolve()
+        ):
             raise PreflightError(f"mount source must equal the validated host path: {target}")
 
 
 def _validate_secret(env: Mapping[str, str]) -> None:
     try:
-        from triton_evaluation.service.security import CapabilityRegistry
+        from ascend_op_eval.control.security import CapabilityRegistry
     except ImportError:
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-        from triton_evaluation.service.security import CapabilityRegistry
+        from ascend_op_eval.control.security import CapabilityRegistry
 
     try:
-        CapabilityRegistry.from_secret_file(Path(env["TRITON_EVAL_CAPABILITY_SECRET_PATH"]))
+        CapabilityRegistry.from_secret_file(Path(env["ASCEND_OP_EVAL_CAPABILITY_SECRET_PATH"]))
     except Exception:
         raise PreflightError("capability secret failed validation") from None
 
 
 def _verify_local_image(runner: CommandRunner, reference: str) -> None:
-    payload = _run(runner, ["docker", "image", "inspect", "--format", "json",
-                            reference])
+    payload = _run(runner, ["docker", "image", "inspect", "--format", "json", reference])
     try:
         info = json.loads(payload)
         digests = info.get("RepoDigests") or []
@@ -358,13 +398,17 @@ def deployment_environment() -> dict[str, str]:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--json", action="store_true",
+        "--json",
+        action="store_true",
         help="print the validated instance bind as machine-readable JSON",
     )
     parser.add_argument(
-        "--engine-import-context", action="store_true",
-        help=("validate host engine package visibility outside the repository "
-              "(skip for configured sandbox)"),
+        "--engine-import-context",
+        action="store_true",
+        help=(
+            "validate host engine package visibility outside the repository "
+            "(skip for configured sandbox)"
+        ),
     )
     try:
         args = parser.parse_args(argv)
@@ -373,13 +417,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.engine_import_context:
             check_engine_import_context(sys.executable, deployment_environment())
-            skipped = bool(os.environ.get("TRITON_EVAL_ENGINE_SANDBOX_CONFIG"))
+            skipped = bool(os.environ.get("ASCEND_OP_EVAL_ENGINE_SANDBOX_CONFIG"))
             status = "skipped" if skipped else "ok"
             if args.json:
                 print(json.dumps({"engine_import_context": status}))
             else:
-                print("engine import context skipped: configured sandbox owns package visibility"
-                      if skipped else "engine import context ok")
+                print(
+                    "engine import context skipped: configured sandbox owns package visibility"
+                    if skipped
+                    else "engine import context ok"
+                )
             return 0
         config = inspect_deployment(deployment_environment(), real_runner())
     except PreflightError as error:

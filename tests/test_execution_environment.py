@@ -5,9 +5,8 @@ import sys
 from types import ModuleType
 
 import pytest
-
-from triton_evaluation.config import Settings
-from triton_evaluation.runtime.execution_environment import (
+from ascend_op_eval.config import Settings
+from ascend_op_eval.runtimes.execution_environment import (
     _triton_version,
     build_execution_environment,
     is_complete_execution_environment,

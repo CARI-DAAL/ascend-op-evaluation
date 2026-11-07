@@ -13,10 +13,9 @@ from typing import Optional
 
 import pytest
 import torch
-
-from triton_evaluation.engine import _official_tolerance, verify
-from triton_evaluation.evaluators.shaping import shape_correctness
-from triton_evaluation.operator_input import OperatorRequest, to_evaluation_request
+from ascend_op_eval.engine import _official_tolerance, verify
+from ascend_op_eval.evaluators.shaping import shape_correctness
+from ascend_op_eval.operator_input import OperatorRequest, to_evaluation_request
 
 OFFICIAL_TOLERANCE_SOURCE = (
     '# ---------------------------------------------------------------------------\n'

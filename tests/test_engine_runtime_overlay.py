@@ -9,11 +9,10 @@ import sys
 from pathlib import Path
 
 import pytest
+from ascend_op_eval.evaluators.base import run_script
+from ascend_op_eval.runtimes import profiler_runtime, sandbox
 from test_profiler_export_replay import elf_binding  # noqa: F401
 from test_profiler_runtime import deployed_runtime  # noqa: F401
-
-from triton_evaluation.evaluators.base import run_script
-from triton_evaluation.runtime import profiler_runtime, sandbox
 
 
 @pytest.fixture
@@ -190,7 +189,7 @@ def test_real_bwrap_child_loads_pinned_alias_and_new_helper_without_host_canary(
     probe = work / "probe.py"
     probe.write_text(
         "import json,os,stat,subprocess,sys\nfrom pathlib import Path\n"
-        "from triton_evaluation.runtime import profiler_runtime as r\n"
+        "from ascend_op_eval.runtimes import profiler_runtime as r\n"
         "m=r.load_runtime()\n"
         "observed=r.describe_runtime()\n"
         "with r.profiler_export_runtime() as trace:\n"
@@ -249,7 +248,7 @@ def test_overlay_cannot_supply_or_change_existing_policy_anchor(anchored_overlay
 def test_overlay_cache_uses_two_artifact_namespaces_and_exact_state(tmp_path, anchored_overlay):
     import importlib.metadata
 
-    from triton_evaluation.runtime.reference_cache import (
+    from ascend_op_eval.execution.reference_cache import (
         BINDING_ENV,
         CACHE_ENV,
         DIGEST_ENV,
@@ -427,7 +426,7 @@ def test_supplied_environment_controls_overlay_despite_ambient_changes(
 
 
 def test_script_uses_snapshot_without_mutating_environment(tmp_path, monkeypatch):
-    from triton_evaluation.config import Settings, command_environment
+    from ascend_op_eval.config import Settings, command_environment
 
     settings = Settings(reference_device_policy="npu-strict")
     environment = command_environment(settings, {"PATH": os.environ["PATH"]})

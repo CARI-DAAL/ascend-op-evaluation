@@ -5,14 +5,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from ascend_op_eval.api.contract import EvaluationRequest
+from ascend_op_eval.config import Settings
+from ascend_op_eval.evaluators import verify
+from ascend_op_eval.evaluators.base import ScriptOutcome
+from ascend_op_eval.operator_input import OperatorRequest
 
 from scripts import npu_feedback_comparison as feedback
 from scripts import test_eval_service as smoke
-from triton_evaluation.api.contract import EvaluationRequest
-from triton_evaluation.config import Settings
-from triton_evaluation.evaluators import verify
-from triton_evaluation.evaluators.base import ScriptOutcome
-from triton_evaluation.operator_input import OperatorRequest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -80,7 +80,7 @@ def test_verify_forwards_whole_run_cap_clamped_to_remaining_resource_time(
 
 @pytest.fixture
 def client_module():
-    path = ROOT / "plugins/triton-eval/skills/triton-eval/scripts/triton_eval.py"
+    path = ROOT / "plugins/ascend-op-eval/skills/ascend-op-eval/scripts/ascend_op_eval.py"
     spec = importlib.util.spec_from_file_location("evaluation_timeout_client", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

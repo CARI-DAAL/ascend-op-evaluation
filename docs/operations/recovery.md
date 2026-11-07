@@ -1,3 +1,10 @@
+---
+status: current
+applies_to: legacy-evaluation-and-custom-method-v1
+verified_revision: e1dbe98977ebf1634c233fb1bfc127c8d62287f9
+owner: maintainers
+---
+
 # Recovery, retries and upgrades
 
 Synchronous Redis AOF EXEC acknowledgement is the durability boundary. HTTP
@@ -11,7 +18,7 @@ attempt-owned card provenance produce `SUSPECTED_POISON_CANDIDATE`. Lease
 fencing prevents stale attempts from publishing results.
 
 The precheck cache stores syntax/import verdicts. Atomic publication owns
-negative precedence and TTL. Reuse requires `TRITON_EVAL_CANN_FINGERPRINT`
+negative precedence and TTL. Reuse requires `ASCEND_OP_EVAL_CANN_FINGERPRINT`
 and is scoped by Python and installed toolchain versions. Missing fingerprints
 or Redis errors disable reuse; an inconclusive explicit compile check reports
 `COMPILE_PRECHECK_UNAVAILABLE`. Prechecks parse and import candidate code; they
@@ -22,7 +29,7 @@ execute their requested checks and measurements. Backend JIT failures are not re
 across inputs because they can depend on shape and dtype. Reference outputs and reference timings have a separate optional, pinned
 [reference-cache policy](reference-cache.md); candidate evaluation results are not cached.
 
-Engine-failure retries are disabled by default. See [card health](../architecture/card-health.md)
+Engine-failure retries are disabled by default. See [card health](../explanation/device-health.md)
 for the opt-in policy, shared attempt budget and same-card recovery behavior.
 
 ## Upgrading
@@ -60,7 +67,7 @@ source/artifact pins as described below.
 
 ## Runtime module migration
 
-Execution support now lives in `triton_evaluation/runtime/`: profiler handling,
+Execution support now lives in `ascend_op_eval/execution/`: profiler handling,
 reference cache, timing reuse, diagnostics and sandbox isolation join the worker
 and card-health modules. Shared configuration and serialization remain at the
 package root; evaluators orchestrate checks through the runtime layer.
@@ -68,12 +75,12 @@ package root; evaluators orchestrate checks through the runtime layer.
 This move changes source paths and hashes used by pinned deployments. Use a new
 evaluator build and regenerate the profiler/sandbox manifests, cache deployment
 and index, runtime overlays and timing-reuse policies that bind those files.
-The profiler cache algorithm key is now `../runtime/profiler_runtime.py`, resolved
+The profiler cache algorithm key is now `../runtimes/profiler_runtime.py`, resolved
 from the engine directory; the old helper key is rejected. Timing-reuse policy
-`target_service_source_sha256` keys remain relative to the `triton_evaluation/`
-root, so pinned helpers now use `runtime/sandbox.py`,
-`runtime/reference_timing_reuse.py`, `runtime/reference_cache.py` and
-`runtime/profiler_runtime.py` as applicable. Engine source hashes also change
+`target_service_source_sha256` keys remain relative to the `ascend_op_eval/`
+root, so pinned helpers now use `runtimes/sandbox.py`,
+`execution/reference_timing_reuse.py`, `execution/reference_cache.py` and
+`runtimes/profiler_runtime.py` as applicable. Engine source hashes also change
 where imports change. Follow the [profiler resealing procedure](profiler-runtime.md#reseal-before-device-acceptance)
 and [cache policy guidance](reference-cache.md) for artifact ordering and source
 closure. Preserve deployed manifests and hashes as historical evidence; prepare

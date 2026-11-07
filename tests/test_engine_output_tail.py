@@ -5,17 +5,16 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from conftest import make_request
-
-from triton_evaluation.api.contract import MAX_ERROR_MESSAGE_BYTES
-from triton_evaluation.evaluators.base import (
+from ascend_op_eval.api.contract import MAX_ERROR_MESSAGE_BYTES
+from ascend_op_eval.evaluators.base import (
     ENGINE_TAIL_LIMIT,
     ScriptOutcome,
     engine_output_tail,
 )
-from triton_evaluation.evaluators.benchmark import BenchmarkEvaluator
-from triton_evaluation.evaluators.profile import ProfileEvaluator
-from triton_evaluation.evaluators.verify import VerifyEvaluator
+from ascend_op_eval.evaluators.benchmark import BenchmarkEvaluator
+from ascend_op_eval.evaluators.profile import ProfileEvaluator
+from ascend_op_eval.evaluators.verify import VerifyEvaluator
+from conftest import make_request
 
 
 def _outcome(stderr: str = "", stdout: str = "") -> ScriptOutcome:
@@ -86,7 +85,7 @@ def test_evaluator_crashes_preserve_tail_under_the_public_message_limit(
 
 @pytest.mark.parametrize("check", ["correctness", "performance", "profile"])
 def test_engine_failure_messages_can_carry_the_tail(check):
-    from triton_evaluation.evaluators.base import engine_failure
+    from ascend_op_eval.evaluators.base import engine_failure
 
     result = engine_failure(
         check,

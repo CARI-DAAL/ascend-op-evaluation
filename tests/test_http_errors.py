@@ -1,9 +1,8 @@
 """Every non-2xx path returns a schema 2.1 ErrorEnvelope with stable mappings."""
 
 import pytest
+from ascend_op_eval.api.contract import ErrorEnvelope
 from test_api import build_app, post, raw_json, request_payload, trial_headers
-
-from triton_evaluation.api.contract import ErrorEnvelope
 
 pytestmark = pytest.mark.anyio
 

@@ -4,12 +4,11 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
+from ascend_op_eval.config import Settings
+from ascend_op_eval.engine import verify
+from ascend_op_eval.evaluators.base import ScriptOutcome
+from ascend_op_eval.evaluators.verify import VerifyEvaluator
 from conftest import make_request
-
-from triton_evaluation.config import Settings
-from triton_evaluation.engine import verify
-from triton_evaluation.evaluators.base import ScriptOutcome
-from triton_evaluation.evaluators.verify import VerifyEvaluator
 
 
 @pytest.mark.parametrize(
@@ -47,7 +46,7 @@ def test_default_cpu_first_only_retries_reference_execution_error(monkeypatch):
 
 
 def test_settings_reaches_engine_command(tmp_path, monkeypatch):
-    import triton_evaluation.evaluators.verify as evaluator_module
+    import ascend_op_eval.evaluators.verify as evaluator_module
 
     seen = []
 
@@ -79,10 +78,9 @@ def test_policy_binds_admission_and_worker_compatibility(
     store,
     clock,
 ):
+    from ascend_op_eval.control.instance import EvaluationInstance
+    from ascend_op_eval.execution.worker import Worker
     from conftest import make_caller
-
-    from triton_evaluation.runtime.worker import Worker
-    from triton_evaluation.service.instance import EvaluationInstance
 
     strict = settings.model_copy(update={"reference_device_policy": "npu-strict"})
     old_worker = Worker(store, None, device_id=3, settings=settings, clock=clock)

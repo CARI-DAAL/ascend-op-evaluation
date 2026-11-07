@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
-from triton_evaluation.runtime.reference_cache import (
+from ascend_op_eval.execution.reference_cache import (
     CacheDeployment,
     CaseManifest,
     ReferenceCache,

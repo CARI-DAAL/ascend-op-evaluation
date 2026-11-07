@@ -1,0 +1,12 @@
+[project]
+name = "ascend-op-eval-compat"
+version = "0.2.0"
+requires-python = ">=3.10"
+dependencies = ["ascend-op-eval>=0.2,<0.3"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

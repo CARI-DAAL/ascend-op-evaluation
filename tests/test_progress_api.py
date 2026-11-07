@@ -1,5 +1,7 @@
 """Stage snapshots use real HTTP authorization and durable attempt evidence."""
 import pytest
+from ascend_op_eval.api.contract import EvaluationProgress
+from ascend_op_eval.control.models import WorkerIdentity, new_worker_id
 from conftest import make_correctness_success
 from test_api import (
     TRIAL_TOKEN_2,
@@ -9,9 +11,6 @@ from test_api import (
     seed_worker,
     trial_headers,
 )
-
-from triton_evaluation.api.contract import EvaluationProgress
-from triton_evaluation.service.models import WorkerIdentity, new_worker_id
 
 pytestmark = pytest.mark.anyio
 

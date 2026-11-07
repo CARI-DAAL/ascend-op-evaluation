@@ -20,7 +20,7 @@ pytestmark = [
     ),
 ]
 
-from triton_evaluation.engine import benchmark  # noqa: E402
+from ascend_op_eval.engine import benchmark  # noqa: E402
 
 
 def test_measure_event_yields_positive_stable_latency():

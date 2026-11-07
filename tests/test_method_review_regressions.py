@@ -37,7 +37,7 @@ async def test_atomic_raw_output_rename_during_live_guard_is_valid(
     release_catalog_files,
     monkeypatch,
 ):
-    from triton_evaluation.runtime import method_execution
+    from ascend_op_eval.execution import method_execution
 
     app = app_with_precheck(tmp_path, release_catalog_files)
     worker = cpu_worker(app)
@@ -168,7 +168,7 @@ def test_runtime_module_imports_in_a_fresh_interpreter():
         [
             sys.executable,
             "-c",
-            "from triton_evaluation.runtime.method_execution import execute_method; "
+            "from ascend_op_eval.execution.method_execution import execute_method; "
             "print(callable(execute_method))",
         ],
         cwd=Path(__file__).resolve().parents[1],
@@ -181,8 +181,8 @@ def test_runtime_module_imports_in_a_fresh_interpreter():
 
 
 def test_final_collection_remains_strict_when_a_file_disappears(tmp_path, monkeypatch):
-    from triton_evaluation.methods.contracts import MethodLimits
-    from triton_evaluation.runtime import method_execution
+    from ascend_op_eval.execution import method_execution
+    from ascend_op_eval.methods.contracts import MethodLimits
 
     (tmp_path / "report.json").write_text("{}")
     original_stat = os.stat
@@ -201,8 +201,8 @@ def test_final_collection_remains_strict_when_a_file_disappears(tmp_path, monkey
 
 @pytest.mark.parametrize("kind", ["symlink", "fifo", "oversize"])
 def test_live_guard_still_rejects_unsafe_or_oversized_outputs(tmp_path, kind):
-    from triton_evaluation.methods.contracts import MethodLimits
-    from triton_evaluation.runtime.method_execution import OutputProtocolError, collect_outputs
+    from ascend_op_eval.execution.method_execution import OutputProtocolError, collect_outputs
+    from ascend_op_eval.methods.contracts import MethodLimits
 
     path = tmp_path / "unsafe"
     if kind == "symlink":
@@ -217,9 +217,8 @@ def test_live_guard_still_rejects_unsafe_or_oversized_outputs(tmp_path, kind):
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), object()])
 def test_explicit_json_schema_keeps_finite_json_runtime_validation(value):
+    from ascend_op_eval.methods.contracts import MethodSubmission
     from pydantic import ValidationError
-
-    from triton_evaluation.methods.contracts import MethodSubmission
 
     with pytest.raises(ValidationError):
         MethodSubmission(method_ref="sha256:" + "a" * 64, parameters={"nested": [value]})

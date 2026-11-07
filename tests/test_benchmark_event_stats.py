@@ -1,5 +1,5 @@
 """Event-timing statistics: median latency and CV stability gate (pure)."""
-from triton_evaluation.engine import benchmark
+from ascend_op_eval.engine import benchmark
 
 
 def test_median_and_cv_basic():

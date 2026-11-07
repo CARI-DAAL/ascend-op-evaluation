@@ -14,8 +14,8 @@ import pytest
 
 SCRIPT = (
     Path(__file__).resolve().parents[1]
-    / "plugins/triton-eval/skills/triton-eval/scripts"
-    / "triton_eval.py"
+    / "plugins/ascend-op-eval/skills/ascend-op-eval/scripts"
+    / "ascend_op_eval.py"
 )
 TOKEN = "test-capability-that-must-not-be-printed"
 EID = "ev_" + "1" * 32

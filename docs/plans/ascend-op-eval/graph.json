@@ -1,0 +1,255 @@
+{
+  "schema_version": 1,
+  "feature": "ascend-op-eval",
+  "baseline_commit": "bc22bacf51a659438dd28439644cc7d96f93382b",
+  "spec": "spec.md",
+  "status_source": "issues/*.md: **Status:**",
+  "initial_frontier": [
+    "AOE-01"
+  ],
+  "default_integration_branch": "feat/ascend-op-eval",
+  "tickets": [
+    {
+      "id": "AOE-01",
+      "title": "提取通用进程执行模块，保持现有评测行为",
+      "file": "issues/01-preserve-legacy-runner.md",
+      "blocked_by": [],
+      "integration_area": "运行器"
+    },
+    {
+      "id": "AOE-02",
+      "title": "提交并恢复一个 CPU 程序的完整执行",
+      "file": "issues/02-cpu-execution-tracer.md",
+      "blocked_by": [
+        "AOE-01"
+      ],
+      "integration_area": "执行契约与持久化"
+    },
+    {
+      "id": "AOE-03",
+      "title": "安全传递多文件工程和大产物",
+      "file": "issues/03-artifact-trees-retention.md",
+      "blocked_by": [
+        "AOE-02"
+      ],
+      "integration_area": "产物存储"
+    },
+    {
+      "id": "AOE-04",
+      "title": "发现并严格匹配可执行环境",
+      "file": "issues/04-runtime-capabilities.md",
+      "blocked_by": [
+        "AOE-02"
+      ],
+      "integration_area": "Runtime 与部署"
+    },
+    {
+      "id": "AOE-05",
+      "title": "取消和资源预算约束覆盖整个进程树",
+      "file": "issues/05-cancel-budget-cleanup.md",
+      "blocked_by": [
+        "AOE-02",
+        "AOE-04"
+      ],
+      "integration_area": "运行器"
+    },
+    {
+      "id": "AOE-06",
+      "title": "worker 故障后恢复同一逻辑执行",
+      "file": "issues/06-durable-attempt-recovery.md",
+      "blocked_by": [
+        "AOE-03",
+        "AOE-05"
+      ],
+      "integration_area": "执行契约与持久化"
+    },
+    {
+      "id": "AOE-07",
+      "title": "流式读取执行进度并区分报告与执行事实",
+      "file": "issues/07-events-artifact-evidence.md",
+      "blocked_by": [
+        "AOE-03",
+        "AOE-05"
+      ],
+      "integration_area": "观察与结果"
+    },
+    {
+      "id": "AOE-08",
+      "title": "在独占 Ascend 卡上运行任意评测程序",
+      "file": "issues/08-single-ascend-execution.md",
+      "blocked_by": [
+        "AOE-04",
+        "AOE-05"
+      ],
+      "integration_area": "设备运行"
+    },
+    {
+      "id": "AOE-09",
+      "title": "外部 adapter 按固定 profile 提交和恢复执行",
+      "file": "issues/09-external-adapter-client.md",
+      "blocked_by": [
+        "AOE-03",
+        "AOE-04",
+        "AOE-06",
+        "AOE-07"
+      ],
+      "integration_area": "外部 adapter"
+    },
+    {
+      "id": "AOE-10",
+      "title": "将现有 Triton 评测作为独立 adapter 运行",
+      "file": "issues/10-external-triton-adapter.md",
+      "blocked_by": [
+        "AOE-08",
+        "AOE-09"
+      ],
+      "integration_area": "默认 adapter"
+    },
+    {
+      "id": "AOE-11",
+      "title": "原生 AscendC 工程经相同执行契约构建和运行",
+      "file": "issues/11-native-ascendc-program.md",
+      "blocked_by": [
+        "AOE-08",
+        "AOE-09"
+      ],
+      "integration_area": "原生工程示例"
+    },
+    {
+      "id": "AOE-12",
+      "title": "通用比较能力严格验证输出契约与输入状态",
+      "file": "issues/12-strict-default-verification.md",
+      "blocked_by": [
+        "AOE-10"
+      ],
+      "integration_area": "默认 adapter"
+    },
+    {
+      "id": "AOE-13",
+      "title": "外部 CANNBench adapter 运行固定上游快照",
+      "file": "issues/13-external-cannbench-profile.md",
+      "blocked_by": [
+        "AOE-08",
+        "AOE-09"
+      ],
+      "integration_area": "CANNBench adapter"
+    },
+    {
+      "id": "AOE-14",
+      "title": "CPU 构建产物可传给独立 NPU 执行",
+      "file": "issues/14-build-artifact-handoff.md",
+      "blocked_by": [
+        "AOE-11"
+      ],
+      "integration_area": "外部编排与产物"
+    },
+    {
+      "id": "AOE-15",
+      "title": "评测 controller 可启动受控隔离子执行",
+      "file": "issues/15-isolated-child-execution.md",
+      "blocked_by": [
+        "AOE-03",
+        "AOE-04",
+        "AOE-05",
+        "AOE-06"
+      ],
+      "integration_area": "Runtime 子执行"
+    },
+    {
+      "id": "AOE-16",
+      "title": "同一设备租约内隔离 reference 与候选状态",
+      "file": "issues/16-isolated-device-judging.md",
+      "blocked_by": [
+        "AOE-08",
+        "AOE-12",
+        "AOE-15"
+      ],
+      "integration_area": "设备子执行与默认 adapter"
+    },
+    {
+      "id": "AOE-17",
+      "title": "原子预留同机多卡并运行多 rank 程序",
+      "file": "issues/17-single-host-device-groups.md",
+      "blocked_by": [
+        "AOE-06",
+        "AOE-08"
+      ],
+      "integration_area": "设备调度"
+    },
+    {
+      "id": "AOE-18",
+      "title": "外部程序在声明环境中完成计时与 profiler 导出",
+      "file": "issues/18-measurement-profiler-programs.md",
+      "blocked_by": [
+        "AOE-10",
+        "AOE-11"
+      ],
+      "integration_area": "测量与工具"
+    },
+    {
+      "id": "AOE-19",
+      "title": "旧客户端继续提交并恢复历史任务",
+      "file": "issues/19-legacy-compatibility-gateway.md",
+      "blocked_by": [
+        "AOE-06",
+        "AOE-10",
+        "AOE-12"
+      ],
+      "integration_area": "兼容迁移"
+    },
+    {
+      "id": "AOE-20",
+      "title": "以 ascend-op-eval 独立安装和启动通用核心",
+      "file": "issues/20-service-package-separation.md",
+      "blocked_by": [
+        "AOE-13",
+        "AOE-19"
+      ],
+      "integration_area": "发布与包装"
+    },
+    {
+      "id": "AOE-21",
+      "title": "完整 CPU 集成与故障恢复验收",
+      "file": "issues/21-cpu-integration-gate.md",
+      "blocked_by": [
+        "AOE-07",
+        "AOE-14",
+        "AOE-16",
+        "AOE-17",
+        "AOE-18",
+        "AOE-20"
+      ],
+      "integration_area": "集成验收"
+    },
+    {
+      "id": "AOE-22",
+      "title": "目标 NPU 验收执行、隔离、多卡与计时",
+      "file": "issues/22-npu-execution-release-gate.md",
+      "blocked_by": [
+        "AOE-21"
+      ],
+      "integration_area": "硬件验收"
+    },
+    {
+      "id": "AOE-23",
+      "title": "验收外部 CANNBench profile 与固定上游的一致性",
+      "file": "issues/23-cannbench-parity-gate.md",
+      "blocked_by": [
+        "AOE-13",
+        "AOE-22"
+      ],
+      "integration_area": "CANNBench 兼容验收"
+    },
+    {
+      "id": "AOE-24",
+      "title": "完成集成审查与可恢复的发布交付",
+      "file": "issues/24-release-readiness-handoff.md",
+      "blocked_by": [
+        "AOE-21",
+        "AOE-22",
+        "AOE-23"
+      ],
+      "integration_area": "最终集成"
+    }
+  ]
+}

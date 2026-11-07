@@ -1,9 +1,8 @@
 """/livez and /readyz semantics: liveness touches nothing; readiness is
 dependency-aware and reveals no component detail."""
 import pytest
+from ascend_op_eval.api.contract import ErrorEnvelope
 from test_api import build_app, seed_worker
-
-from triton_evaluation.api.contract import ErrorEnvelope
 
 pytestmark = pytest.mark.anyio
 
@@ -15,7 +14,7 @@ def app(tmp_path, release_catalog_files):
 
 async def test_livez_is_constant_and_touches_nothing(app, monkeypatch):
     """Liveness must not read the store, catalog, or worker state."""
-    from triton_evaluation.service.broker import EvaluationStore
+    from ascend_op_eval.control.broker import EvaluationStore
 
     def _forbidden(*args, **kwargs):
         raise AssertionError("livez must not touch the store")

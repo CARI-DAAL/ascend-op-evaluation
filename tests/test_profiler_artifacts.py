@@ -1,8 +1,7 @@
 """Failed profiler evidence retention, independent of the device timing defect."""
 
 import pytest
-
-from triton_evaluation.engine import benchmark
+from ascend_op_eval.engine import benchmark
 
 
 @pytest.mark.parametrize("corrupt_csv", [False, True])

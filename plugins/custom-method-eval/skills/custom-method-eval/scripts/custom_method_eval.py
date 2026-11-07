@@ -38,6 +38,15 @@ class ClientError(Exception):
         super().__init__(message)
 
 
+def client_setting(name, legacy):
+    """Accept the documented old setting without exposing credential values."""
+    current = "ASCEND_OP_EVAL_CLIENT_" + name
+    value, previous = os.environ.get(current), os.environ.get(legacy)
+    if value is not None and previous is not None and value != previous:
+        raise ClientError("CONFIG_CONFLICT", f"conflicting settings: {current}, {legacy}")
+    return value if value is not None else previous
+
+
 class Parser(argparse.ArgumentParser):
     def error(self, message):
         raise ClientError("INVALID_ARGUMENT", "invalid arguments; use --help")
@@ -296,9 +305,11 @@ def arguments(argv):
         "runtimes",
     ]:
         sub = commands.add_parser(name)
-        sub.add_argument("--url", default=os.environ.get("EVALUATION_URL"))
+        sub.add_argument("--url", default=client_setting("URL", "EVALUATION_URL"))
         sub.add_argument(
-            "--capability-file", type=Path, default=os.environ.get("EVALUATION_CAPABILITY_FILE")
+            "--capability-file",
+            type=Path,
+            default=client_setting("CAPABILITY_FILE", "EVALUATION_CAPABILITY_FILE"),
         )
         sub.add_argument("--timeout", type=positive, default=15.0)
         sub.add_argument("--wait-seconds", type=positive, default=300.0)

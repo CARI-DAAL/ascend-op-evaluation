@@ -1,0 +1,1584 @@
+"""Durable idempotent resource admission store (design sections 3.2 and 6).
+
+Resource creation is one optimistic ``WATCH``/``MULTI``/``EXEC`` transaction that atomically
+writes the idempotency record, the resource hash, the FIFO ``ready`` entry,
+the deadline and state indexes, and the quota counters. Connections are
+binary (``decode_responses=False``) so canonical request bytes are stored and
+compared exactly, never decoded and re-encoded. No Lua scripts and no
+in-memory fallback.
+
+Fixed keyspace under ``settings.redis_prefix`` (default ``triton-eval:v2.1``)::
+
+    resource:{evaluation_id}                     hash (canonical request, public
+                                                 resource JSON, owner, quotas metadata)
+    idempotency:{sha256(caller_id NUL key)}      hash: evaluation_id, request_digest
+    ready:{cpu|npu}:interactive                  zset, score = queue sequence
+    ready:{cpu|npu}:bulk                         zset, score = queue sequence (rollout class)
+    queue-sequence                               integer
+    deadlines                                    zset, score = deadline epoch ms
+    running-leases                               zset, score = lease expiry epoch ms
+    worker-heartbeats                            hash: worker ID -> compatibility JSON
+    worker-heartbeat-expiry                      zset, score = heartbeat expiry ms
+    metrics:fenced-write-rejected                integer
+    state:{queued|running|completed|failed|timed_out}  zsets of evaluation IDs;
+                                                 queued/running scored by deadline,
+                                                 terminal by retention-expiry instant
+    inflight:caller:{traffic_class}:{sha256(caller_id)}        integer
+    inflight:session:{sha256(caller_id NUL session_id)}        integer
+    rate:{traffic_class}:{sha256(caller_id)}:{minute}          integer, 120s expiry
+
+Rate-window keys expire; nonterminal records never carry a TTL, and terminal
+resource/idempotency records share the retention TTL. Advisory cache keys are
+owned by their runtime modules. Persisted
+timestamps come from the store clock — Redis ``TIME`` in production, an
+injected deterministic clock in tests. The state machine accepts only
+``queued -> running``, ``queued -> failed|timed_out``, and
+``running -> completed|failed|timed_out``; every attempt write is fenced by
+running state, exact attempt ID, exact fencing token, expected public
+revision, and ``now < deadline_at``.
+"""
+import json
+import logging
+import uuid
+from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
+
+import redis
+
+from ascend_op_eval.api.contract import (
+    Check,
+    CheckEvidence,
+    CheckFailed,
+    CheckOutcome,
+    CheckTimedOut,
+    ErrorInfo,
+    EvaluationProgress,
+    EvaluationRequest,
+    EvaluationResource,
+    EvaluationResult,
+    NativeBuildEvidence,
+    dump_contract,
+)
+from ascend_op_eval.config import Settings
+from ascend_op_eval.control.metrics import increment, observe
+from ascend_op_eval.control.models import (
+    AlgorithmVersions,
+    AttemptLease,
+    CreateResourceCommand,
+    CreateResourceResult,
+    ExecutionClass,
+    PinnedProvenance,
+    RecoveryCounts,
+    TerminalState,
+    WorkerCompatibility,
+    WorkerIdentity,
+    new_attempt_id,
+)
+from ascend_op_eval.control.security import Caller
+from ascend_op_eval.control.terminal_results import (
+    complete_evaluation,
+    persisted_check_outcomes,
+)
+from ascend_op_eval.execution.correctness_evidence import (
+    CorrectnessEvidence,
+    CorrectnessEvidenceError,
+    resolve_source,
+)
+from ascend_op_eval.methods.contracts import MethodExecution, MethodIdentity, StoredArtifact
+from ascend_op_eval.serialization import (
+    canonical_json_bytes,
+    load_canonical,
+    sha256_hex,
+)
+
+_RATE_WINDOW_EXPIRY_SECONDS = 120
+_MINUTE_MS = 60_000
+# Retry-safe workload: a crashed attempt may be replaced twice before the
+# reaper commits WORKER_LOST.
+MAX_ATTEMPTS = 3
+
+logger = logging.getLogger(__name__)
+_CLAIM_SCAN_BATCH = 10
+_TERMINAL_STATES = ("completed", "failed", "timed_out", "cancelled")
+
+
+def _no_op_failpoint(evaluation_id: str) -> None:
+    """Production failpoint: an immutable no-op.
+
+    Tests inject callables (``broker._create_pre_exec = ...``) around the
+    transaction boundaries; they can never be configured from requests or
+    the environment.
+    """
+
+
+_create_pre_exec = _no_op_failpoint
+_create_post_exec = _no_op_failpoint
+_commit_pre_exec = _no_op_failpoint
+_commit_post_exec = _no_op_failpoint
+
+
+class StorageError(Exception):
+    """Durable storage is internally inconsistent; never a caller-facing detail."""
+
+    code = "INTERNAL"
+    phase = "storage"
+    retryable = False
+
+    def __init__(self) -> None:
+        super().__init__("unexpected internal error")
+
+
+def _redis_time_ms(client: redis.Redis) -> int:
+    """Production store clock: epoch milliseconds from Redis ``TIME``."""
+    seconds, micros = client.time()
+    return int(seconds) * 1000 + int(micros) // 1000
+
+
+def _digest_text(text: str) -> str:
+    return sha256_hex(text.encode("utf-8"))
+
+
+def _scoped_digest(*parts: str) -> str:
+    return sha256_hex("\0".join(parts).encode("utf-8"))
+
+
+class EvaluationStore:
+    def __init__(
+        self,
+        client: redis.Redis,
+        settings: Settings,
+        clock: Callable[[], int] | None = None,
+        metrics=None,
+    ) -> None:
+        if settings.retention_seconds < settings.max_recovery_age_seconds:
+            raise ValueError("retention_seconds must cover max_recovery_age_seconds")
+        self._r = client
+        self._s = settings
+        self._clock = clock or (lambda: _redis_time_ms(self._r))
+        self._metrics = metrics
+
+    def _bump(self, name: str, **labels) -> None:
+        """Best-effort bounded counter; never changes a transition result."""
+        increment(self._metrics, name, **labels)
+
+    def _key(self, suffix: str) -> str:
+        return f"{self._s.redis_prefix}:{suffix}"
+
+    def _quota_limits(self, traffic_class: str) -> tuple[int, int]:
+        if traffic_class == "trial":
+            return self._s.trial_rate_limit_per_minute, self._s.trial_max_inflight
+        if traffic_class == "rollout":
+            return self._s.rollout_rate_limit_per_minute, self._s.rollout_max_inflight
+        return self._s.trusted_rate_limit_per_minute, self._s.trusted_max_inflight
+
+    def _ready_key(self, traffic_class: str, execution_class: ExecutionClass) -> str:
+        """Strict-priority dispatch: rollout drains from bulk, everything else
+        from interactive; workers always scan interactive first."""
+        suffix = "bulk" if traffic_class == "rollout" else "interactive"
+        return self._key(f"ready:{execution_class}:{suffix}")
+
+    def create_or_replay(self, command: CreateResourceCommand) -> CreateResourceResult:
+        """Atomically write idempotency, resource, FIFO entry, deadline, and quotas.
+
+        A retrying optimistic transaction: watch the idempotency, quota, and
+        queue-sequence keys; replay or conflict short-circuit before any write;
+        a new record stores the watched sequence's successor and all admission
+        writes in one ``MULTI/EXEC``. Only ``redis.WatchError`` is retried.
+        """
+        caller_digest = _digest_text(command.caller_id)
+        session_digest = _scoped_digest(command.caller_id, command.session_id)
+        idempotency_key = self._key(
+            f"idempotency:{_scoped_digest(command.caller_id, command.idempotency_key)}"
+        )
+        inflight_caller_key = self._key(
+            f"inflight:caller:{command.traffic_class}:{caller_digest}"
+        )
+        inflight_session_key = self._key(f"inflight:session:{session_digest}")
+        sequence_key = self._key("queue-sequence")
+        rate_limit, inflight_limit = self._quota_limits(command.traffic_class)
+
+        while True:
+            now_ms = self._clock()
+            rate_key = self._key(
+                f"rate:{command.traffic_class}:{caller_digest}:{now_ms // _MINUTE_MS}"
+            )
+            pipeline = self._r.pipeline()
+            try:
+                pipeline.watch(
+                    idempotency_key,
+                    rate_key,
+                    inflight_caller_key,
+                    inflight_session_key,
+                    sequence_key,
+                )
+                record = pipeline.hgetall(idempotency_key)
+                if record:
+                    return self._replay(record, command, pipeline)
+
+                if int(pipeline.get(rate_key) or 0) >= rate_limit:
+                    return CreateResourceResult("rate_limited", None)
+                if (
+                    int(pipeline.get(inflight_caller_key) or 0) >= inflight_limit
+                    or int(pipeline.get(inflight_session_key) or 0)
+                    >= self._s.session_max_inflight
+                ):
+                    return CreateResourceResult("limit_exceeded", None)
+
+                successor = int(pipeline.get(sequence_key) or 0) + 1
+                resource, mapping, deadline_ms = self._new_queued_resource(
+                    command, idempotency_key, session_digest, now_ms
+                )
+                pipeline.multi()
+                pipeline.set(sequence_key, successor)
+                pipeline.hset(
+                    self._key(f"resource:{command.evaluation_id}"), mapping=mapping
+                )
+                pipeline.hset(
+                    idempotency_key,
+                    mapping={
+                        "evaluation_id": command.evaluation_id,
+                        "request_digest": command.admission.request_digest,
+                    },
+                )
+                pipeline.zadd(
+                    self._ready_key(command.traffic_class, command.execution_class),
+                    {command.evaluation_id: successor},
+                )
+                pipeline.zadd(self._key("deadlines"), {command.evaluation_id: deadline_ms})
+                pipeline.zadd(
+                    self._key("state:queued"), {command.evaluation_id: deadline_ms}
+                )
+                pipeline.incr(inflight_caller_key)
+                pipeline.incr(inflight_session_key)
+                pipeline.incr(rate_key)
+                pipeline.expire(rate_key, _RATE_WINDOW_EXPIRY_SECONDS)
+                _create_pre_exec(command.evaluation_id)
+                pipeline.execute()
+                _create_post_exec(command.evaluation_id)
+                return CreateResourceResult("created", resource)
+            except redis.WatchError:
+                continue
+            finally:
+                pipeline.reset()
+
+    def _replay(self, record: dict, command: CreateResourceCommand, pipeline):
+        """Compare a watched idempotency record and its resource, byte-exactly."""
+        evaluation_id = record[b"evaluation_id"].decode("utf-8")
+        resource_key = self._key(f"resource:{evaluation_id}")
+        pipeline.watch(resource_key)
+        stored = pipeline.hgetall(resource_key)
+        if not stored:
+            # A mapped-but-missing resource is a storage failure, never
+            # permission to reuse the idempotency key.
+            raise StorageError()
+        if (
+            record[b"request_digest"].decode("utf-8") != command.admission.request_digest
+            or stored[b"canonical_request"] != command.admission.canonical_request
+        ):
+            return CreateResourceResult("conflict", None)
+        resource = EvaluationResource.model_validate_json(stored[b"resource"])
+        return CreateResourceResult("replayed", resource)
+
+    def _new_queued_resource(
+        self,
+        command: CreateResourceCommand,
+        idempotency_key: str,
+        session_digest: str,
+        accepted_ms: int,
+    ) -> tuple[EvaluationResource, dict, int]:
+        payload = load_canonical(command.admission.canonical_request)
+        deadline_seconds = int(payload["deadline_seconds"])
+        deadline_ms = accepted_ms + deadline_seconds * 1000
+        accepted_at = datetime.fromtimestamp(accepted_ms / 1000, tz=timezone.utc)
+        resource = EvaluationResource(
+            method_identity=(
+                MethodIdentity.from_execution(MethodExecution.model_validate(payload["method_execution"]))
+                if payload.get("method_execution") is not None else None
+            ),
+            schema_version=payload["schema_version"],
+            evaluation_id=command.evaluation_id,
+            revision=1,
+            state="queued",
+            created_at=accepted_at,
+            updated_at=accepted_at,
+            started_at=None,
+            finished_at=None,
+            deadline_at=accepted_at + timedelta(seconds=deadline_seconds),
+            request_digest=command.admission.request_digest,
+            reference_digest=command.admission.reference_digest,
+            result=None,
+        )
+        binding = command.admission.catalog_binding
+        mapping = {
+            "owner": command.caller_id,
+            "purpose": payload["purpose"],
+            "manifest_id": binding.manifest_id if binding is not None else "",
+            "problem_id": binding.problem_id if binding is not None else "",
+            "traffic_class": command.traffic_class,
+            "execution_class": command.execution_class,
+            "session_digest": session_digest,
+            "idempotency_key": idempotency_key,
+            "canonical_request": command.admission.canonical_request,
+            "request_digest": command.admission.request_digest,
+            "reference_digest": command.admission.reference_digest,
+            "requested_checks": canonical_json_bytes(
+                list(command.admission.requested_checks)
+            ),
+            "resource": dump_contract(resource),
+            "evaluator_build": command.evaluator_build,
+            "correctness_algorithm": command.algorithms.correctness,
+            "decoy_algorithm": command.algorithms.decoy,
+            "benchmark_algorithm": command.algorithms.benchmark,
+            "profiler_algorithm": command.algorithms.profiler,
+            "attempt_count": "0",
+            "suspicious_deaths": "0",
+            "attempt_id": "",
+            "fencing_token": "0",
+            "active_check": "",
+            "check_outcomes": canonical_json_bytes({}),
+            "progress_revision": "0",
+            "lease_deadline_ms": "0",
+            "replacement_pending": "0",
+            "created_at_ms": str(accepted_ms),
+            "updated_at_ms": str(accepted_ms),
+            "deadline_ms": str(deadline_ms),
+        }
+        if payload.get("native_candidate") is not None:
+            mapping["native_reference_device_policy"] = (
+                payload.get("reference_device_policy") or self._s.reference_device_policy
+            )
+        if payload.get("correctness_from") is not None:
+            mapping["correctness_from"] = payload["correctness_from"]
+        return resource, mapping, deadline_ms
+
+    def get_visible(self, evaluation_id: str, caller: Caller) -> EvaluationResource | None:
+        """Return the resource iff the caller may read it; hide everything else.
+
+        Owners need the read scope matching the resource purpose
+        (``trial:read``/``grade:read``); non-owners need ``observer:read``.
+        Unknown and invisible records return the same ``None``. Sessions never
+        authorize reads, and observer reads never change ownership.
+        """
+        stored = self._r.hgetall(self._key(f"resource:{evaluation_id}"))
+        if not stored:
+            return None
+        if not self._visible_to(stored, caller):
+            return None
+        return EvaluationResource.model_validate_json(stored[b"resource"])
+
+    def validate_correctness_source(
+        self, request: EvaluationRequest, caller: Caller, pinned: PinnedProvenance,
+    ) -> CorrectnessEvidence:
+        """Owner-only evidence authorization; observer reads cannot borrow source."""
+        stored = self._r.hgetall(self._key(f"resource:{request.correctness_from}"))
+        if (not stored or stored.get(b"owner") != caller.caller_id.encode("utf-8")
+                or not self._visible_to(stored, caller)):
+            raise CorrectnessEvidenceError()
+        return self._resolve_correctness_record(request, stored, pinned=pinned)
+
+    def correctness_for_attempt(
+        self, request: EvaluationRequest, lease: AttemptLease, *,
+        execution_environment, card: int | None,
+    ) -> CorrectnessEvidence:
+        """Repeat authority/freshness checks under the destination attempt's fence."""
+        destination = self._r.hgetall(self._key(f"resource:{lease.evaluation_id}"))
+        if (not destination
+                or not self._fence_conditions_met(destination, lease, self._clock())):
+            from ascend_op_eval.evaluators.base import LeaseLostError
+
+            raise LeaseLostError("correctness evidence resolution lost its attempt lease")
+        source = self._r.hgetall(self._key(f"resource:{request.correctness_from}"))
+        if not source or source.get(b"owner") != destination.get(b"owner"):
+            raise CorrectnessEvidenceError()
+        evidence = self._resolve_correctness_record(
+            request, source, pinned=lease.pinned,
+            execution_environment=execution_environment, check_environment=True,
+        )
+        # Terminalization clears attempt_id but retains the last attempt's
+        # optional card binding. A terminal resource can never acquire a new
+        # attempt, so this immutable binding belongs to the source observation.
+        raw_card = source.get(b"attempt_card")
+        if raw_card:
+            try:
+                binding = load_canonical(raw_card)
+                source_card = binding["card"]
+                if type(source_card) is not int or source_card < 0:
+                    raise ValueError("invalid card binding")
+            except (TypeError, ValueError, KeyError) as error:
+                raise CorrectnessEvidenceError() from error
+            if source_card != card:
+                raise CorrectnessEvidenceError("correctness evidence uses a different device")
+        return evidence
+
+    def _correctness_affinity_card(self, stored: dict, client, now_ms: int) -> int | None:
+        """Place explicit fresh reuse on its source card without executing code.
+
+        Missing/expired/invalid sources do not strand queued work: let a worker
+        claim it and publish the typed refusal. Normal requests do no extra read.
+        The worker repeats full subject/authority checks after the claim.
+        """
+        source_id = stored.get(b"correctness_from")
+        if not source_id:
+            return None
+        try:
+            owner, raw_resource, raw_card = client.hmget(
+                self._key(f"resource:{source_id.decode('utf-8')}"),
+                "owner", "resource", "attempt_card",
+            )
+            if owner != stored.get(b"owner") or not raw_resource or not raw_card:
+                return None
+            source = EvaluationResource.model_validate_json(raw_resource)
+            if (source.state != "completed" or source.result is None
+                    or source.started_at is None or source.finished_at is None):
+                return None
+            now = datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc)
+            expires = source.started_at + timedelta(seconds=self._s.max_recovery_age_seconds)
+            correctness = source.result.correctness
+            if (not source.started_at <= source.finished_at <= now < expires
+                    or correctness is None or correctness.status != "succeeded"
+                    or correctness.data.outcome != "correct"
+                    or correctness.data.reused_from is not None):
+                return None
+            card = load_canonical(raw_card)["card"]
+            return card if type(card) is int and card >= 0 else None
+        except (ValueError, TypeError, KeyError):
+            return None
+
+    def _resolve_correctness_record(
+        self, request: EvaluationRequest, stored: dict, *, pinned: PinnedProvenance,
+        execution_environment=None, check_environment=False,
+    ) -> CorrectnessEvidence:
+        try:
+            canonical = stored[b"canonical_request"]
+            source_request = EvaluationRequest.model_validate_json(canonical)
+            resource = EvaluationResource.model_validate_json(stored[b"resource"])
+            canonical_again = canonical_json_bytes(
+                source_request.model_dump(mode="json", exclude_none=False)
+            )
+            digest = sha256_hex(canonical)
+            if (canonical != canonical_again
+                    or digest != stored[b"request_digest"].decode("utf-8")
+                    or digest != resource.request_digest
+                    or sha256_hex(source_request.reference_code.encode("utf-8"))
+                    != resource.reference_digest):
+                raise ValueError("source canonical identity mismatch")
+            if resource.result is not None:
+                provenance = resource.result.provenance
+                source_pin = self._stored_pinned(stored)
+                if (provenance.evaluator_build != source_pin.evaluator_build
+                        or provenance.correctness_algorithm != source_pin.algorithms.correctness
+                        or provenance.decoy_algorithm != source_pin.algorithms.decoy):
+                    raise ValueError("source provenance mismatch")
+            return resolve_source(
+                request, source_request, resource, pinned=pinned,
+                now=datetime.fromtimestamp(self._clock() / 1000, tz=timezone.utc),
+                max_age_seconds=self._s.max_recovery_age_seconds,
+                execution_environment=execution_environment,
+                check_environment=check_environment,
+            )
+        except CorrectnessEvidenceError:
+            raise
+        except (KeyError, TypeError, ValueError) as error:
+            raise CorrectnessEvidenceError() from error
+
+    @staticmethod
+    def _visible_to(stored: dict, caller: Caller) -> bool:
+        owner = stored[b"owner"].decode("utf-8")
+        purpose = stored[b"purpose"].decode("utf-8")
+        if caller.caller_id == owner:
+            required = "trial:read" if purpose in ("trial", "rollout") else "grade:read"
+            if required not in caller.scopes:
+                return False
+        elif "observer:read" not in caller.scopes:
+            return False
+        return True
+
+    def get_progress_visible(self, evaluation_id: str, caller: Caller) -> EvaluationProgress | None:
+        """Read one atomic snapshot of fenced evidence without changing resource semantics."""
+        stored = self._r.hgetall(self._key(f"resource:{evaluation_id}"))
+        if not stored or not self._visible_to(stored, caller):
+            return None
+        resource = EvaluationResource.model_validate_json(stored[b"resource"])
+        attempt = stored.get(b"attempt_id", b"").decode("utf-8") or None
+        active = stored.get(b"active_check", b"").decode("utf-8") or None
+        if resource.result is not None:
+            attempt = stored.get(b"completed_attempt_id", b"").decode("utf-8") or attempt
+            outcomes = {
+                check: getattr(resource.result, check)
+                for check in ("correctness", "performance", "profile", "compile", "method")
+            }
+            active = None
+        elif attempt is None or stored.get(b"replacement_pending") == b"1":
+            # A lease replacement invalidates every observation of its predecessor.
+            outcomes, active = {}, None
+        else:
+            valid = persisted_check_outcomes(stored.get(b"check_outcomes", b"{}"))
+            requested = json.loads(stored[b"requested_checks"])
+            outcomes = {check: value for check, value in valid.items() if check in requested}
+            unfinished_performance = (
+                active == "performance"
+                and outcomes.get(active, {}).get("status") == "succeeded"
+                and not outcomes[active].get("data", {}).get("complete", True)
+            )
+            if active in outcomes and not unfinished_performance:
+                active = None
+        return EvaluationProgress(
+            schema_version=resource.schema_version,
+            evaluation_id=evaluation_id,
+            resource_revision=resource.revision,
+            progress_revision=int(stored.get(b"progress_revision", b"0")),
+            state=resource.state,
+            attempt_id=attempt,
+            active_check=active,
+            completed_checks=CheckEvidence.model_validate(outcomes),
+        )
+
+    def lookup_idempotent(
+        self, caller_id: str, idempotency_key: str
+    ) -> EvaluationResource | None:
+        """Return the resource an existing idempotency record maps to, if any.
+
+        Read-only pre-check used by admission so an idempotent replay stays
+        recoverable through transient unreadiness; readiness applies only to
+        genuinely new admissions.
+        """
+        record_key = self._key(
+            f"idempotency:{_scoped_digest(caller_id, idempotency_key)}"
+        )
+        record = self._r.hgetall(record_key)
+        if not record:
+            return None
+        resource_key = self._key(f"resource:{record[b'evaluation_id'].decode('utf-8')}")
+        stored = self._r.hget(resource_key, b"resource")
+        if stored is None:
+            # A mapped-but-missing resource is a storage failure, never a
+            # silent pass-through to new admission.
+            raise StorageError()
+        return EvaluationResource.model_validate_json(stored)
+
+    def probe_storage(self) -> bool:
+        """One ephemeral write/delete proving the store accepts writes."""
+        probe_key = self._key(f"readiness-probe:{uuid.uuid4().hex}")
+        pipeline = self._r.pipeline()
+        pipeline.set(probe_key, b"1", nx=True, px=5000)
+        pipeline.delete(probe_key)
+        results = pipeline.execute()
+        return bool(results and results[0])
+
+    # ------------------------------------------------------------------
+    # Claims and leases (design section 6)
+    # ------------------------------------------------------------------
+
+    def claim_next(
+        self, worker: WorkerIdentity, avoid_card: int | None = None,
+        *, card: int | None = None,
+    ) -> AttemptLease | None:
+        """Atomically claim the head of the dispatch queues for ``worker``.
+
+        Strict priority: the interactive queue (trial/trusted) scans first, the
+        bulk queue (rollout class) only when interactive is empty. Interactive callers
+        are quota-capped; sustained interactive demand can still delay bulk work.
+        Bulk floods cannot head-of-line block interactive latency. A queued claim removes the
+        ready member, flips the public resource to running with a bumped revision
+        and the first ``started_at``, installs attempt/lease fields, and moves the
+        state indexes. A replacement-pending running resource keeps its public
+        state, revision, and started time and consumes the higher token the reaper
+        reserved. Past-deadline members never start; duplicate members for claimed
+        resources are removed. ``avoid_card`` skips members whose stored
+        ``last_failed_card`` matches (affinity avoidance): engine-failure retries
+        bound that avoidance by ``engine_retry_avoid_until_ms``; lease-loss
+        recovery keeps its existing exclusion policy. ``card`` records the actual executing
+        card independently of affinity policy. Its advisory publication is owned
+        by this method: failure never discards an already committed claim.
+        """
+        leases_key = self._key("running-leases")
+        if worker.execution_class == "cpu":
+            card = None
+            avoid_card = None
+        for ready_key in (
+            self._ready_key("trial", worker.execution_class),
+            self._ready_key("rollout", worker.execution_class),
+        ):
+            lease = self._claim_from_queue(worker, ready_key, leases_key, avoid_card, card=card)
+            if lease is not None:
+                if card is not None:
+                    self._record_attempt_card(lease, card)
+                return lease
+        return None
+
+    def _claim_from_queue(
+        self,
+        worker: WorkerIdentity,
+        ready_key: str,
+        leases_key: str,
+        avoid_card: int | None = None,
+        *,
+        card: int | None = None,
+    ) -> AttemptLease | None:
+        """Scan FIFO pages until an eligible member is found or the queue ends.
+
+        Incompatible workers and card-bound reuse leave live members queued;
+        a full page of those members must not hide runnable work behind it.
+        WATCH rejects the final claim if queue order changes during paging.
+        """
+        while True:
+            now_ms = self._clock()
+            pipeline = self._r.pipeline()
+            try:
+                pipeline.watch(ready_key)
+                stale: list[bytes] = []
+                claim = None
+                for member in self._ready_members(pipeline, ready_key):
+                    evaluation_id = member.decode("utf-8")
+                    resource_key = self._key(f"resource:{evaluation_id}")
+                    pipeline.watch(resource_key)
+                    stored = pipeline.hgetall(resource_key)
+                    if not stored:
+                        stale.append(member)
+                        continue
+                    if not self._worker_matches_resource(worker, stored):
+                        continue
+                    correctness_card = self._correctness_affinity_card(stored, pipeline, now_ms)
+                    if correctness_card is not None and correctness_card != card:
+                        continue
+                    if (
+                        avoid_card is not None
+                        and stored.get(b"last_failed_card") == str(avoid_card).encode()
+                        and (
+                            b"engine_retry_avoid_until_ms" not in stored
+                            or now_ms < int(stored[b"engine_retry_avoid_until_ms"])
+                        )
+                    ):
+                        continue  # give another card the first chance at recovery
+                    resource = EvaluationResource.model_validate_json(stored[b"resource"])
+                    if now_ms >= int(stored[b"deadline_ms"]):
+                        continue  # the deadline watchdog owns this resource
+                    if resource.state == "queued":
+                        claim = (member, stored, resource, False)
+                        break
+                    if resource.state == "running" and (
+                        stored.get(b"replacement_pending") == b"1"
+                    ):
+                        claim = (member, stored, resource, True)
+                        break
+                    stale.append(member)  # duplicate delivery, already claimed
+                if claim is None:
+                    if not stale:
+                        return None
+                    pipeline.multi()
+                    for member in stale:
+                        pipeline.zrem(ready_key, member)
+                    pipeline.execute()
+                    continue
+                member, stored, resource, replacement = claim
+                # A large scan may cross a deadline. Never install an attempt
+                # using the clock sampled before paging through the backlog.
+                now_ms = self._clock()
+                if now_ms >= int(stored[b"deadline_ms"]):
+                    continue
+                pipeline.multi()
+                for stale_member in stale:
+                    pipeline.zrem(ready_key, stale_member)
+                lease = self._install_claim(
+                    pipeline,
+                    member=member,
+                    stored=stored,
+                    resource=resource,
+                    replacement=replacement,
+                    now_ms=now_ms,
+                    ready_key=ready_key,
+                    leases_key=leases_key,
+                )
+                pipeline.execute()
+                return lease
+            except redis.WatchError:
+                continue
+            finally:
+                pipeline.reset()
+
+    @staticmethod
+    def _ready_members(client, ready_key: str):
+        offset = 0
+        while True:
+            members = client.zrange(ready_key, offset, offset + _CLAIM_SCAN_BATCH - 1)
+            yield from members
+            if len(members) < _CLAIM_SCAN_BATCH:
+                return
+            offset += len(members)
+
+    def _install_claim(
+        self,
+        pipeline,
+        *,
+        member: bytes,
+        stored: dict,
+        resource: EvaluationResource,
+        replacement: bool,
+        now_ms: int,
+        ready_key: str,
+        leases_key: str,
+    ) -> AttemptLease:
+        evaluation_id = resource.evaluation_id
+        resource_key = self._key(f"resource:{evaluation_id}")
+        deadline_ms = int(stored[b"deadline_ms"])
+        lease_expiry_ms = now_ms + self._s.lease_seconds * 1000
+        attempt_id = new_attempt_id()
+        attempt_count = int(stored[b"attempt_count"]) + 1
+        if replacement:
+            token = int(stored[b"fencing_token"])  # reserved by the reaper
+            revision = resource.revision
+        else:
+            token = int(stored[b"fencing_token"]) + 1
+            revision = resource.revision + 1
+            started = datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc)
+            updated = EvaluationResource.model_validate(
+                {
+                    **resource.model_dump(exclude_none=False),
+                    "revision": revision,
+                    "state": "running",
+                    "started_at": started,
+                    "updated_at": started,
+                }
+            )
+            pipeline.hset(
+                resource_key,
+                mapping={
+                    "resource": dump_contract(updated),
+                    "updated_at_ms": str(now_ms),
+                },
+            )
+            pipeline.zrem(self._key("state:queued"), evaluation_id)
+            pipeline.zadd(self._key("state:running"), {evaluation_id: deadline_ms})
+        pipeline.hset(
+            resource_key,
+            mapping={
+                "attempt_id": attempt_id,
+                "fencing_token": str(token),
+                "attempt_count": str(attempt_count),
+                "lease_deadline_ms": str(lease_expiry_ms),
+                "replacement_pending": "0",
+                "active_check": "",
+                "check_outcomes": canonical_json_bytes({}),
+                "native_build": "",
+                "method_artifacts": "{}",
+                # Empty means this attempt has no published card provenance.
+                "attempt_card": "",
+            },
+        )
+        pipeline.hincrby(resource_key, "progress_revision", 1)
+        # The bounded avoidance belongs to the previous engine-failure retry,
+        # never to a later lease loss or another attempt's failure.
+        pipeline.hdel(resource_key, "engine_retry_avoid_until_ms")
+        pipeline.zrem(ready_key, member)
+        pipeline.zadd(leases_key, {evaluation_id: lease_expiry_ms})
+        return AttemptLease(
+            evaluation_id=evaluation_id,
+            attempt_id=attempt_id,
+            fencing_token=token,
+            expected_revision=revision,
+            deadline_at_ms=deadline_ms,
+            canonical_request=stored[b"canonical_request"],
+            request_digest=stored[b"request_digest"].decode("utf-8"),
+            requested_checks=tuple(json.loads(stored[b"requested_checks"])),
+            pinned=self._stored_pinned(stored),
+        )
+
+    def _record_attempt_card(self, lease: AttemptLease, card: int) -> None:
+        """Best-effort provenance for this attempt, never a replacement's.
+
+        Reuse the existing attempt fence without adding a new fence condition.
+        Redis errors and WATCH conflicts discard only the advisory write.
+        """
+        resource_key = self._key(f"resource:{lease.evaluation_id}")
+        try:
+            with self._r.pipeline() as pipeline:
+                pipeline.watch(resource_key)
+                stored = pipeline.hgetall(resource_key)
+                if not stored or not self._fence_conditions_met(stored, lease, self._clock()):
+                    return
+                pipeline.multi()
+                pipeline.hset(resource_key, mapping={
+                    "attempt_card": canonical_json_bytes({
+                        "attempt_id": lease.attempt_id, "card": card,
+                    }),
+                })
+                pipeline.execute()
+        except redis.RedisError:
+            logger.warning("attempt card write failed for %s", lease.evaluation_id)
+
+    @staticmethod
+    def _card_for_attempt(stored: dict) -> bytes | None:
+        """Resolve optional provenance without borrowing another attempt's card."""
+        try:
+            binding = load_canonical(stored.get(b"attempt_card", b""))
+        except (ValueError, TypeError):
+            return None
+        if (
+            not isinstance(binding, dict)
+            or binding.get("attempt_id") != stored.get(b"attempt_id", b"").decode("utf-8")
+        ):
+            return None
+        card = binding.get("card")
+        if type(card) is not int or card < 0:
+            return None
+        return str(card).encode("utf-8")
+
+    def _fence_conditions_met(self, stored: dict, lease: AttemptLease, now_ms: int) -> bool:
+        resource = EvaluationResource.model_validate_json(stored[b"resource"])
+        return (
+            resource.state == "running"
+            and stored.get(b"cancel_requested") != b"1"
+            and resource.revision == lease.expected_revision
+            and stored.get(b"attempt_id", b"").decode("utf-8") == lease.attempt_id
+            and int(stored[b"fencing_token"]) == lease.fencing_token
+            and now_ms < int(stored[b"deadline_ms"])
+        )
+
+    def _fenced_write(self, lease: AttemptLease, mutate) -> bool:
+        """Run ``mutate(pipeline, stored, now_ms)`` iff every fence holds."""
+        resource_key = self._key(f"resource:{lease.evaluation_id}")
+        while True:
+            now_ms = self._clock()
+            pipeline = self._r.pipeline()
+            try:
+                pipeline.watch(resource_key)
+                stored = pipeline.hgetall(resource_key)
+                if not stored or not self._fence_conditions_met(stored, lease, now_ms):
+                    self.note_fenced_write()
+                    self._bump("terminal_commit_cas_total", outcome="lost")
+                    return False
+                pipeline.multi()
+                mutate(pipeline, stored, now_ms)
+                _commit_pre_exec(lease.evaluation_id)
+                pipeline.execute()
+                _commit_post_exec(lease.evaluation_id)
+                return True
+            except redis.WatchError:
+                continue
+            finally:
+                pipeline.reset()
+
+    def request_visible(
+        self, evaluation_id: str, caller: Caller, session_id: str | None = None,
+    ) -> EvaluationRequest | None:
+        stored = self._r.hgetall(self._key(f"resource:{evaluation_id}"))
+        if (not stored or stored[b"owner"].decode() != caller.caller_id
+                or not ({"trial:submit", "trial:read"} & caller.scopes)):
+            return None
+        if session_id is not None and stored[b"session_digest"].decode() != _scoped_digest(
+            caller.caller_id, session_id
+        ):
+            return None
+        return EvaluationRequest.model_validate_json(stored[b"canonical_request"])
+
+    def save_method_artifacts(self, lease: AttemptLease, artifacts: dict) -> bool:
+        """Seal output bytes under the active attempt fence before result publication."""
+        validated = {
+            name: StoredArtifact.model_validate(value) for name, value in artifacts.items()
+        }
+        from ascend_op_eval.methods.contracts import safe_path
+
+        for name in validated:
+            safe_path(name)
+        resource_key = self._key(f"resource:{lease.evaluation_id}")
+
+        def mutate(pipeline, stored, now_ms):
+            request = EvaluationRequest.model_validate_json(stored[b"canonical_request"])
+            execution = request.method_execution
+            if execution is None:
+                raise ValueError("method artifacts require a custom method request")
+            if (len(validated) > execution.limits.artifact_count
+                    or sum(a.size_bytes for a in validated.values())
+                    > execution.limits.artifact_bytes):
+                raise ValueError("method artifact limits exceeded")
+            pipeline.hset(resource_key, "method_artifacts", canonical_json_bytes({
+                "attempt_id": lease.attempt_id,
+                "artifacts": {
+                    name: value.model_dump(mode="json") for name, value in validated.items()
+                },
+            }))
+
+        return self._fenced_write(lease, mutate)
+
+    def method_artifact_visible(self, evaluation_id: str, caller: Caller, name: str):
+        stored = self._r.hgetall(self._key(f"resource:{evaluation_id}"))
+        if not stored or not self._visible_to(stored, caller):
+            return None
+        try:
+            payload = json.loads(stored.get(b"method_artifacts", b"{}"))
+            resource = EvaluationResource.model_validate_json(stored[b"resource"])
+            attempt = stored.get(
+                b"completed_attempt_id" if resource.state in _TERMINAL_STATES else b"attempt_id",
+                b"",
+            ).decode()
+            if (not attempt or payload.get("attempt_id") != attempt
+                    or stored.get(b"replacement_pending") == b"1"):
+                return None
+            return StoredArtifact.model_validate(payload["artifacts"][name])
+        except (ValueError, KeyError, TypeError):
+            return None
+
+    def is_cancel_requested(self, lease: AttemptLease) -> bool:
+        stored = self._r.hgetall(self._key(f"resource:{lease.evaluation_id}"))
+        return bool(stored and stored.get(b"cancel_requested") == b"1"
+                    and stored.get(b"attempt_id", b"").decode() == lease.attempt_id
+                    and int(stored.get(b"fencing_token", b"-1")) == lease.fencing_token)
+
+    def finish_cancelled(self, lease: AttemptLease) -> bool:
+        """Acknowledge cleanup, allowing only the cancellation's current attempt."""
+        key = self._key(f"resource:{lease.evaluation_id}")
+        while True:
+            pipeline = self._r.pipeline()
+            try:
+                pipeline.watch(key)
+                stored = pipeline.hgetall(key)
+                if not stored:
+                    return False
+                resource = EvaluationResource.model_validate_json(stored[b"resource"])
+                if (resource.state != "running" or stored.get(b"cancel_requested") != b"1"
+                        or stored.get(b"attempt_id", b"").decode() != lease.attempt_id
+                        or int(stored[b"fencing_token"]) != lease.fencing_token):
+                    return False
+                self._commit_terminal_locked(
+                    pipeline, stored=stored, resource=resource, state="cancelled",
+                    result=self._failure_result(stored, "cancelled", "evaluation was cancelled"),
+                    now_ms=self._clock(), bump_fence=True,
+                )
+                return True
+            except redis.WatchError:
+                continue
+            finally:
+                pipeline.reset()
+
+    def cancel_visible(self, evaluation_id: str, caller: Caller):
+        """Record intent; running work remains occupied until worker cleanup/recovery."""
+        key = self._key(f"resource:{evaluation_id}")
+        while True:
+            pipeline = self._r.pipeline()
+            try:
+                pipeline.watch(key)
+                stored = pipeline.hgetall(key)
+                if (not stored or stored[b"owner"].decode() != caller.caller_id
+                        or "trial:submit" not in caller.scopes):
+                    return None
+                resource = EvaluationResource.model_validate_json(stored[b"resource"])
+                if resource.state in _TERMINAL_STATES or resource.cancel_requested:
+                    return resource
+                now_ms = self._clock()
+                if now_ms >= int(stored[b"deadline_ms"]):
+                    self._commit_terminal_locked(
+                        pipeline, stored=stored, resource=resource, state="timed_out",
+                        result=self._failure_result(
+                            stored, "deadline", "resource deadline expired",
+                        ),
+                        now_ms=now_ms, bump_fence=True,
+                    )
+                elif resource.state == "queued" or stored.get(b"replacement_pending") == b"1":
+                    resource = resource.model_copy(update={"cancel_requested": True})
+                    self._commit_terminal_locked(
+                        pipeline, stored=stored, resource=resource, state="cancelled",
+                        result=self._failure_result(
+                            stored, "cancelled", "evaluation was cancelled",
+                        ),
+                        now_ms=now_ms, bump_fence=True,
+                    )
+                else:
+                    resource = resource.model_copy(update={
+                        "cancel_requested": True, "revision": resource.revision + 1,
+                        "updated_at": datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc),
+                    })
+                    pipeline.multi()
+                    pipeline.hset(key, mapping={"resource": dump_contract(resource),
+                                               "cancel_requested": "1",
+                                               "updated_at_ms": str(now_ms)})
+                    pipeline.hincrby(key, "progress_revision", 1)
+                    pipeline.execute()
+                return EvaluationResource.model_validate_json(self._r.hget(key, "resource"))
+            except redis.WatchError:
+                continue
+            finally:
+                pipeline.reset()
+
+    def renew_lease(self, lease: AttemptLease) -> bool:
+        """Extend only the internal lease expiry; the public revision stays."""
+        resource_key = self._key(f"resource:{lease.evaluation_id}")
+        leases_key = self._key("running-leases")
+
+        def mutate(pipeline, stored, now_ms):
+            expiry_ms = now_ms + self._s.lease_seconds * 1000
+            pipeline.hset(resource_key, "lease_deadline_ms", str(expiry_ms))
+            pipeline.zadd(leases_key, {lease.evaluation_id: expiry_ms})
+
+        return self._fenced_write(lease, mutate)
+
+    def save_native_build(self, lease: AttemptLease, evidence: NativeBuildEvidence) -> bool:
+        """Persist build observations under the attempt fence for later recovery."""
+        evidence = NativeBuildEvidence.model_validate(evidence)
+        resource_key = self._key(f"resource:{lease.evaluation_id}")
+
+        def mutate(pipeline, stored, now_ms):
+            if not stored.get(b"native_reference_device_policy"):
+                raise ValueError("native build evidence requires a native request")
+            pipeline.hset(resource_key, "native_build", canonical_json_bytes(
+                evidence.model_dump(mode="json")
+            ))
+
+        return self._fenced_write(lease, mutate)
+
+    def set_active_check(self, lease: AttemptLease, check: Check) -> bool:
+        resource_key = self._key(f"resource:{lease.evaluation_id}")
+
+        def mutate(pipeline, stored, now_ms):
+            if check not in lease.requested_checks:
+                raise ValueError("cannot publish progress for an unrequested check")
+            pipeline.hset(resource_key, "active_check", check)
+            pipeline.hincrby(resource_key, "progress_revision", 1)
+
+        return self._fenced_write(lease, mutate)
+
+    def save_check_outcome(self, lease: AttemptLease, check: Check, outcome: CheckOutcome) -> bool:
+        """Persist fenced evidence for progress; the resource result stays terminal-only."""
+        resource_key = self._key(f"resource:{lease.evaluation_id}")
+
+        def mutate(pipeline, stored, now_ms):
+            if check not in lease.requested_checks:
+                raise ValueError("cannot publish evidence for an unrequested check")
+            # Reload with the canonical number domain: digit-form doubles
+            # (values beyond 2^53) would otherwise come back as ints and the
+            # re-serialization below raises IntegerDomainError, failing the
+            # whole check with EVALUATOR_EXECUTION_FAILED.
+            outcomes = load_canonical(stored[b"check_outcomes"])
+            outcomes[check] = outcome.model_dump(mode="json", exclude_none=False)
+            pipeline.hset(resource_key, "check_outcomes", canonical_json_bytes(outcomes))
+            pipeline.hincrby(resource_key, "progress_revision", 1)
+
+        return self._fenced_write(lease, mutate)
+
+    # ------------------------------------------------------------------
+    # Terminal commit
+    # ------------------------------------------------------------------
+
+    def requeue_retryable_engine_failure(
+        self, lease: AttemptLease, *, failed_card: int | None = None
+    ) -> bool:
+        """Requeue this running resource after a retryable engine failure.
+
+        Shares the lease-reaper's replacement transition (bumped
+        fencing token, ``replacement_pending``, fresh ready member, shared
+        ``MAX_ATTEMPTS`` claim budget across lease losses and engine failures).
+        The failed attempt's card is published as ``last_failed_card`` so the
+        affinity avoidance gives another card priority for at most one lease
+        window, capped at half the remaining resource deadline. Afterwards the
+        original worker may retry, subject to its mandatory health probe.
+        ``False`` means fenced out, past the deadline, or budget exhausted —
+        the caller terminalizes exactly as before this path existed.
+        """
+        resource_key = self._key(f"resource:{lease.evaluation_id}")
+        while True:
+            now_ms = self._clock()
+            pipeline = self._r.pipeline()
+            try:
+                pipeline.watch(resource_key)
+                stored = pipeline.hgetall(resource_key)
+                if not stored or not self._fence_conditions_met(stored, lease, now_ms):
+                    self.note_fenced_write()
+                    return False
+                if int(stored[b"attempt_count"]) >= MAX_ATTEMPTS:
+                    return False  # shared attempt budget exhausted
+                avoidance_ms = min(
+                    self._s.lease_seconds * 1000,
+                    (int(stored[b"deadline_ms"]) - now_ms) // 2,
+                )
+                metadata = (
+                    {
+                        "last_failed_card": str(failed_card),
+                        "engine_retry_avoid_until_ms": str(now_ms + avoidance_ms),
+                    }
+                    if failed_card is not None
+                    else {}
+                )
+                self._queue_replacement(
+                    pipeline, lease.evaluation_id, stored, metadata,
+                )
+                return True
+            except redis.WatchError:
+                continue
+            finally:
+                pipeline.reset()
+
+    def _queue_replacement(
+        self, pipeline, evaluation_id: str, stored: dict, metadata: dict,
+    ) -> None:
+        """Commit replacement work while the caller WATCHes the resource."""
+        ready_key = self._ready_key(
+            self._stored_traffic_class(stored), stored[b"execution_class"].decode("utf-8"),
+        )
+        sequence_key = self._key("queue-sequence")
+        pipeline.watch(ready_key, sequence_key)
+        successor = int(pipeline.get(sequence_key) or 0) + 1
+        pipeline.multi()
+        pipeline.set(sequence_key, successor)
+        pipeline.hset(
+            self._key(f"resource:{evaluation_id}"),
+            mapping={
+                "attempt_id": "",
+                "fencing_token": str(int(stored[b"fencing_token"]) + 1),
+                "replacement_pending": "1",
+                "active_check": "",
+                "lease_deadline_ms": "0",
+                **metadata,
+            },
+        )
+        pipeline.hincrby(self._key(f"resource:{evaluation_id}"), "progress_revision", 1)
+        pipeline.zrem(self._key("running-leases"), evaluation_id)
+        pipeline.zadd(ready_key, {evaluation_id: successor})
+        pipeline.execute()
+
+    def commit_terminal(
+        self, lease: AttemptLease, state: TerminalState, result: EvaluationResult
+    ) -> bool:
+        """Single-winner fenced terminal transition; stale writes get ``False``."""
+        resource_key = self._key(f"resource:{lease.evaluation_id}")
+        while True:
+            now_ms = self._clock()
+            pipeline = self._r.pipeline()
+            try:
+                pipeline.watch(resource_key)
+                stored = pipeline.hgetall(resource_key)
+                if not stored or not self._fence_conditions_met(stored, lease, now_ms):
+                    self.note_fenced_write()
+                    self._bump("terminal_commit_cas_total", outcome="lost")
+                    return False
+                resource = EvaluationResource.model_validate_json(stored[b"resource"])
+                requested = json.loads(stored[b"requested_checks"])
+                validated = EvaluationResult.model_validate(
+                    result.model_dump(mode="json", exclude_none=False),
+                    context={"requested_checks": requested},
+                )
+                _commit_pre_exec(lease.evaluation_id)
+                self._commit_terminal_locked(
+                    pipeline,
+                    stored=stored,
+                    resource=resource,
+                    state=state,
+                    result=validated,
+                    now_ms=now_ms,
+                    bump_fence=False,
+                )
+                _commit_post_exec(lease.evaluation_id)
+                self._bump("terminal_commit_cas_total", outcome="won")
+                started_ms = stored.get(b"created_at_ms")
+                if started_ms is not None and self._metrics is not None:
+                    try:
+                        duration = max(0.0, (now_ms - int(started_ms)) / 1000)
+                    except ValueError:
+                        pass  # Invalid metric input cannot undo a committed transition.
+                    else:
+                        observe(
+                            self._metrics, "resource_terminal_duration_seconds", duration,
+                            state=state,
+                        )
+                return True
+            except redis.WatchError:
+                continue
+            finally:
+                pipeline.reset()
+
+    def _commit_terminal_locked(
+        self,
+        pipeline,
+        *,
+        stored: dict,
+        resource: EvaluationResource,
+        state: TerminalState,
+        result: EvaluationResult,
+        now_ms: int,
+        bump_fence: bool,
+    ) -> None:
+        """Issue one MULTI/EXEC terminal transition; caller holds the watches."""
+        evaluation_id = resource.evaluation_id
+        resource_key = self._key(f"resource:{evaluation_id}")
+        caller_key, session_key = self._inflight_keys(stored)
+        pipeline.watch(caller_key, session_key)
+        caller_inflight = int(pipeline.get(caller_key) or 0)
+        session_inflight = int(pipeline.get(session_key) or 0)
+
+        finished = datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc)
+        updated = EvaluationResource.model_validate(
+            {
+                **resource.model_dump(exclude_none=False),
+                "revision": resource.revision + 1,
+                "state": state,
+                "updated_at": finished,
+                "finished_at": finished,
+                "result": result.model_dump(mode="json", exclude_none=False),
+            }
+        )
+        expiry_ms = now_ms + self._s.retention_seconds * 1000
+        hash_updates = {
+            "resource": dump_contract(updated),
+            "updated_at_ms": str(now_ms),
+            "attempt_id": "",
+            "completed_attempt_id": stored.get(b"attempt_id", b"").decode("utf-8"),
+            "replacement_pending": "0",
+        }
+        if bump_fence:
+            hash_updates["fencing_token"] = str(int(stored[b"fencing_token"]) + 1)
+        pipeline.multi()
+        pipeline.hset(resource_key, mapping=hash_updates)
+        pipeline.hincrby(resource_key, "progress_revision", 1)
+        pipeline.expire(resource_key, self._s.retention_seconds)
+        pipeline.expire(
+            stored[b"idempotency_key"].decode("utf-8"), self._s.retention_seconds
+        )
+        execution_class = stored[b"execution_class"].decode("utf-8")
+        pipeline.zrem(self._ready_key("trial", execution_class), evaluation_id)
+        pipeline.zrem(self._ready_key("rollout", execution_class), evaluation_id)
+        pipeline.zrem(self._key("deadlines"), evaluation_id)
+        pipeline.zrem(self._key("running-leases"), evaluation_id)
+        pipeline.zrem(self._key("state:queued"), evaluation_id)
+        pipeline.zrem(self._key("state:running"), evaluation_id)
+        pipeline.zadd(self._key(f"state:{state}"), {evaluation_id: expiry_ms})
+        pipeline.set(caller_key, max(0, caller_inflight - 1))
+        pipeline.set(session_key, max(0, session_inflight - 1))
+        pipeline.execute()
+        # Post-EXEC: caller may still hold WATCHes on the main connection, so any
+        # main-connection write here would abort the transaction — bump only after
+        # EXEC, and only via ``_bump`` (swallows exceptions, never touches the
+        # pipeline).
+        self._bump(
+            "resource_terminal_transitions_total",
+            state=state,
+            traffic_class=self._stored_traffic_class(stored),
+        )
+
+    @staticmethod
+    def _stored_traffic_class(stored: dict) -> str:
+        """Use the quota class owned by this admitted resource."""
+        return stored[b"traffic_class"].decode("utf-8")
+
+    def _inflight_keys(self, stored: dict) -> tuple[str, str]:
+        owner = stored[b"owner"].decode("utf-8")
+        traffic_class = self._stored_traffic_class(stored)
+        caller_key = self._key(f"inflight:caller:{traffic_class}:{_digest_text(owner)}")
+        session_digest = stored[b"session_digest"].decode("utf-8")
+        return caller_key, self._key(f"inflight:session:{session_digest}")
+
+    # ------------------------------------------------------------------
+    # Recovery: lease reaper, deadline watchdog, terminal-index cleanup
+    # ------------------------------------------------------------------
+
+    def recover_expired_leases(self, limit: int = 100) -> RecoveryCounts:
+        """Requeue replaceable expired leases; commit WORKER_LOST at the limit."""
+        leases_key = self._key("running-leases")
+        now_ms = self._clock()
+        members = self._r.zrangebyscore(leases_key, "-inf", now_ms, start=0, num=limit)
+        requeued = 0
+        failed = 0
+        for member in members:
+            outcome = self._recover_one_lease(member, now_ms)
+            if outcome == "requeued":
+                requeued += 1
+                self._bump("reaped_leases_total", outcome="requeued")
+            elif outcome == "failed":
+                failed += 1
+                self._bump("reaped_leases_total", outcome="failed")
+        return RecoveryCounts(requeued=requeued, failed=failed)
+
+    def _recover_one_lease(self, member: bytes, now_ms: int) -> str | None:
+        evaluation_id = member.decode("utf-8")
+        resource_key = self._key(f"resource:{evaluation_id}")
+        leases_key = self._key("running-leases")
+        while True:
+            pipeline = self._r.pipeline()
+            try:
+                pipeline.watch(resource_key, leases_key)
+                stored = pipeline.hgetall(resource_key)
+                if not stored:
+                    pipeline.multi()
+                    pipeline.zrem(leases_key, member)
+                    pipeline.execute()
+                    return None
+                resource = EvaluationResource.model_validate_json(stored[b"resource"])
+                lease_deadline_ms = int(stored[b"lease_deadline_ms"])
+                installed = pipeline.zscore(leases_key, member)
+                if (
+                    resource.state != "running"
+                    or installed is None
+                    or int(installed) != lease_deadline_ms
+                    or lease_deadline_ms > now_ms
+                ):
+                    return None  # committed, renewed, or already replaced
+                if stored.get(b"cancel_requested") == b"1":
+                    self._commit_terminal_locked(
+                        pipeline, stored=stored, resource=resource, state="cancelled",
+                        result=self._failure_result(
+                            stored, "cancelled", "evaluation was cancelled",
+                        ),
+                        now_ms=now_ms, bump_fence=True,
+                    )
+                    return "failed"
+                if now_ms >= int(stored[b"deadline_ms"]):
+                    return None  # the deadline watchdog owns this resource
+                # Suspicious deaths are counted only when card provenance exists:
+                # without it there is no card to attribute the death to, and
+                # card-unaware traffic keeps the exact Plan B retry semantics.
+                failed_card = self._card_for_attempt(stored)
+                if failed_card is not None:
+                    deaths = int(stored.get(b"suspicious_deaths", b"0")) + 1
+                    metadata = {
+                        "suspicious_deaths": str(deaths),
+                        "last_failed_card": failed_card.decode("utf-8"),
+                    }
+                else:
+                    deaths = 0
+                    metadata = {}
+                if deaths >= self._s.poison_death_threshold:
+                    # Quarantine belongs to the current attempt's card provenance.
+                    message = (
+                        "worker lease expired before a subject outcome was committed; "
+                        "repeated suspicious deaths — candidate quarantined as "
+                        "suspected poison"
+                    )
+                    result = self._failure_result(stored, "poison", message)
+                    self._commit_terminal_locked(
+                        pipeline,
+                        stored=stored,
+                        resource=resource,
+                        state="failed",
+                        result=result,
+                        now_ms=now_ms,
+                        bump_fence=True,
+                    )
+                    try:
+                        self._r.hset(resource_key, mapping=metadata)
+                    except redis.RedisError:
+                        logger.warning(
+                            "poison-path advisory write failed for %s", evaluation_id
+                        )
+                    return "failed"
+                if int(stored[b"attempt_count"]) < MAX_ATTEMPTS:
+                    self._queue_replacement(pipeline, evaluation_id, stored, metadata)
+                    return "requeued"
+                result = self._failure_result(
+                    stored,
+                    "worker_lost",
+                    "worker lease expired before a subject outcome was committed",
+                )
+                self._commit_terminal_locked(
+                    pipeline,
+                    stored=stored,
+                    resource=resource,
+                    state="failed",
+                    result=result,
+                    now_ms=now_ms,
+                    bump_fence=True,
+                )
+                return "failed"
+            except redis.WatchError:
+                continue
+            finally:
+                pipeline.reset()
+
+    def expire_due_resources(self, limit: int = 100) -> int:
+        """Deadline watchdog: CAS due queued/running resources to timed_out."""
+        deadlines_key = self._key("deadlines")
+        now_ms = self._clock()
+        members = self._r.zrangebyscore(deadlines_key, "-inf", now_ms, start=0, num=limit)
+        expired = 0
+        for member in members:
+            if self._expire_one_resource(member, now_ms):
+                expired += 1
+        return expired
+
+    def _expire_one_resource(self, member: bytes, now_ms: int) -> bool:
+        evaluation_id = member.decode("utf-8")
+        resource_key = self._key(f"resource:{evaluation_id}")
+        deadlines_key = self._key("deadlines")
+        while True:
+            pipeline = self._r.pipeline()
+            try:
+                pipeline.watch(resource_key, deadlines_key)
+                stored = pipeline.hgetall(resource_key)
+                if not stored:
+                    pipeline.multi()
+                    pipeline.zrem(deadlines_key, member)
+                    pipeline.execute()
+                    return False
+                resource = EvaluationResource.model_validate_json(stored[b"resource"])
+                if resource.state in _TERMINAL_STATES:
+                    pipeline.multi()
+                    pipeline.zrem(deadlines_key, member)
+                    pipeline.execute()
+                    return False
+                message = (
+                    "resource deadline expired before any attempt started"
+                    if int(stored[b"attempt_count"]) == 0
+                    else "resource deadline expired"
+                )
+                cancelled = stored.get(b"cancel_requested") == b"1"
+                result = self._failure_result(
+                    stored, "cancelled" if cancelled else "deadline",
+                    "evaluation was cancelled" if cancelled else message,
+                )
+                self._commit_terminal_locked(
+                    pipeline,
+                    stored=stored,
+                    resource=resource,
+                    state="cancelled" if cancelled else "timed_out",
+                    result=result,
+                    now_ms=now_ms,
+                    bump_fence=True,
+                )
+                return True
+            except redis.WatchError:
+                continue
+            finally:
+                pipeline.reset()
+
+    def purge_expired_terminal_indexes(self, limit: int = 100) -> int:
+        """Remove terminal index members only when the resource hash expired.
+
+        Idempotent under concurrent API/worker maintenance loops: a member
+        whose resource hash still exists is never removed, and ``ZREM`` of an
+        already-removed member is a no-op.
+        """
+        now_ms = self._clock()
+        removed = 0
+        for state in _TERMINAL_STATES:
+            if removed >= limit:
+                break
+            index_key = self._key(f"state:{state}")
+            members = self._r.zrangebyscore(
+                index_key, "-inf", now_ms, start=0, num=limit - removed
+            )
+            for member in members:
+                evaluation_id = member.decode("utf-8")
+                if not self._r.exists(self._key(f"resource:{evaluation_id}")):
+                    removed += self._r.zrem(index_key, member)
+        return removed
+
+    @staticmethod
+    def _stored_pinned(stored: dict) -> PinnedProvenance:
+        """Recovery identity survives corrupt or unavailable candidate bytes."""
+        return PinnedProvenance(
+            evaluator_build=stored[b"evaluator_build"].decode("utf-8"),
+            algorithms=AlgorithmVersions(
+                correctness=stored[b"correctness_algorithm"].decode("utf-8"),
+                decoy=stored[b"decoy_algorithm"].decode("utf-8"),
+                benchmark=stored[b"benchmark_algorithm"].decode("utf-8"),
+                profiler=stored[b"profiler_algorithm"].decode("utf-8"),
+            ),
+            purpose=stored[b"purpose"].decode("utf-8"),
+            manifest_id=stored[b"manifest_id"].decode("utf-8") or None,
+            problem_id=stored[b"problem_id"].decode("utf-8") or None,
+        )
+
+    def _failure_result(
+        self, stored: dict, failure: str, message: str
+    ) -> EvaluationResult:
+        if failure == "deadline":
+            ending = CheckTimedOut(status="timeout", error=ErrorInfo(
+                code="DEADLINE_EXCEEDED", phase="deadline", check=None,
+                retryable=False, message=message,
+            ))
+        elif failure == "cancelled":
+            ending = CheckFailed(status="failed", error=ErrorInfo(
+                code="CANCELLED", phase="execution", check=None,
+                retryable=False, message=message,
+            ))
+        else:
+            ending = CheckFailed(status="failed", error=ErrorInfo(
+                code="SUSPECTED_POISON_CANDIDATE" if failure == "poison" else "WORKER_LOST",
+                phase="execution", check=None, retryable=failure != "poison", message=message,
+            ))
+        native_build = None
+        native_policy = stored.get(b"native_reference_device_policy", b"").decode("utf-8")
+        if native_policy:
+            try:
+                native_build = NativeBuildEvidence.model_validate_json(
+                    stored.get(b"native_build", b"")
+                )
+            except (ValueError, TypeError):
+                pass
+        return complete_evaluation(
+            requested_checks=json.loads(stored[b"requested_checks"]),
+            outcomes=persisted_check_outcomes(stored[b"check_outcomes"]),
+            failure=ending,
+            pinned=self._stored_pinned(stored), native_build=native_build,
+            **({"correctness_algorithm_override": f"native_tensor_v1:{native_policy}",
+                "reference_device_policy": native_policy} if native_policy else {}),
+        )
+
+    # ------------------------------------------------------------------
+    # Worker heartbeats and fencing metric
+    # ------------------------------------------------------------------
+
+    def set_card_unhealthy(self, card: int) -> None:
+        self._r.hset(self._key(f"card-health:{card}"), "state", "unhealthy")
+
+    def clear_card_unhealthy(self, card: int) -> None:
+        self._r.hset(self._key(f"card-health:{card}"), "state", "ok")
+
+    def is_card_unhealthy(self, card: int) -> bool:
+        try:
+            return self._r.hget(self._key(f"card-health:{card}"), "state") == b"unhealthy"
+        except redis.RedisError:
+            return False
+
+    @staticmethod
+    def _compatibility_record(worker: WorkerIdentity | WorkerCompatibility) -> dict[str, str]:
+        return {
+            "execution_class": worker.execution_class,
+            "evaluator_build": worker.evaluator_build,
+            "correctness_algorithm": worker.algorithms.correctness,
+            "decoy_algorithm": worker.algorithms.decoy,
+            "benchmark_algorithm": worker.algorithms.benchmark,
+            "profiler_algorithm": worker.algorithms.profiler,
+        }
+
+    @classmethod
+    def _worker_matches_resource(cls, worker: WorkerIdentity, stored: dict) -> bool:
+        return all(
+            stored.get(name.encode()) == value.encode()
+            for name, value in cls._compatibility_record(worker).items()
+        )
+
+    def heartbeat(self, worker: WorkerIdentity) -> None:
+        """Record a worker heartbeat; fresh means within one lease window."""
+        now_ms = self._clock()
+        payload = canonical_json_bytes(self._compatibility_record(worker))
+        self._bump("worker_heartbeats_total")
+        pipeline = self._r.pipeline()
+        pipeline.hset(self._key("worker-heartbeats"), worker.worker_id, payload)
+        pipeline.zadd(
+            self._key("worker-heartbeat-expiry"),
+            {worker.worker_id: now_ms + self._s.lease_seconds * 1000},
+        )
+        pipeline.execute()
+
+    def has_fresh_compatible_worker(self, compatibility: WorkerCompatibility) -> bool:
+        """True iff a non-pruned heartbeat matches build and all algorithms."""
+        heartbeats_key = self._key("worker-heartbeats")
+        expiry_key = self._key("worker-heartbeat-expiry")
+        now_ms = self._clock()
+        stale = self._r.zrangebyscore(expiry_key, "-inf", now_ms)
+        if stale:
+            pipeline = self._r.pipeline()
+            pipeline.hdel(heartbeats_key, *stale)
+            pipeline.zrem(expiry_key, *stale)
+            pipeline.execute()
+        expected = self._compatibility_record(compatibility)
+        for payload in self._r.hgetall(heartbeats_key).values():
+            try:
+                record = json.loads(payload)
+            except ValueError:
+                continue
+            if record == expected:
+                return True
+        return False
+
+    def note_fenced_write(self) -> None:
+        """Count a late, duplicate, or lease-losing attempt write."""
+        self._r.incr(self._key("metrics:fenced-write-rejected"))
+        self._bump("fenced_write_rejections_total")

@@ -3,14 +3,13 @@
 import importlib.metadata
 
 import pytest
-
-from triton_evaluation.runtime.profiler_runtime import MANIFEST_ENV
-from triton_evaluation.runtime.reference_cache import (
+from ascend_op_eval.execution.reference_cache import (
     CacheDeployment,
     CacheMeasurement,
     ReferenceCacheError,
     sha256,
 )
+from ascend_op_eval.runtimes.profiler_runtime import MANIFEST_ENV
 
 
 def deployment(tmp_path, helper_key):
@@ -19,7 +18,7 @@ def deployment(tmp_path, helper_key):
     names = ["verify.py", "benchmark.py", "_common_utils.py"]
     for name in names:
         (engine / name).write_text("controlled implementation")
-    helper = tmp_path / "runtime" / "profiler_runtime.py"
+    helper = tmp_path / "runtimes" / "profiler_runtime.py"
     helper.parent.mkdir()
     helper.write_text("controlled runtime helper")
     marker = tmp_path / "runtime-version"
@@ -39,7 +38,7 @@ def deployment(tmp_path, helper_key):
 
 
 def test_only_named_sibling_helper_is_allowed_and_live_hash_is_checked(tmp_path):
-    model, engine, helper = deployment(tmp_path, "../runtime/profiler_runtime.py")
+    model, engine, helper = deployment(tmp_path, "../runtimes/profiler_runtime.py")
     model.check_runtime(engine)
     helper.write_text("changed actual helper")
     with pytest.raises(ReferenceCacheError, match="algorithm changed"):
@@ -65,7 +64,7 @@ def test_configured_runtime_cannot_use_old_cache_without_helper_pin(tmp_path, mo
 
 
 def test_named_helper_cannot_be_a_symlink_outside_service_root(tmp_path):
-    model, engine, helper = deployment(tmp_path, "../runtime/profiler_runtime.py")
+    model, engine, helper = deployment(tmp_path, "../runtimes/profiler_runtime.py")
     outside = tmp_path / "outside.py"
     outside.write_bytes(helper.read_bytes())
     helper.unlink()
@@ -75,7 +74,7 @@ def test_named_helper_cannot_be_a_symlink_outside_service_root(tmp_path):
 
 
 def test_engine_root_cannot_redirect_fixed_helper_through_symlink(tmp_path):
-    model, engine, _helper = deployment(tmp_path, "../runtime/profiler_runtime.py")
+    model, engine, _helper = deployment(tmp_path, "../runtimes/profiler_runtime.py")
     alias = tmp_path / "engine-alias"
     alias.symlink_to(engine, target_is_directory=True)
     with pytest.raises(ReferenceCacheError, match="stay in service runtime package"):

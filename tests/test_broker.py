@@ -3,13 +3,12 @@ import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from ascend_op_eval.api.contract import EvaluationResource
+from ascend_op_eval.config import Settings
+from ascend_op_eval.control.broker import EvaluationStore, StorageError, _digest_text
+from ascend_op_eval.control.models import new_evaluation_id
+from ascend_op_eval.serialization import sha256_hex
 from conftest import make_caller, make_completed_result, make_request
-
-from triton_evaluation.api.contract import EvaluationResource
-from triton_evaluation.config import Settings
-from triton_evaluation.serialization import sha256_hex
-from triton_evaluation.service.broker import EvaluationStore, StorageError, _digest_text
-from triton_evaluation.service.models import new_evaluation_id
 
 
 def _key(settings, suffix):

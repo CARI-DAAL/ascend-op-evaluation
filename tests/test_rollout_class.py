@@ -1,7 +1,6 @@
 """Caller and purpose policy select quota and scheduling through submission."""
+from ascend_op_eval.control.instance import EvaluationInstance
 from conftest import make_caller, make_grade_caller, make_grade_request, make_request
-
-from triton_evaluation.service.instance import EvaluationInstance
 
 
 def test_declared_rollout_caller_uses_bulk_queue(settings, store, make_worker):

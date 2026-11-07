@@ -1,8 +1,7 @@
 """Crash recovery: an abandoned worker's token can never mutate the resource."""
+from ascend_op_eval.api.contract import EvaluationResource
 from conftest import make_completed_result
 from test_worker import build_worker
-
-from triton_evaluation.api.contract import EvaluationResource
 
 
 def test_abandoned_worker_token_cannot_mutate_after_replacement(

@@ -6,12 +6,11 @@ from pathlib import Path
 
 import fakeredis
 import pytest
-
-from triton_evaluation.api.contract import EvaluationRequest
-from triton_evaluation.evaluators import baseline
-from triton_evaluation.evaluators import benchmark as runner
-from triton_evaluation.evaluators.base import LeaseLostError, ScriptOutcome
-from triton_evaluation.runtime.baseline_cache import BaselineCache
+from ascend_op_eval.api.contract import EvaluationRequest
+from ascend_op_eval.evaluators import baseline
+from ascend_op_eval.evaluators import benchmark as runner
+from ascend_op_eval.evaluators.base import LeaseLostError, ScriptOutcome
+from ascend_op_eval.execution.baseline_cache import BaselineCache
 
 
 @pytest.fixture(params=[False, True], ids=["timing", "timing-trace"])
@@ -218,7 +217,7 @@ def test_deadline_expiry_prevents_publish(harness, monkeypatch):
 
 
 def test_parent_stamp_reaches_public_performance_shape(harness):
-    from triton_evaluation.evaluators.shaping import shape_performance
+    from ascend_op_eval.evaluators.shaping import shape_performance
 
     fixture = Path(__file__).parent / "fixtures" / "engine" / "benchmark-event-timing.json"
     run, cache, calls, control, client, evaluator = harness
@@ -265,7 +264,7 @@ def test_real_unstable_reference_measurement_falls_back(harness, monkeypatch, re
     import sys
     from types import SimpleNamespace
 
-    from triton_evaluation.engine import benchmark as engine
+    from ascend_op_eval.engine import benchmark as engine
 
     run, cache, calls, control, client, evaluator = harness
     fake_torch = SimpleNamespace(

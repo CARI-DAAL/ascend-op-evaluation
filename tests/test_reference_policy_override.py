@@ -10,12 +10,11 @@ correctness reuse keeps failing the evidence validator.
 from pathlib import Path
 
 import pytest
+from ascend_op_eval.api.contract import EvaluationRequest, Provenance
+from ascend_op_eval.config import Settings
+from ascend_op_eval.control.terminal_results import PinnedProvenance, complete_evaluation
+from ascend_op_eval.operator_input import OperatorRequest, to_evaluation_request
 from pydantic import ValidationError
-
-from triton_evaluation.api.contract import EvaluationRequest, Provenance
-from triton_evaluation.config import Settings
-from triton_evaluation.operator_input import OperatorRequest, to_evaluation_request
-from triton_evaluation.service.terminal_results import PinnedProvenance, complete_evaluation
 
 
 def _definition() -> dict:
@@ -86,7 +85,7 @@ def test_settings_correctness_algorithm_for_recomputes_suffix():
 
 
 def _pinned() -> PinnedProvenance:
-    from triton_evaluation.service.models import AlgorithmVersions
+    from ascend_op_eval.control.models import AlgorithmVersions
 
     return PinnedProvenance(
         evaluator_build="git:" + "0" * 40,
@@ -103,7 +102,7 @@ def _pinned() -> PinnedProvenance:
 
 
 def test_complete_evaluation_pins_policy_provenance(tmp_path: Path):
-    from triton_evaluation.api.contract import CheckSucceeded, CorrectnessResult
+    from ascend_op_eval.api.contract import CheckSucceeded, CorrectnessResult
 
     correctness = CheckSucceeded(
         status="succeeded",
@@ -123,7 +122,7 @@ def test_complete_evaluation_pins_policy_provenance(tmp_path: Path):
 
 
 def test_complete_evaluation_defaults_keep_pinned_provenance(tmp_path: Path):
-    from triton_evaluation.api.contract import CheckSucceeded, CorrectnessResult
+    from ascend_op_eval.api.contract import CheckSucceeded, CorrectnessResult
 
     correctness = CheckSucceeded(
         status="succeeded",
@@ -157,13 +156,13 @@ def test_provenance_accepts_missing_policy_for_old_records():
 
 
 def test_verify_engine_cmd_honours_request_policy(tmp_path, monkeypatch):
-    import triton_evaluation.evaluators.verify as verify_mod
+    import ascend_op_eval.evaluators.verify as verify_mod
 
     seen = {}
 
     def fake_run_script(cmd, cwd, device_id, deadline_at=None, lease_valid=None, **kwargs):
         seen["cmd"] = cmd
-        from triton_evaluation.evaluators.base import ScriptOutcome
+        from ascend_op_eval.evaluators.base import ScriptOutcome
 
         return ScriptOutcome(1, "", "", False)
 

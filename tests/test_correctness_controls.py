@@ -6,19 +6,18 @@ from datetime import datetime, timedelta, timezone
 from types import ModuleType, SimpleNamespace
 
 import pytest
-from conftest import make_request
-from pydantic import ValidationError
-
-from triton_evaluation.api.contract import CorrectnessParams, CorrectnessResult, dump_contract
-from triton_evaluation.engine import verify
-from triton_evaluation.evaluators.base import ScriptOutcome
-from triton_evaluation.evaluators.shaping import (
+from ascend_op_eval.api.contract import CorrectnessParams, CorrectnessResult, dump_contract
+from ascend_op_eval.engine import verify
+from ascend_op_eval.evaluators.base import ScriptOutcome
+from ascend_op_eval.evaluators.shaping import (
     ShapingError,
     UnattributedFailure,
     shape_correctness,
 )
-from triton_evaluation.evaluators.verify import VerifyEvaluator
-from triton_evaluation.operator_input import OperatorRequest, to_evaluation_request
+from ascend_op_eval.evaluators.verify import VerifyEvaluator
+from ascend_op_eval.operator_input import OperatorRequest, to_evaluation_request
+from conftest import make_request
+from pydantic import ValidationError
 
 
 def operator_request(**overrides):
@@ -350,14 +349,13 @@ async def test_http_submission_retains_controls_in_durable_request(tmp_path, rel
 
 
 def test_partial_pass_cannot_authorize_performance(tmp_path):
+    from ascend_op_eval.evaluators.base import EngineCheckResult
     from test_evaluation_evaluator import (
         Harness,
         RecordingSink,
         StubCheck,
         run_evaluation,
     )
-
-    from triton_evaluation.evaluators.base import EngineCheckResult
 
     raw = partial_raw()
     raw.update(passed_cases=2, failed_cases=0, failures=[])

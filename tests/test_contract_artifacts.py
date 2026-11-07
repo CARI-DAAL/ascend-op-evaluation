@@ -9,10 +9,9 @@ import math
 from pathlib import PurePosixPath
 
 import pytest
+from ascend_op_eval.api import contract as live_contract
+from ascend_op_eval.serialization import canonical_json_bytes, sha256_hex
 from contract_fixtures import CONTRACT_ROOT, build_artifacts
-
-from triton_evaluation.api import contract as live_contract
-from triton_evaluation.serialization import canonical_json_bytes, sha256_hex
 
 EXPECTED_FIXTURES = [
     "error-deadline-exceeded.json",

@@ -8,11 +8,10 @@ from pathlib import Path
 
 import httpx
 import pytest
+from ascend_op_eval.api.listeners import serve_app
 from test_api import TRIAL_TOKEN, build_app, seed_worker
 from test_durable_http import claim_and_complete
 from test_native_listeners import free_port, wait_for_liveness
-
-from triton_evaluation.api.listeners import serve_app
 
 pytestmark = pytest.mark.anyio
 
@@ -29,9 +28,9 @@ async def test_isolated_client_submits_replays_and_recovers_real_resource(tmp_pa
     app.settings.api_port = free_port()
     base = f"http://127.0.0.1:{app.settings.api_port}"
     owner = asyncio.create_task(serve_app(app.app, app.settings, install_signal_handlers=False))
-    plugin = Path(__file__).parents[1] / "plugins/triton-eval/skills/triton-eval/scripts"
+    plugin = Path(__file__).parents[1] / "plugins/ascend-op-eval/skills/ascend-op-eval/scripts"
     script = tmp_path / "client.py"
-    shutil.copyfile(plugin / "triton_eval.py", script)
+    shutil.copyfile(plugin / "ascend_op_eval.py", script)
     token = tmp_path / "token"
     token.write_text(TRIAL_TOKEN)
     token.chmod(0o600)

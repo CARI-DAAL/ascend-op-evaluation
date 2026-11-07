@@ -5,7 +5,7 @@ confirm the rename works and respects the 15-byte kernel cap.
 """
 import os
 
-from triton_evaluation.engine._common_utils import set_process_title
+from ascend_op_eval.engine._common_utils import set_process_title
 
 
 def _comm() -> str:

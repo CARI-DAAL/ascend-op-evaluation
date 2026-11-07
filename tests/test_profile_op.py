@@ -2,7 +2,7 @@ import csv
 import sys
 from pathlib import Path
 
-from triton_evaluation.engine import msprof_op
+from ascend_op_eval.engine import msprof_op
 
 KERNEL_SOURCE = """
 import triton

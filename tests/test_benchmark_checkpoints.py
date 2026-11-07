@@ -10,10 +10,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
-from triton_evaluation.engine import benchmark
-from triton_evaluation.engine import joint_measurement as joint
-from triton_evaluation.engine import single_benchmark as single
+from ascend_op_eval.engine import benchmark
+from ascend_op_eval.engine import joint_measurement as joint
+from ascend_op_eval.engine import single_benchmark as single
 
 ROOT = Path(__file__).resolve().parents[1]
 VARIANTS = ("comparison", "single", "joint-comparison", "joint-single")

@@ -1,9 +1,8 @@
 """Cached verdicts never bypass durable admission and leased execution."""
 import pytest
+from ascend_op_eval.execution import verdict_cache
 from conftest import make_caller
 from test_api import build_app, internal_request, post, request_payload, seed_worker
-
-from triton_evaluation.runtime import verdict_cache
 
 pytestmark = pytest.mark.anyio
 

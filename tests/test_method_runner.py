@@ -5,7 +5,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-RUNNER = Path(__file__).resolve().parents[1] / "triton_evaluation/engine/method_runner.py"
+RUNNER = (
+    Path(__file__).resolve().parents[1]
+    / "packages/ascend-op-eval/src/ascend_op_eval/engine/method_runner.py"
+)
 
 
 def invoke(tmp_path, source, *, parameters=None, requirements=None):

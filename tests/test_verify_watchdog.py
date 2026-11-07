@@ -7,12 +7,11 @@ exit=3 and map to DEADLINE_EXCEEDED, and both budgets come from Settings.
 """
 from datetime import datetime, timedelta, timezone
 
+import ascend_op_eval.evaluators.verify as verify_mod
 import pytest
+from ascend_op_eval.evaluators.base import ScriptOutcome
+from ascend_op_eval.evaluators.verify import VerifyEvaluator
 from conftest import make_request
-
-import triton_evaluation.evaluators.verify as verify_mod
-from triton_evaluation.evaluators.base import ScriptOutcome
-from triton_evaluation.evaluators.verify import VerifyEvaluator
 
 
 def _deadline(seconds=120):
@@ -65,7 +64,7 @@ def test_other_exit_codes_still_fail_closed(tmp_path, monkeypatch):
 
 def test_verify_budget_cap_comes_from_settings(tmp_path, monkeypatch):
     """The whole-run verify budget cap is deployment-tunable, not a constant."""
-    from triton_evaluation.config import Settings
+    from ascend_op_eval.config import Settings
 
     seen = {}
     monkeypatch.setattr(
@@ -90,8 +89,8 @@ def test_verify_budget_cap_comes_from_settings(tmp_path, monkeypatch):
 
 
 def test_benchmark_timeout_comes_from_settings(tmp_path, monkeypatch):
-    import triton_evaluation.evaluators.benchmark as benchmark_mod
-    from triton_evaluation.config import Settings
+    import ascend_op_eval.evaluators.benchmark as benchmark_mod
+    from ascend_op_eval.config import Settings
 
     seen = {}
     monkeypatch.setattr(
@@ -110,7 +109,7 @@ def test_benchmark_timeout_comes_from_settings(tmp_path, monkeypatch):
 
 
 def test_settings_expose_the_new_budget_fields():
-    from triton_evaluation.config import Settings
+    from ascend_op_eval.config import Settings
 
     settings = Settings(engine_dir="unused")
     assert settings.verify_budget_cap_seconds == 3600
@@ -125,7 +124,7 @@ def test_engine_watchdog_branch_exits_three():
 
     engine_path = (
         Path(__file__).resolve().parents[1]
-        / "triton_evaluation" / "engine" / "verify.py"
+        / "packages/ascend-op-eval/src/ascend_op_eval" / "engine" / "verify.py"
     )
     spec = importlib.util.spec_from_file_location("engine_verify", engine_path)
     module = importlib.util.module_from_spec(spec)
@@ -145,7 +144,7 @@ def test_engine_watchdog_branch_exits_three():
 
 def test_engine_crash_evidence_is_retained(tmp_path):
     """log_engine_crash appends exit/outcome/result-file presence + log tails."""
-    from triton_evaluation.evaluators.base import log_engine_crash
+    from ascend_op_eval.evaluators.base import log_engine_crash
 
     log_path = tmp_path / "logs" / "engine_crashes.log"
     outcome = ScriptOutcome(1, "out-line", "err-line", False, "exited")

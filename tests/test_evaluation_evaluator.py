@@ -13,21 +13,20 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-
-from triton_evaluation.api.contract import (
+from ascend_op_eval.api.contract import (
     EvaluationRequest,
     ExecutionEnvironment,
 )
-from triton_evaluation.config import Settings
-from triton_evaluation.evaluators.base import (
+from ascend_op_eval.config import Settings
+from ascend_op_eval.control.models import AlgorithmVersions, PinnedProvenance
+from ascend_op_eval.evaluators.base import (
     EngineCheckResult,
     LeaseLostError,
     engine_failure,
     engine_timeout,
 )
-from triton_evaluation.evaluators.evaluation import EvaluationEvaluator
-from triton_evaluation.runtime.execution_environment import build_execution_environment
-from triton_evaluation.service.models import AlgorithmVersions, PinnedProvenance
+from ascend_op_eval.evaluators.evaluation import EvaluationEvaluator
+from ascend_op_eval.runtimes.execution_environment import build_execution_environment
 
 FIXTURES = Path(__file__).parent / "fixtures" / "engine"
 
@@ -304,7 +303,7 @@ def test_unattributed_failure_with_traceback_detail_stays_in_message_budget(tmp_
     observed on LV4 ConvTranspose2, whose unattributed failures carry
     tracebacks and hit this on every evaluation.
     """
-    from triton_evaluation.api.contract import MAX_ERROR_MESSAGE_BYTES
+    from ascend_op_eval.api.contract import MAX_ERROR_MESSAGE_BYTES
 
     long_detail = "RuntimeError: " + text * 900
     harness = full_harness()
@@ -549,8 +548,8 @@ def _request(checks=("correctness",)):
 
 
 def test_evaluator_outer_kill_fires_after_the_engine_grace(tmp_path, monkeypatch):
-    import triton_evaluation.evaluators.verify as verify_mod
-    from triton_evaluation.evaluators.base import ScriptOutcome
+    import ascend_op_eval.evaluators.verify as verify_mod
+    from ascend_op_eval.evaluators.base import ScriptOutcome
 
     seen = {}
 
@@ -581,8 +580,8 @@ def test_evaluator_outer_kill_fires_after_the_engine_grace(tmp_path, monkeypatch
 
 
 def test_ambiguous_exit_past_deadline_is_timeout_never_attributed(tmp_path, monkeypatch):
-    import triton_evaluation.evaluators.verify as verify_mod
-    from triton_evaluation.evaluators.base import ScriptOutcome
+    import ascend_op_eval.evaluators.verify as verify_mod
+    from ascend_op_eval.evaluators.base import ScriptOutcome
 
     # run(), decoy pre-check, and _run_verify's start see budget; the
     # post-run check observes the expired deadline.

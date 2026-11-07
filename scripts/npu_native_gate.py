@@ -19,7 +19,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "plugins/triton-eval/skills/triton-eval/scripts/triton_eval.py"
+CLI = ROOT / "plugins/ascend-op-eval/skills/ascend-op-eval/scripts/ascend_op_eval.py"
 FIXTURE = ROOT / "tests/fixtures/native/ascendc_smoke"
 METHOD = "native_profiler_kernel_sum_v1"
 

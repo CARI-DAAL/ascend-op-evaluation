@@ -1,0 +1,15 @@
+[project]
+name = "ascend-op-eval-client"
+version = "0.4.0"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+ascend-op-eval = "ascend_op_eval_client.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

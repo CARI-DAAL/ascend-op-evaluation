@@ -5,7 +5,7 @@ import pytest
 
 pytestmark = pytest.mark.npu
 
-health = pytest.importorskip("triton_evaluation.runtime.health", reason="health module")
+health = pytest.importorskip("ascend_op_eval.resources.health", reason="health module")
 
 
 def _npu_available() -> bool:

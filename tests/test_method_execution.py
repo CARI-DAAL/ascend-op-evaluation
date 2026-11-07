@@ -3,7 +3,7 @@
 import sys
 from pathlib import Path
 
-from triton_evaluation.evaluators.base import run_script
+from ascend_op_eval.evaluators.base import run_script
 
 
 def test_method_log_budget_stops_chatty_process(tmp_path):
@@ -23,7 +23,7 @@ def test_method_log_budget_stops_chatty_process(tmp_path):
 def execution(
     source, *, kind="checker", params=None, requirements=None, artifacts=None, limits=None
 ):
-    from triton_evaluation.methods.contracts import (
+    from ascend_op_eval.methods.contracts import (
         MethodExecution,
         MethodLimits,
         MethodPackage,
@@ -69,7 +69,7 @@ def execution(
 def execute(tmp_path, spec, **kwargs):
     from datetime import datetime, timedelta, timezone
 
-    from triton_evaluation.runtime.method_execution import execute_method
+    from ascend_op_eval.execution.method_execution import execute_method
 
     return execute_method(
         spec,
@@ -166,7 +166,12 @@ def test_real_sandbox_method_cleans_detached_session_child(tmp_path):
                 "readonly_mounts": [
                     [path, path]
                     for path in dict.fromkeys(
-                        ("/usr", sys.base_prefix, sys.prefix, str(root / "triton_evaluation"))
+                        (
+                            "/usr",
+                            sys.base_prefix,
+                            sys.prefix,
+                            str(root / "packages/ascend-op-eval/src/ascend_op_eval"),
+                        )
                     )
                 ],
                 "environment": {"PYTHONPATH": str(root)},
@@ -226,7 +231,7 @@ def test_private_attempt_tree_remains_removable(tmp_path):
 def test_method_timeout_is_distinct_and_preserves_bounded_logs(tmp_path):
     from datetime import datetime, timedelta, timezone
 
-    from triton_evaluation.runtime.method_execution import execute_method
+    from ascend_op_eval.execution.method_execution import execute_method
 
     spec = execution(
         "import time\ndef run(request):\n print('started',flush=True)\n time.sleep(30)\n"
@@ -248,9 +253,8 @@ def test_lease_loss_stops_method_and_prevents_artifact_publication(tmp_path):
     from datetime import datetime, timedelta, timezone
 
     import pytest
-
-    from triton_evaluation.evaluators.base import LeaseLostError
-    from triton_evaluation.runtime.method_execution import execute_method
+    from ascend_op_eval.evaluators.base import LeaseLostError
+    from ascend_op_eval.execution.method_execution import execute_method
 
     started = time.monotonic()
     published = []
@@ -281,7 +285,7 @@ def test_missing_dependency_is_not_hidden_by_absent_required_output(tmp_path):
 
 
 def test_invalid_declared_json_input_is_protocol_error_before_import(tmp_path):
-    from triton_evaluation.methods.contracts import MethodInput, StoredArtifact, package_identity
+    from ascend_op_eval.methods.contracts import MethodInput, StoredArtifact, package_identity
 
     spec = execution("raise AssertionError('must not import')\n")
     package = spec.package.model_copy(

@@ -3,6 +3,7 @@ import ipaddress
 import json
 
 import pytest
+from ascend_op_eval import versioning
 
 from scripts.deployment_preflight import (
     CONTAINER_MANIFEST,
@@ -11,7 +12,6 @@ from scripts.deployment_preflight import (
     PreflightError,
     inspect_deployment,
 )
-from triton_evaluation import versioning
 
 INSTANCE_HOST = "172.18.0.1"
 REDIS_IMAGE = (
@@ -74,24 +74,24 @@ class FakeDocker:
 
     def _rendered(self):
         services = {
-            "triton-eval": {
+            "ascend-op-eval": {
                 "image": EVAL_IMAGE,
                 "network_mode": "host",
                 "environment": {
-                    "TRITON_EVAL_IMAGE": EVAL_IMAGE,
-                    "TRITON_EVAL_API_HOST": INSTANCE_HOST,
-                    "TRITON_EVAL_API_PORT": "11907",
-                    "TRITON_EVAL_REDIS_URL": "redis://127.0.0.1:6379/7",
-                    "TRITON_EVAL_REDIS_PREFIX": "triton-eval:v2.1",
-                    "TRITON_EVAL_CARDS": "0",
-                    "TRITON_EVAL_EVALUATOR_BUILD": EVALUATOR_BUILD,
-                    "TRITON_EVAL_CAPABILITY_SECRET_PATH": "/run/secrets/triton-eval",
-                    "TRITON_EVAL_RELEASE_MODE": "release",
-                    "TRITON_EVAL_RELEASE_MANIFEST": CONTAINER_MANIFEST,
+                    "ASCEND_OP_EVAL_IMAGE": EVAL_IMAGE,
+                    "ASCEND_OP_EVAL_API_HOST": INSTANCE_HOST,
+                    "ASCEND_OP_EVAL_API_PORT": "11907",
+                    "ASCEND_OP_EVAL_REDIS_URL": "redis://127.0.0.1:6379/7",
+                    "ASCEND_OP_EVAL_REDIS_PREFIX": "triton-eval:v2.1",
+                    "ASCEND_OP_EVAL_CARDS": "0",
+                    "ASCEND_OP_EVAL_EVALUATOR_BUILD": EVALUATOR_BUILD,
+                    "ASCEND_OP_EVAL_CAPABILITY_SECRET_PATH": "/run/secrets/ascend-op-eval",
+                    "ASCEND_OP_EVAL_RELEASE_MODE": "release",
+                    "ASCEND_OP_EVAL_RELEASE_MANIFEST": CONTAINER_MANIFEST,
                 },
                 "volumes": [
                     {"type": "bind", "source": str(self.secret),
-                     "target": "/run/secrets/triton-eval",
+                     "target": "/run/secrets/ascend-op-eval",
                      "read_only": True},
                     {"type": "bind", "source": str(self.manifest),
                      "target": CONTAINER_MANIFEST,
@@ -117,7 +117,7 @@ class FakeDocker:
             "volumes": {"triton-eval-redis-v2": {}},
         }
         if self.rendered_env:
-            services["triton-eval"]["environment"].update(self.rendered_env)
+            services["ascend-op-eval"]["environment"].update(self.rendered_env)
         rendered.update(self.rendered_overrides)
         return rendered
 
@@ -128,18 +128,18 @@ class FakeDocker:
 def base_env(tmp_path, **overrides):
     secret = _write_secret(tmp_path)
     env = {
-        "TRITON_EVAL_API_HOST": INSTANCE_HOST,
-        "TRITON_EVAL_API_PORT": "11907",
-        "TRITON_EVAL_CAPABILITY_SECRET_PATH": str(secret),
-        "TRITON_EVAL_IMAGE": EVAL_IMAGE,
-        "TRITON_EVAL_EVALUATOR_BUILD": EVALUATOR_BUILD,
-        "TRITON_EVAL_COMPOSE_FILE": "docker/compose.yaml",
-        "TRITON_EVAL_ENV_FILE": "/dev/null",
+        "ASCEND_OP_EVAL_API_HOST": INSTANCE_HOST,
+        "ASCEND_OP_EVAL_API_PORT": "11907",
+        "ASCEND_OP_EVAL_CAPABILITY_SECRET_PATH": str(secret),
+        "ASCEND_OP_EVAL_IMAGE": EVAL_IMAGE,
+        "ASCEND_OP_EVAL_EVALUATOR_BUILD": EVALUATOR_BUILD,
+        "ASCEND_OP_EVAL_COMPOSE_FILE": "deploy/compose/compose.yaml",
+        "ASCEND_OP_EVAL_ENV_FILE": "/dev/null",
     }
     env.update(overrides)
     env = {k: v for k, v in env.items() if v is not None}
-    if "TRITON_EVAL_RELEASE_MANIFEST_HOST" not in overrides:
-        env["TRITON_EVAL_RELEASE_MANIFEST_HOST"] = str(
+    if "ASCEND_OP_EVAL_RELEASE_MANIFEST_HOST" not in overrides:
+        env["ASCEND_OP_EVAL_RELEASE_MANIFEST_HOST"] = str(
             write_manifest(tmp_path, **_binding(env))
         )
     return env
@@ -148,8 +148,8 @@ def base_env(tmp_path, **overrides):
 def _binding(env):
     """Bind the manifest to this deployment's build; unbindable inputs keep the
     defaults, since preflight rejects them before reaching the manifest."""
-    build = env.get("TRITON_EVAL_EVALUATOR_BUILD", EVALUATOR_BUILD)
-    image = env.get("TRITON_EVAL_IMAGE", EVAL_IMAGE)
+    build = env.get("ASCEND_OP_EVAL_EVALUATOR_BUILD", EVALUATOR_BUILD)
+    image = env.get("ASCEND_OP_EVAL_IMAGE", EVAL_IMAGE)
     if versioning.BUILD_PATTERN.fullmatch(build) is None or "@sha256:" not in image:
         return {}
     return {"build": build, "image": image}
@@ -199,12 +199,12 @@ def make_runner(tmp_path, **kwargs):
 
 def test_default_compose_path_is_independent_of_cwd(tmp_path, monkeypatch):
     runner = make_runner(tmp_path)
-    env = base_env(tmp_path, TRITON_EVAL_COMPOSE_FILE=None)
+    env = base_env(tmp_path, ASCEND_OP_EVAL_COMPOSE_FILE=None)
     monkeypatch.chdir(tmp_path)
     inspect_deployment(env, runner)
     assert runner.calls[0] == [
         "docker", "compose", "--project-directory", str(PROJECT_ROOT),
-        "--env-file", "/dev/null", "-f", str(PROJECT_ROOT / "docker/compose.yaml"),
+        "--env-file", "/dev/null", "-f", str(PROJECT_ROOT / "deploy/compose/compose.yaml"),
         "config", "--format", "json",
     ]
 
@@ -236,8 +236,8 @@ def test_preflight_never_shows_docker_or_pulls(tmp_path):
 
 @pytest.mark.parametrize("address", ["10.2.3.4", "192.168.1.12", INSTANCE_HOST])
 def test_independent_instance_private_addresses_need_no_sandbox_network(tmp_path, address):
-    runner = make_runner(tmp_path, rendered_env={"TRITON_EVAL_API_HOST": address})
-    config = inspect_deployment(base_env(tmp_path, TRITON_EVAL_API_HOST=address), runner)
+    runner = make_runner(tmp_path, rendered_env={"ASCEND_OP_EVAL_API_HOST": address})
+    config = inspect_deployment(base_env(tmp_path, ASCEND_OP_EVAL_API_HOST=address), runner)
     assert str(config.api_host) == address
     assert not any(call[:3] == ["docker", "network", "inspect"] for call in runner.calls)
 
@@ -245,13 +245,13 @@ def test_independent_instance_private_addresses_need_no_sandbox_network(tmp_path
 @pytest.mark.parametrize("address", ["127.0.0.1", "0.0.0.0", "8.8.8.8", "::", "host"])
 def test_non_private_or_ambiguous_binds_are_rejected(tmp_path, address):
     with pytest.raises(PreflightError):
-        inspect_deployment(base_env(tmp_path, TRITON_EVAL_API_HOST=address),
+        inspect_deployment(base_env(tmp_path, ASCEND_OP_EVAL_API_HOST=address),
                            make_runner(tmp_path))
 
 
 def test_rendered_instance_must_match_requested_bind(tmp_path):
     with pytest.raises(PreflightError, match="configured instance address"):
-        inspect_deployment(base_env(tmp_path, TRITON_EVAL_API_HOST="10.2.3.4"),
+        inspect_deployment(base_env(tmp_path, ASCEND_OP_EVAL_API_HOST="10.2.3.4"),
                            make_runner(tmp_path))
 
 
@@ -262,20 +262,20 @@ def test_rendered_instance_must_match_requested_bind(tmp_path):
     "unix:///tmp/redis.sock", "redis://127.0.0.1:6379/db", "",
 ])
 def test_cache_store_must_be_the_validated_local_redis(tmp_path, url):
-    runner = make_runner(tmp_path, rendered_env={"TRITON_EVAL_REDIS_URL": url})
+    runner = make_runner(tmp_path, rendered_env={"ASCEND_OP_EVAL_REDIS_URL": url})
     with pytest.raises(PreflightError, match="Redis"):
-        inspect_deployment(base_env(tmp_path, TRITON_EVAL_REDIS_URL=url), runner)
+        inspect_deployment(base_env(tmp_path, ASCEND_OP_EVAL_REDIS_URL=url), runner)
 
 
 def test_rendered_redis_database_must_match_requested_database(tmp_path):
-    runner = make_runner(tmp_path, rendered_env={"TRITON_EVAL_REDIS_URL": "redis://127.0.0.1:6379/3"})
+    runner = make_runner(tmp_path, rendered_env={"ASCEND_OP_EVAL_REDIS_URL": "redis://127.0.0.1:6379/3"})
     with pytest.raises(PreflightError, match="Redis"):
         inspect_deployment(base_env(tmp_path), runner)
 
 
 @pytest.mark.parametrize("location", ["configured", "rendered"])
 def test_redis_namespace_is_fixed_for_v21(tmp_path, location):
-    change = {"TRITON_EVAL_REDIS_PREFIX": "other-instance"}
+    change = {"ASCEND_OP_EVAL_REDIS_PREFIX": "other-instance"}
     runner = make_runner(tmp_path, rendered_env=change if location == "rendered" else {})
     env = base_env(tmp_path, **(change if location == "configured" else {}))
     with pytest.raises(PreflightError, match="namespace"):
@@ -284,33 +284,33 @@ def test_redis_namespace_is_fixed_for_v21(tmp_path, location):
 
 @pytest.mark.parametrize("cards", ["", " ", "0,0", "0,00", "0,", "-1", "0 1", "a", "０"])
 def test_cards_must_be_nonempty_unique_decimal_device_ids(tmp_path, cards):
-    runner = make_runner(tmp_path, rendered_env={"TRITON_EVAL_CARDS": cards})
+    runner = make_runner(tmp_path, rendered_env={"ASCEND_OP_EVAL_CARDS": cards})
     with pytest.raises(PreflightError, match="cards"):
-        inspect_deployment(base_env(tmp_path, TRITON_EVAL_CARDS=cards), runner)
+        inspect_deployment(base_env(tmp_path, ASCEND_OP_EVAL_CARDS=cards), runner)
 
 
 def test_rendered_cards_must_match_configured_instance(tmp_path):
-    runner = make_runner(tmp_path, rendered_env={"TRITON_EVAL_CARDS": "1,3"})
+    runner = make_runner(tmp_path, rendered_env={"ASCEND_OP_EVAL_CARDS": "1,3"})
     with pytest.raises(PreflightError, match="cards"):
-        inspect_deployment(base_env(tmp_path, TRITON_EVAL_CARDS="0,2"), runner)
+        inspect_deployment(base_env(tmp_path, ASCEND_OP_EVAL_CARDS="0,2"), runner)
 
 
 def test_explicit_local_database_and_unique_card_list_are_allowed(tmp_path):
-    values = {"TRITON_EVAL_REDIS_URL": "redis://127.0.0.1:6379/3", "TRITON_EVAL_CARDS": "1,3"}
+    values = {"ASCEND_OP_EVAL_REDIS_URL": "redis://127.0.0.1:6379/3", "ASCEND_OP_EVAL_CARDS": "1,3"}
     inspect_deployment(base_env(tmp_path, **values), make_runner(tmp_path, rendered_env=values))
 
 
 @pytest.mark.parametrize("setting, value", [
-    ("TRITON_EVAL_CANARY_BUDGET_SECONDS", "0"),
-    ("TRITON_EVAL_CARD_RECOVERY_MAX_STEP", "4"),
-    ("TRITON_EVAL_ROLLOUT_CALLER_IDS", "not-json"),
-    ("TRITON_EVAL_CARD_AFFINITY_AVOIDANCE", "not-a-bool"),
-    ("TRITON_EVAL_WORKER_DRIVER_VERSION", ""),
-    ("TRITON_EVAL_CANARY_INTERVAL_SECONDS", "-1"),
-    ("TRITON_EVAL_SESSION_MAX_INFLIGHT", "0"),
-    ("TRITON_EVAL_CPU_WORKERS", "-1"),
-    ("TRITON_EVAL_CPU_WORKERS", "33"),
-    ("TRITON_EVAL_CPU_WORKERS", ""),
+    ("ASCEND_OP_EVAL_CANARY_BUDGET_SECONDS", "0"),
+    ("ASCEND_OP_EVAL_CARD_RECOVERY_MAX_STEP", "4"),
+    ("ASCEND_OP_EVAL_ROLLOUT_CALLER_IDS", "not-json"),
+    ("ASCEND_OP_EVAL_CARD_AFFINITY_AVOIDANCE", "not-a-bool"),
+    ("ASCEND_OP_EVAL_WORKER_DRIVER_VERSION", ""),
+    ("ASCEND_OP_EVAL_CANARY_INTERVAL_SECONDS", "-1"),
+    ("ASCEND_OP_EVAL_SESSION_MAX_INFLIGHT", "0"),
+    ("ASCEND_OP_EVAL_CPU_WORKERS", "-1"),
+    ("ASCEND_OP_EVAL_CPU_WORKERS", "33"),
+    ("ASCEND_OP_EVAL_CPU_WORKERS", ""),
 ])
 def test_invalid_rendered_runtime_options_are_rejected_before_image_inspection(
     tmp_path, setting, value,
@@ -322,16 +322,16 @@ def test_invalid_rendered_runtime_options_are_rejected_before_image_inspection(
 
 
 def test_runtime_settings_validation_ignores_unrendered_host_variables(tmp_path, monkeypatch):
-    monkeypatch.setenv("TRITON_EVAL_CANARY_BUDGET_SECONDS", "invalid-host-only-value")
-    monkeypatch.setenv("TRITON_EVAL_ROLLOUT_CALLER_IDS", "also-invalid-host-value")
+    monkeypatch.setenv("ASCEND_OP_EVAL_CANARY_BUDGET_SECONDS", "invalid-host-only-value")
+    monkeypatch.setenv("ASCEND_OP_EVAL_ROLLOUT_CALLER_IDS", "also-invalid-host-value")
     inspect_deployment(base_env(tmp_path), make_runner(tmp_path))
 
 
-@pytest.mark.parametrize("target", ["/run/secrets/triton-eval"])
+@pytest.mark.parametrize("target", ["/run/secrets/ascend-op-eval"])
 def test_mounted_source_must_be_the_validated_host_path(tmp_path, target):
     runner = make_runner(tmp_path)
     rendered = runner._rendered()
-    for mount in rendered["services"]["triton-eval"]["volumes"]:
+    for mount in rendered["services"]["ascend-op-eval"]["volumes"]:
         if mount["target"] == target:
             mount["source"] = str(tmp_path / "unvalidated-source")
     runner.rendered_overrides = rendered
@@ -339,7 +339,7 @@ def test_mounted_source_must_be_the_validated_host_path(tmp_path, target):
         inspect_deployment(base_env(tmp_path), runner)
 
 
-@pytest.mark.parametrize("setting", ["TRITON_EVAL_CAPABILITY_SECRET_PATH"])
+@pytest.mark.parametrize("setting", ["ASCEND_OP_EVAL_CAPABILITY_SECRET_PATH"])
 def test_runtime_security_paths_must_match_validated_mounts(tmp_path, setting):
     runner = make_runner(tmp_path, rendered_env={setting: "/unvalidated-path"})
     with pytest.raises(PreflightError, match="runtime"):
@@ -356,7 +356,7 @@ def test_rendered_non_host_network_is_fatal(tmp_path):
         tmp_path,
         rendered_overrides={
             "services": {
-                "triton-eval": {"network_mode": "bridge"},
+                "ascend-op-eval": {"network_mode": "bridge"},
                 "redis": {"network_mode": "host"},
             }
         },
@@ -371,7 +371,7 @@ def test_non_loopback_or_wrong_digest_redis_is_fatal(tmp_path):
         tmp_path,
         rendered_overrides={
             "services": {
-                "triton-eval": FakeDocker()._rendered()["services"]["triton-eval"],
+                "ascend-op-eval": FakeDocker()._rendered()["services"]["ascend-op-eval"],
                 "redis": {
                     "image": "redis:7.4.10-alpine3.21",
                     "network_mode": "host",
@@ -397,8 +397,8 @@ def test_missing_aof_or_appendfsync_is_fatal(tmp_path):
             tmp_path,
             rendered_overrides={
                 "services": {
-                    "triton-eval": FakeDocker()._rendered()["services"][
-                        "triton-eval"
+                    "ascend-op-eval": FakeDocker()._rendered()["services"][
+                        "ascend-op-eval"
                     ],
                     "redis": rendered_redis | {"command": bad_command},
                 }
@@ -413,8 +413,8 @@ def test_missing_redis_volume_is_fatal(tmp_path):
         tmp_path,
         rendered_overrides={
             "services": {
-                "triton-eval": FakeDocker()._rendered()["services"][
-                    "triton-eval"
+                "ascend-op-eval": FakeDocker()._rendered()["services"][
+                    "ascend-op-eval"
                 ],
                 "redis": FakeDocker()._rendered()["services"]["redis"]
                 | {"volumes": []},
@@ -433,10 +433,10 @@ def test_wrong_redis_repo_digest_is_fatal(tmp_path):
 
 def test_mutable_or_missing_eval_image_is_fatal(tmp_path):
     for bad in (
-        {"TRITON_EVAL_IMAGE": "registry.example.com/triton-eval:latest"},
-        {"TRITON_EVAL_IMAGE": "registry.example.com/triton-eval@sha256:" + "b" * 64},
-        {"TRITON_EVAL_EVALUATOR_BUILD": "registry.example.com/other@sha256:" + "a" * 64},
-        {"TRITON_EVAL_EVALUATOR_BUILD": None},
+        {"ASCEND_OP_EVAL_IMAGE": "registry.example.com/triton-eval:latest"},
+        {"ASCEND_OP_EVAL_IMAGE": "registry.example.com/triton-eval@sha256:" + "b" * 64},
+        {"ASCEND_OP_EVAL_EVALUATOR_BUILD": "registry.example.com/other@sha256:" + "a" * 64},
+        {"ASCEND_OP_EVAL_EVALUATOR_BUILD": None},
     ):
         runner = make_runner(tmp_path, eval_digest_ok=True)
         with pytest.raises(PreflightError):
@@ -445,24 +445,24 @@ def test_mutable_or_missing_eval_image_is_fatal(tmp_path):
 
 def test_reviewed_git_build_is_accepted(tmp_path):
     runner = make_runner(
-        tmp_path, rendered_env={"TRITON_EVAL_EVALUATOR_BUILD": "git:" + "c" * 40}
+        tmp_path, rendered_env={"ASCEND_OP_EVAL_EVALUATOR_BUILD": "git:" + "c" * 40}
     )
     config = inspect_deployment(
-        base_env(tmp_path, TRITON_EVAL_EVALUATOR_BUILD="git:" + "c" * 40), runner
+        base_env(tmp_path, ASCEND_OP_EVAL_EVALUATOR_BUILD="git:" + "c" * 40), runner
     )
     assert config.evaluator_build == "git:" + "c" * 40
 
 
 @pytest.mark.parametrize("build", [EVAL_IMAGE, "sha256:" + "b" * 64])
 def test_production_build_must_be_the_image_digest_without_registry_name(tmp_path, build):
-    runner = make_runner(tmp_path, rendered_env={"TRITON_EVAL_EVALUATOR_BUILD": build})
+    runner = make_runner(tmp_path, rendered_env={"ASCEND_OP_EVAL_EVALUATOR_BUILD": build})
     with pytest.raises(PreflightError, match="evaluator build"):
-        inspect_deployment(base_env(tmp_path, TRITON_EVAL_EVALUATOR_BUILD=build), runner)
+        inspect_deployment(base_env(tmp_path, ASCEND_OP_EVAL_EVALUATOR_BUILD=build), runner)
 
 
 @pytest.mark.parametrize("image", [None, "registry.example.com/triton-eval@sha256:" + "b" * 64])
 def test_runtime_image_identity_must_match_the_image_being_deployed(tmp_path, image):
-    runner = make_runner(tmp_path, rendered_env={"TRITON_EVAL_IMAGE": image})
+    runner = make_runner(tmp_path, rendered_env={"ASCEND_OP_EVAL_IMAGE": image})
     with pytest.raises(PreflightError, match="runtime image"):
         inspect_deployment(base_env(tmp_path), runner)
 
@@ -476,14 +476,14 @@ def test_absent_local_eval_image_digest_is_fatal(tmp_path):
 def test_writable_secret_mount_is_fatal(tmp_path):
     good = make_runner(tmp_path)._rendered()
     volumes = [
-        mount | ({"read_only": False} if mount["target"] == "/run/secrets/triton-eval" else {})
-        for mount in good["services"]["triton-eval"]["volumes"]
+        mount | ({"read_only": False} if mount["target"] == "/run/secrets/ascend-op-eval" else {})
+        for mount in good["services"]["ascend-op-eval"]["volumes"]
     ]
     runner = make_runner(
         tmp_path,
         rendered_overrides={
             "services": good["services"]
-            | {"triton-eval": good["services"]["triton-eval"] | {"volumes": volumes}}
+            | {"ascend-op-eval": good["services"]["ascend-op-eval"] | {"volumes": volumes}}
         },
     )
     with pytest.raises(PreflightError):
@@ -492,7 +492,7 @@ def test_writable_secret_mount_is_fatal(tmp_path):
 
 def test_docker_socket_mount_is_fatal(tmp_path):
     good = make_runner(tmp_path)._rendered()
-    volumes = good["services"]["triton-eval"]["volumes"] + [
+    volumes = good["services"]["ascend-op-eval"]["volumes"] + [
         {"source": "/var/run/docker.sock", "target": "/var/run/docker.sock",
          "read_only": True}
     ]
@@ -500,7 +500,7 @@ def test_docker_socket_mount_is_fatal(tmp_path):
         tmp_path,
         rendered_overrides={
             "services": good["services"]
-            | {"triton-eval": good["services"]["triton-eval"] | {"volumes": volumes}}
+            | {"ascend-op-eval": good["services"]["ascend-op-eval"] | {"volumes": volumes}}
         },
     )
     with pytest.raises(PreflightError):
@@ -510,19 +510,19 @@ def test_docker_socket_mount_is_fatal(tmp_path):
 def _without_manifest_mount(tmp_path, **overrides):
     """Render the eval service with its release manifest mount replaced."""
     good = make_runner(tmp_path)._rendered()
-    service = good["services"]["triton-eval"]
+    service = good["services"]["ascend-op-eval"]
     volumes = [v for v in service["volumes"] if v["target"] != CONTAINER_MANIFEST]
     if overrides:
         volumes.append({"type": "bind", "source": str(tmp_path / "release-manifest.json"),
                         "target": CONTAINER_MANIFEST, "read_only": True} | overrides)
     return {
-        "services": good["services"] | {"triton-eval": service | {"volumes": volumes}}
+        "services": good["services"] | {"ascend-op-eval": service | {"volumes": volumes}}
     }
 
 
 @pytest.mark.parametrize("rendered_env", [
-    {"TRITON_EVAL_RELEASE_MODE": "dev"},
-    {"TRITON_EVAL_RELEASE_MANIFEST": "/opt/triton-eval/other.json"},
+    {"ASCEND_OP_EVAL_RELEASE_MODE": "dev"},
+    {"ASCEND_OP_EVAL_RELEASE_MANIFEST": "/opt/ascend-op-eval/other.json"},
 ])
 def test_deployed_service_must_verify_the_release_at_startup(tmp_path, rendered_env):
     runner = make_runner(tmp_path, rendered_env=rendered_env)
@@ -553,7 +553,7 @@ def test_release_manifest_must_bind_the_deployed_artifact(
     manifest = write_manifest(tmp_path, build=manifest_build, image=manifest_image)
     with pytest.raises(PreflightError, match="must bind the deployed"):
         inspect_deployment(
-            base_env(tmp_path, TRITON_EVAL_RELEASE_MANIFEST_HOST=str(manifest)),
+            base_env(tmp_path, ASCEND_OP_EVAL_RELEASE_MANIFEST_HOST=str(manifest)),
             make_runner(tmp_path),
         )
 
@@ -563,7 +563,7 @@ def test_unusable_release_manifest_is_fatal(tmp_path, payload):
     manifest = write_manifest(tmp_path, payload=payload)
     with pytest.raises(PreflightError, match="release manifest failed validation"):
         inspect_deployment(
-            base_env(tmp_path, TRITON_EVAL_RELEASE_MANIFEST_HOST=str(manifest)),
+            base_env(tmp_path, ASCEND_OP_EVAL_RELEASE_MANIFEST_HOST=str(manifest)),
             make_runner(tmp_path),
         )
 
@@ -571,7 +571,7 @@ def test_unusable_release_manifest_is_fatal(tmp_path, payload):
 def test_missing_release_manifest_input_is_fatal(tmp_path):
     with pytest.raises(PreflightError, match="missing deployment inputs"):
         inspect_deployment(
-            base_env(tmp_path, TRITON_EVAL_RELEASE_MANIFEST_HOST=None), make_runner(tmp_path)
+            base_env(tmp_path, ASCEND_OP_EVAL_RELEASE_MANIFEST_HOST=None), make_runner(tmp_path)
         )
 
 
@@ -591,7 +591,7 @@ def test_missing_or_unreadable_secret_is_fatal(tmp_path):
     runner.secret = tmp_path / "nope.json"
     with pytest.raises(PreflightError):
         inspect_deployment(
-            base_env(tmp_path, TRITON_EVAL_CAPABILITY_SECRET_PATH=str(tmp_path / "nope.json")),
+            base_env(tmp_path, ASCEND_OP_EVAL_CAPABILITY_SECRET_PATH=str(tmp_path / "nope.json")),
             runner,
         )
 
@@ -609,7 +609,7 @@ def test_secret_mode_with_group_or_world_bits_is_fatal(tmp_path):
     runner.secret = secret
     with pytest.raises(PreflightError):
         inspect_deployment(
-            base_env(tmp_path, TRITON_EVAL_CAPABILITY_SECRET_PATH=str(secret)), runner
+            base_env(tmp_path, ASCEND_OP_EVAL_CAPABILITY_SECRET_PATH=str(secret)), runner
         )
 
 
@@ -625,7 +625,7 @@ def test_duplicate_capability_configuration_is_fatal(tmp_path):
     runner.secret = secret
     with pytest.raises(PreflightError):
         inspect_deployment(
-            base_env(tmp_path, TRITON_EVAL_CAPABILITY_SECRET_PATH=str(secret)), runner
+            base_env(tmp_path, ASCEND_OP_EVAL_CAPABILITY_SECRET_PATH=str(secret)), runner
         )
 
 
@@ -633,7 +633,7 @@ def test_failures_never_reveal_seeded_secret(tmp_path, capsys):
     runner = make_runner(tmp_path)
     with pytest.raises(PreflightError):
         inspect_deployment(
-            base_env(tmp_path, TRITON_EVAL_API_HOST="bad"), runner
+            base_env(tmp_path, ASCEND_OP_EVAL_API_HOST="bad"), runner
         )
     captured = capsys.readouterr()
     assert CAPABILITY_TOKEN not in captured.out + captured.err

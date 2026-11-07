@@ -38,7 +38,7 @@ async def test_pinned_examples_execute_as_methods_over_public_api(
 ):
     app = app_with_precheck(tmp_path, release_catalog_files)
     worker = cpu_worker(app)
-    example = ROOT / "examples/custom_methods/cannbench"
+    example = ROOT / "adapters/cannbench/src/ascend_op_eval_adapter_cannbench/bundle"
     package = cli.package_manifest(example / (kind + ".method.json"))
     names = ["actual", "reference", "native"] if kind == "checker" else ["kernel_details"]
     async with app.http as client:

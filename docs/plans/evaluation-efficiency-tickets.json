@@ -102,7 +102,7 @@
     "Joint input replay supports nonleaf tensor views and preserves storage aliases.",
     "NPU comparison uses complete matched pairs, preserves non_compute and reports timing drift separately."
   ],
-  "npu_measurement_guide": "docs/operations/feedback-performance.md",
+  "npu_measurement_guide": "docs/research/feedback-performance.md",
   "implementation_limits": [
     "Combined execution applies to timing plus the explicit trace mode; op/deep native captures remain separate.",
     "Correctness still has its own engine process unless explicitly reused from a valid original observation.",
@@ -119,7 +119,7 @@
   },
   "device_acceptance": {
     "status": "partial_npu_validation_reported",
-    "guide": "docs/operations/feedback-performance.md",
+    "guide": "docs/research/feedback-performance.md",
     "script": "scripts/npu_feedback_comparison.py",
     "methods": [
       "event",

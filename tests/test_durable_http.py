@@ -3,12 +3,11 @@ import asyncio
 import json
 
 import pytest
+from ascend_op_eval.api.contract import EvaluationResource
+from ascend_op_eval.api.routes import wait_until_terminal
+from ascend_op_eval.control.models import WorkerIdentity, new_worker_id
 from conftest import make_completed_result
 from test_api import algorithms, post, request_payload, seed_worker, trial_headers
-
-from triton_evaluation.api.contract import EvaluationResource
-from triton_evaluation.api.routes import wait_until_terminal
-from triton_evaluation.service.models import WorkerIdentity, new_worker_id
 
 pytestmark = pytest.mark.anyio
 

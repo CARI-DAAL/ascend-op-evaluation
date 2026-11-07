@@ -3,8 +3,7 @@
 import time
 
 import pytest
-
-from triton_evaluation.operator_input import (
+from ascend_op_eval.operator_input import (
     OperatorRequest,
     normalize_workloads,
     to_evaluation_request,
@@ -433,7 +432,7 @@ def test_negative_workload_axes_and_file_entrypoint_rejected():
 
 def test_explicit_scalar_null_survives_normalization_and_generation():
     pytest.importorskip("torch")
-    from triton_evaluation.runtime.input_generation import generate_inputs
+    from ascend_op_eval.execution.input_generation import generate_inputs
 
     request = OperatorRequest.model_validate(
         body(workloads=[{"inputs": {"x": {"type": "scalar", "value": None}}}])

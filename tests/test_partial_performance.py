@@ -3,26 +3,25 @@
 import copy
 
 import pytest
-from conftest import make_caller, make_correctness_success, make_grade_caller, make_grade_request
-from pydantic import ValidationError
-from test_api import algorithms, build_app, request_payload, seed_worker, trial_headers
-from test_shaping import load
-from test_terminal_evidence import result_fixture
-
-from triton_evaluation.api.contract import (
+from ascend_op_eval.api.contract import (
     CheckSucceeded,
     EvaluationProgress,
     EvaluationResource,
     PerformanceResult,
 )
-from triton_evaluation.evaluators.shaping import (
+from ascend_op_eval.control.models import WorkerIdentity, new_worker_id
+from ascend_op_eval.control.terminal_results import complete_evaluation
+from ascend_op_eval.evaluators.shaping import (
     ShapingError,
     UnattributedFailure,
     shape_performance,
     shape_single_performance,
 )
-from triton_evaluation.service.models import WorkerIdentity, new_worker_id
-from triton_evaluation.service.terminal_results import complete_evaluation
+from conftest import make_caller, make_correctness_success, make_grade_caller, make_grade_request
+from pydantic import ValidationError
+from test_api import algorithms, build_app, request_payload, seed_worker, trial_headers
+from test_shaping import load
+from test_terminal_evidence import result_fixture
 
 SELECTED = [2, 7, 12, 20]
 

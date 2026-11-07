@@ -3,9 +3,8 @@
 import base64
 
 import pytest
+from ascend_op_eval.control.models import WorkerIdentity, new_worker_id
 from test_api import TRIAL_TOKEN_2, algorithms, build_app, seed_worker, trial_headers
-
-from triton_evaluation.service.models import WorkerIdentity, new_worker_id
 
 pytestmark = pytest.mark.anyio
 
@@ -323,7 +322,7 @@ async def test_cancelled_lost_worker_is_not_requeued(tmp_path):
 
 
 async def test_method_artifacts_are_attempt_bound_across_recovery(tmp_path):
-    from triton_evaluation.methods.contracts import StoredArtifact
+    from ascend_op_eval.methods.contracts import StoredArtifact
 
     app = build_app(tmp_path, None)
     seed_worker(app, execution_class="cpu")

@@ -4,8 +4,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
-
-from triton_evaluation.engine import benchmark
+from ascend_op_eval.engine import benchmark
 
 
 @pytest.mark.parametrize(

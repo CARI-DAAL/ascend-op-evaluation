@@ -6,7 +6,7 @@ CSV parsing, so the benchmark-counter regressions also run on CPU. Every Python 
 in CI installs both:
 
 ```bash
-python -m pip install -e '.[test,dev]'
+python -m pip install -e 'packages/ascend-op-eval[test,dev]' -e packages/ascend-op-eval-client -e adapters/default -e packages/ascend-op-eval-compat
 python -m pip install torch==2.9.0 --index-url https://download.pytorch.org/whl/cpu
 python -m pytest -m 'not npu' -q
 ```
@@ -49,11 +49,11 @@ their schemas; these are regression data, not deployment inputs.
 is a fixed reference consumed by active engine input-default regression tests.
 It does not provide a dataset importer. Preserve hash-pinned fixture bytes when
 changing these tests. Retired tool envelopes and bridge archives remain in
-[Git history](../docs/history.md).
+[Git history](../docs/migration/history.md).
 
 ## External consumer and NPU checks
 
-See the [NPU validation plan](../docs/operations/npu-validation.md) for the current
+See the [NPU validation plan](../docs/development/npu-validation.md) for the current
 hardware coverage, proposed functional and recovery matrix, load/soak stages,
 and acceptance criteria. It distinguishes existing commands from tests still
 to be implemented.
@@ -66,10 +66,10 @@ EVALUATION_CONSUMER_ROOT=/path/to/kernel-harness \
   python -m pytest tests/test_consumer_integration.py -q
 
 # Against a configured Ascend deployment; this performs real device work.
-python scripts/test_eval_service.py --url "$EVALUATION_URL" \
-  --token "$(cat "$EVALUATION_CAPABILITY_FILE")" --no-speed
-python scripts/npu_release_gate.py --service-url "$EVALUATION_URL" \
-  --capability-file "$EVALUATION_CAPABILITY_FILE" --output /tmp/npu-smoke-report.json
+python scripts/test_eval_service.py --url "$ASCEND_OP_EVAL_CLIENT_URL" \
+  --token "$(cat "$ASCEND_OP_EVAL_CLIENT_CAPABILITY_FILE")" --no-speed
+python scripts/npu_release_gate.py --service-url "$ASCEND_OP_EVAL_CLIENT_URL" \
+  --capability-file "$ASCEND_OP_EVAL_CLIENT_CAPABILITY_FILE" --output /tmp/npu-smoke-report.json
 ```
 
 The consumer suite needs the actual client checkout. The `npu` marker requires
@@ -83,7 +83,7 @@ The report records `passed`, the scope `readiness-and-add-correctness-smoke`, an
 the SHA-256 of the target's live `/openapi.json` (fetched with a 10-second timeout).
 It does not label this limited check `production_ready`. There is no catalog
 manifest or separate grade token; the subprocess uses the caller capability via
-`TRITON_EVAL_CAPABILITY_TOKEN`. The smoke client measures performance by default;
+`TRITON_EVAL_CAPABILITY_TOKEN` (retained subprocess credential key). The smoke client measures performance by default;
 `--no-speed` selects correctness only, and its exit status reflects correctness.
 Passing or skipped CPU checks are not evidence of NPU correctness, isolation
 recovery, latency or cache coverage.
@@ -109,5 +109,5 @@ preserves one official task and all 51 workloads. `scripts/npu_batchmatmul_gate.
 exercises correctness, fresh event/profiler timing and op/deep profiling through
 HTTP on a configured NPU service. It requires complete evidence from all cases;
 `--check-only` verifies source hashes without claiming hardware acceptance. See
-the [NPU plan](../docs/operations/npu-validation.md#21-本轮只用一题官方-batchmatmul)
+the [NPU plan](../docs/development/npu-validation.md#21-本轮只用一题官方-batchmatmul)
 for commands, deployment requirements and coverage limits.

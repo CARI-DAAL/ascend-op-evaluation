@@ -5,10 +5,9 @@ import json
 import os
 import secrets
 
+import ascend_op_eval.control.security as security
 import pytest
-
-import triton_evaluation.service.security as security
-from triton_evaluation.service.security import (
+from ascend_op_eval.control.security import (
     Caller,
     CapabilityRegistry,
     UnauthenticatedError,

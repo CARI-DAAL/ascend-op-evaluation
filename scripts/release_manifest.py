@@ -26,22 +26,23 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 PLUGIN_MANIFESTS = (
-    "plugins/triton-eval/plugin.json",
-    "plugins/triton-eval/.claude-plugin/plugin.json",
-    "plugins/triton-eval/.codex-plugin/plugin.json",
+    "plugins/ascend-op-eval/plugin.json",
+    "plugins/ascend-op-eval/.claude-plugin/plugin.json",
+    "plugins/ascend-op-eval/.codex-plugin/plugin.json",
 )
-CLI_SCRIPT = "plugins/triton-eval/skills/triton-eval/scripts/triton_eval.py"
-PACKAGE = "triton_evaluation"
+CLI_SCRIPT = "plugins/ascend-op-eval/skills/ascend-op-eval/scripts/ascend_op_eval.py"
+SERVICE_PROJECT = "packages/ascend-op-eval/pyproject.toml"
+PACKAGE = "packages/ascend-op-eval/src/ascend_op_eval"
 
 _RELEASE_TAG = re.compile(r"^v?([0-9A-Za-z][0-9A-Za-z.+_-]{0,63})$")
 
 
 def _import_versioning():
     try:
-        import triton_evaluation.versioning as versioning
+        import ascend_op_eval.versioning as versioning
     except ImportError:
-        sys.path.insert(0, str(PROJECT_ROOT))
-        import triton_evaluation.versioning as versioning
+        sys.path.insert(0, str(PROJECT_ROOT / "packages/ascend-op-eval/src"))
+        import ascend_op_eval.versioning as versioning
     return versioning
 
 
@@ -65,7 +66,7 @@ def _project_table(text: str) -> str:
 
 
 def pyproject_version(root: Path) -> str:
-    table = _project_table((root / "pyproject.toml").read_text(encoding="utf-8"))
+    table = _project_table((root / SERVICE_PROJECT).read_text(encoding="utf-8"))
     found = re.search(r'^version = "([^"]+)"', table, re.MULTILINE)
     if found is None:
         raise ValueError("pyproject.toml declares no project version")
@@ -74,7 +75,7 @@ def pyproject_version(root: Path) -> str:
 
 def pyproject_dependencies(root: Path) -> dict[str, str]:
     """Pinned runtime dependencies; optional extras are deployment choices."""
-    table = _project_table((root / "pyproject.toml").read_text(encoding="utf-8"))
+    table = _project_table((root / SERVICE_PROJECT).read_text(encoding="utf-8"))
     block = re.search(r"^dependencies = \[(.*?)\]", table, re.MULTILINE | re.DOTALL)
     if block is None:
         raise ValueError("pyproject.toml declares no dependencies")
@@ -198,10 +199,10 @@ def _emit(manifest: dict, output: Path | None) -> None:
 def _verify(manifest_path: Path) -> tuple[int, dict]:
     versioning = _import_versioning()
     try:
-        from triton_evaluation.config import Settings
+        from ascend_op_eval.config import Settings
     except ImportError:
-        sys.path.insert(0, str(PROJECT_ROOT))
-        from triton_evaluation.config import Settings
+        sys.path.insert(0, str(PROJECT_ROOT / "packages/ascend-op-eval/src"))
+        from ascend_op_eval.config import Settings
 
     build = Settings(release_mode="dev", release_manifest=None).evaluator_build
     identity = versioning.release_identity(

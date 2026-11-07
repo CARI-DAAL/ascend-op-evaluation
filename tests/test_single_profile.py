@@ -7,8 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
-from triton_evaluation.engine import msprof_deep, msprof_op, profile_runner
+from ascend_op_eval.engine import msprof_deep, msprof_op, profile_runner
 
 
 @pytest.mark.parametrize("implementation", ["torch", "triton", "comparison"])

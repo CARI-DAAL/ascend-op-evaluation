@@ -1,8 +1,8 @@
 """Smoke client against the durable API: headers, ID persistence, recovery."""
 import pytest
+from ascend_op_eval.operator_input import OperatorRequest
 
 from scripts import test_eval_service as smoke
-from triton_evaluation.operator_input import OperatorRequest
 
 QUEUED_RESOURCE = {
     "schema_version": "2.1",

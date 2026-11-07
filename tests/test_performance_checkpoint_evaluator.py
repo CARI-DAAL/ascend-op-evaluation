@@ -6,13 +6,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from ascend_op_eval.api.contract import EvaluationRequest
+from ascend_op_eval.evaluators.base import LeaseLostError, ScriptOutcome
+from ascend_op_eval.evaluators.benchmark import BenchmarkEvaluator
+from ascend_op_eval.evaluators.evaluation import EvaluationEvaluator
 from test_evaluation_evaluator import ENVIRONMENT, succeeded, trial_pinned
 from test_shaping import load
-
-from triton_evaluation.api.contract import EvaluationRequest
-from triton_evaluation.evaluators.base import LeaseLostError, ScriptOutcome
-from triton_evaluation.evaluators.benchmark import BenchmarkEvaluator
-from triton_evaluation.evaluators.evaluation import EvaluationEvaluator
 
 
 def checkpoint_raw(*, empty=False):

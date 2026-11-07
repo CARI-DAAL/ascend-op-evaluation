@@ -18,14 +18,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from pydantic import ValidationError
-
-from triton_evaluation.api.contract import PerformanceCase
-from triton_evaluation.engine import benchmark, verify
-from triton_evaluation.evaluators.shaping import shape_performance
-from triton_evaluation.runtime import reference_timing_reuse as reuse_module
-from triton_evaluation.runtime import sandbox
-from triton_evaluation.runtime.reference_cache import (
+from ascend_op_eval.api.contract import PerformanceCase
+from ascend_op_eval.engine import benchmark, verify
+from ascend_op_eval.evaluators.shaping import shape_performance
+from ascend_op_eval.execution import reference_timing_reuse as reuse_module
+from ascend_op_eval.execution.reference_cache import (
     CacheDeployment,
     CacheMeasurement,
     CaseBinding,
@@ -33,13 +30,15 @@ from triton_evaluation.runtime.reference_cache import (
     ReferenceCache,
     sha256,
 )
-from triton_evaluation.runtime.reference_timing_reuse import (
+from ascend_op_eval.execution.reference_timing_reuse import (
     POLICY_ENV,
     POLICY_SHA_ENV,
     TimingReuseError,
     TimingReusePolicy,
     load_validated_timing_reuse,
 )
+from ascend_op_eval.runtimes import sandbox
+from pydantic import ValidationError
 
 torch = pytest.importorskip("torch")
 
@@ -174,7 +173,7 @@ def build_policy(tmp_path: Path, *, cache_dir, index_path, index_sha, state_dir,
     if service_files is None:
         service_files = {
             name: reuse_module.current_service_source_sha256(name)
-            for name in ("engine/benchmark.py", "runtime/sandbox.py")
+            for name in ("engine/benchmark.py", "runtimes/sandbox.py")
         }
     policy = {
         "schema_version": "validated-timing-reuse-policy-v2",
@@ -591,7 +590,7 @@ def test_correctness_engine_never_consults_the_reuse_policy():
 
 
 def test_policy_settings_pair_and_public_contract_validation(tmp_path):
-    from triton_evaluation.config import Settings
+    from ascend_op_eval.config import Settings
 
     with pytest.raises(ValidationError):
         Settings(reference_timing_reuse_policy=tmp_path / "p.json")

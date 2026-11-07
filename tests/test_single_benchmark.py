@@ -6,10 +6,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
-from triton_evaluation.api.contract import EvaluationRequest, SinglePerformanceResult
-from triton_evaluation.engine import single_benchmark as single
-from triton_evaluation.evaluators import benchmark as evaluator_module
+from ascend_op_eval.api.contract import EvaluationRequest, SinglePerformanceResult
+from ascend_op_eval.engine import single_benchmark as single
+from ascend_op_eval.evaluators import benchmark as evaluator_module
 
 
 @pytest.mark.parametrize("implementation", ["torch", "triton"])
@@ -166,7 +165,7 @@ def test_single_implementation_never_uses_advisory_baseline_cache(
     monkeypatch,
     implementation,
 ):
-    from triton_evaluation.api.contract import PerformanceParams
+    from ascend_op_eval.api.contract import PerformanceParams
 
     accesses = []
 

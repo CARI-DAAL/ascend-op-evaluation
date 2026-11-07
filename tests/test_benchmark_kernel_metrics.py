@@ -6,19 +6,18 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-
-from triton_evaluation.api.contract import (
+from ascend_op_eval.api.contract import (
     BenchmarkKernelMetrics,
     EvaluationResource,
     PerformanceCase,
     SinglePerformanceResult,
 )
-from triton_evaluation.api.routes import get_instance, require_read_caller, router
-from triton_evaluation.engine import benchmark, single_benchmark
-from triton_evaluation.evaluators.shaping import ShapingError, shape_performance
-from triton_evaluation.service.security import Caller
+from ascend_op_eval.api.routes import get_instance, require_read_caller, router
+from ascend_op_eval.control.security import Caller
+from ascend_op_eval.engine import benchmark, single_benchmark
+from ascend_op_eval.evaluators.shaping import ShapingError, shape_performance
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

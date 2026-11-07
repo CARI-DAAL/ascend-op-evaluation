@@ -103,7 +103,7 @@ def test_previous_attempt_is_never_overwritten(tmp_path, monkeypatch):
 
 @pytest.fixture
 def controlled_measurement(monkeypatch):
-    from triton_evaluation.engine import benchmark
+    from ascend_op_eval.engine import benchmark
 
     class Tensor:
         device = "npu:0"
@@ -206,7 +206,7 @@ def test_green_requires_all_eight_original_profiler_contexts_and_median(
 def test_configured_probe_requires_actual_pinned_callback_not_only_environment(
     tmp_path, monkeypatch, controlled_measurement, trace_kind
 ):
-    from triton_evaluation.runtime import profiler_runtime
+    from ascend_op_eval.runtimes import profiler_runtime
 
     expected = {
         "enabled": True,
@@ -216,7 +216,7 @@ def test_configured_probe_requires_actual_pinned_callback_not_only_environment(
         "cann_runtime": {"cann_set_env_sha256": "e" * 64, "effective_environment_sha256": "f" * 64},
     }
     for name in ("alias", "library", "consumer", "msprof"):
-        expected[name + "_path"] = str(tmp_path / "runtime" / name)
+        expected[name + "_path"] = str(tmp_path / "execution" / name)
         expected[name + "_sha256"] = "c" * 64
     monkeypatch.setattr(profiler_runtime, "describe_runtime", lambda: expected)
     calls = []
@@ -233,10 +233,18 @@ def test_configured_probe_requires_actual_pinned_callback_not_only_environment(
                 "main_thread": True,
                 "process_id": os.getpid(),
                 "helper_sha256": hashlib.sha256(
-                    (probe.ROOT / "triton_evaluation/runtime/profiler_runtime.py").read_bytes()
+                    (
+                        probe.ROOT
+                        / "packages/ascend-op-eval/src/ascend_op_eval/runtimes/profiler_runtime.py"
+                    ).read_bytes()
                 ).hexdigest(),
-                "helper_path": str(probe.ROOT / "triton_evaluation/runtime/profiler_runtime.py"),
-                "service_package_path": str(probe.ROOT / "triton_evaluation"),
+                "helper_path": str(
+                    probe.ROOT
+                    / "packages/ascend-op-eval/src/ascend_op_eval/runtimes/profiler_runtime.py"
+                ),
+                "service_package_path": str(
+                    probe.ROOT / "packages/ascend-op-eval/src/ascend_op_eval"
+                ),
                 "physical_device": "8",
                 "visible_devices": "8",
                 "reference_device_policy": os.environ.get(
@@ -270,8 +278,8 @@ def test_configured_probe_requires_actual_pinned_callback_not_only_environment(
 def test_isolated_wrapper_uses_actual_boundary_and_rejects_missing_measurements(
     tmp_path, monkeypatch, valid
 ):
-    from triton_evaluation.evaluators import base
-    from triton_evaluation.runtime import sandbox
+    from ascend_op_eval.evaluators import base
+    from ascend_op_eval.runtimes import sandbox
 
     for key in (
         sandbox.CONFIG_ENV,

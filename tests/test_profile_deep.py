@@ -3,8 +3,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-
-from triton_evaluation.engine import msprof_deep
+from ascend_op_eval.engine import msprof_deep
 
 
 def _summary(path: Path, rows: list[dict]):

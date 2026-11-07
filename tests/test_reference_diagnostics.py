@@ -2,9 +2,8 @@ import json
 from pathlib import Path
 
 import pytest
+from ascend_op_eval.execution.reference_diagnostics import _read_trace
 from test_worker import StubEvaluator, build_worker
-
-from triton_evaluation.runtime.reference_diagnostics import _read_trace
 
 
 def _trace():

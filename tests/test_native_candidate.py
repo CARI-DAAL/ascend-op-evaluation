@@ -1,8 +1,7 @@
 """Native project requests preserve identity without executing supplied code."""
 import pytest
+from ascend_op_eval.operator_input import OperatorRequest, to_evaluation_request
 from pydantic import ValidationError
-
-from triton_evaluation.operator_input import OperatorRequest, to_evaluation_request
 
 
 def payload(**candidate):
@@ -75,8 +74,8 @@ def test_native_artifacts_are_private_and_bound_to_build(tmp_path):
     import shutil
     from datetime import datetime, timedelta, timezone
 
-    from triton_evaluation.api.contract import NativeCandidate
-    from triton_evaluation.runtime.native_candidate import build_candidate, validate_build
+    from ascend_op_eval.api.contract import NativeCandidate
+    from ascend_op_eval.execution.native_candidate import build_candidate, validate_build
 
     compiler = shutil.which("cc")
     if compiler is None:
@@ -109,8 +108,8 @@ def test_native_failed_build_and_bounded_logs_are_observable(tmp_path):
     import sys
     from datetime import datetime, timedelta, timezone
 
-    from triton_evaluation.api.contract import NativeCandidate
-    from triton_evaluation.runtime.native_candidate import build_candidate
+    from ascend_op_eval.api.contract import NativeCandidate
+    from ascend_op_eval.execution.native_candidate import build_candidate
 
     candidate = NativeCandidate.model_validate(payload(build=[sys.executable, "-c",
         "import sys; print('x'*20000); print('compiler diagnostic',file=sys.stderr); sys.exit(3)"
@@ -128,9 +127,9 @@ def test_native_build_timeout_and_lease_are_not_compile_errors(tmp_path):
     import sys
     from datetime import datetime, timedelta, timezone
 
-    from triton_evaluation.api.contract import NativeCandidate
-    from triton_evaluation.evaluators.base import LeaseLostError
-    from triton_evaluation.runtime.native_candidate import build_candidate
+    from ascend_op_eval.api.contract import NativeCandidate
+    from ascend_op_eval.evaluators.base import LeaseLostError
+    from ascend_op_eval.execution.native_candidate import build_candidate
 
     candidate = NativeCandidate.model_validate(payload(build=[sys.executable, "-c",
         "import time; time.sleep(10)"], build_timeout_seconds=1)["candidate"])
@@ -144,8 +143,8 @@ def test_native_build_timeout_and_lease_are_not_compile_errors(tmp_path):
 
 
 def test_native_staging_refuses_symlink_directory(tmp_path):
-    from triton_evaluation.api.contract import NativeCandidate
-    from triton_evaluation.runtime.native_candidate import stage_project
+    from ascend_op_eval.api.contract import NativeCandidate
+    from ascend_op_eval.execution.native_candidate import stage_project
 
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -157,7 +156,7 @@ def test_native_staging_refuses_symlink_directory(tmp_path):
 
 
 def test_native_performance_samples_are_bound_to_method_and_mean():
-    from triton_evaluation.api.contract import PerformanceCase
+    from ascend_op_eval.api.contract import PerformanceCase
 
     data = dict(case_idx=0, input_shapes=[], implementation_latency_ms=0.02,
                 reference_latency_ms=0.03, speedup_vs_reference=1.5,
@@ -176,8 +175,8 @@ def test_native_wrapper_refuses_preloaded_external_entrypoint(tmp_path):
     import subprocess
     import sys
 
-    from triton_evaluation.api.contract import NativeCandidate
-    from triton_evaluation.runtime.native_candidate import candidate_wrapper, stage_project
+    from ascend_op_eval.api.contract import NativeCandidate
+    from ascend_op_eval.execution.native_candidate import candidate_wrapper, stage_project
 
     candidate = NativeCandidate.model_validate(payload(
         files={"json.py": "def run(x): return x"}, entrypoint="json:run",
@@ -202,7 +201,7 @@ def test_native_digest_rejects_fifo_replacement_without_blocking(tmp_path):
     script = textwrap.dedent('''
         import os, sys
         from pathlib import Path
-        from triton_evaluation.runtime.native_candidate import project_digest
+        from ascend_op_eval.execution.native_candidate import project_digest
         root = Path(sys.argv[1])
         real_open = os.open
         def swap(path, flags, *args, **kwargs):
@@ -227,7 +226,7 @@ def test_native_digest_rejects_fifo_replacement_without_blocking(tmp_path):
 def test_native_digest_checks_opened_size_before_reading(tmp_path, monkeypatch):
     import os
 
-    from triton_evaluation.runtime.native_candidate import project_digest
+    from ascend_op_eval.execution.native_candidate import project_digest
 
     path = tmp_path / "victim"
     path.write_text("old")
@@ -253,7 +252,7 @@ def test_native_digest_checks_opened_size_before_reading(tmp_path, monkeypatch):
 def test_native_digest_bounds_directory_enumeration(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
-    from triton_evaluation.runtime import native_candidate
+    from ascend_op_eval.execution import native_candidate
 
     class TooManyEntries:
         def __enter__(self):
@@ -275,8 +274,8 @@ def test_native_digest_bounds_directory_enumeration(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("change", ["add", "remove"])
 def test_native_artifact_identity_includes_empty_directories(tmp_path, change):
-    from triton_evaluation.api.contract import NativeBuildEvidence
-    from triton_evaluation.runtime.native_candidate import project_digest, validate_build
+    from ascend_op_eval.api.contract import NativeBuildEvidence
+    from ascend_op_eval.execution.native_candidate import project_digest, validate_build
 
     (tmp_path / "entry.py").write_text("def run(x): return x\n")
     directory = tmp_path / "optional-feature"
@@ -294,7 +293,7 @@ def test_native_artifact_identity_includes_empty_directories(tmp_path, change):
 
 
 def test_native_directory_entries_do_not_consume_file_budget(tmp_path):
-    from triton_evaluation.runtime.native_candidate import project_digest
+    from ascend_op_eval.execution.native_candidate import project_digest
 
     for index in range(4096):
         (tmp_path / f"directory-{index:04d}").mkdir()

@@ -6,12 +6,11 @@ import weakref
 from types import SimpleNamespace
 
 import pytest
-
-from triton_evaluation import operator_input as operator_source
-from triton_evaluation.api.contract import SinglePerformanceResult, TraceProfileResult
-from triton_evaluation.engine import benchmark
-from triton_evaluation.engine import joint_measurement as joint
-from triton_evaluation.evaluators.shaping import shape_performance
+from ascend_op_eval import operator_input as operator_source
+from ascend_op_eval.api.contract import SinglePerformanceResult, TraceProfileResult
+from ascend_op_eval.engine import benchmark
+from ascend_op_eval.engine import joint_measurement as joint
+from ascend_op_eval.evaluators.shaping import shape_performance
 
 
 @pytest.fixture
@@ -332,7 +331,7 @@ def test_durable_correctness_gate_is_explicit_and_bound_to_materialized_sources(
         return 3
 
     monkeypatch.setitem(
-        sys.modules, "triton_evaluation.runtime.correctness_evidence",
+        sys.modules, "ascend_op_eval.execution.correctness_evidence",
         SimpleNamespace(validate_handoff=validate),
     )
     monkeypatch.setattr(benchmark, "check_verify_gate", lambda *_: pytest.fail("old gate"))
@@ -354,7 +353,7 @@ def test_invalid_durable_correctness_evidence_fails_closed(tmp_path, monkeypatch
         raise ValueError("identity mismatch")
 
     monkeypatch.setitem(
-        sys.modules, "triton_evaluation.runtime.correctness_evidence",
+        sys.modules, "ascend_op_eval.execution.correctness_evidence",
         SimpleNamespace(validate_handoff=validate),
     )
     args = benchmark._build_argparser().parse_args([

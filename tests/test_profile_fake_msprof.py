@@ -3,7 +3,7 @@ import sys
 import time
 from pathlib import Path
 
-from triton_evaluation.engine import msprof_deep, msprof_op
+from ascend_op_eval.engine import msprof_deep, msprof_op
 
 FAKE = Path(__file__).parent / "fixtures" / "fake_msprof.py"
 

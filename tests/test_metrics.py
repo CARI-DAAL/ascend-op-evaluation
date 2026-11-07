@@ -1,8 +1,7 @@
 """Bounded Redis metrics: allowlist enforcement, cardinality, instrumentation."""
 import pytest
+from ascend_op_eval.control.metrics import RedisMetrics
 from test_api import build_app, post, seed_worker, trial_headers
-
-from triton_evaluation.service.metrics import RedisMetrics
 
 pytestmark = pytest.mark.anyio
 
@@ -75,7 +74,7 @@ def test_leakage_attempts_are_rejected(app):
 
 def test_no_graderecord_metrics_in_this_service(app):
     """GradeRecord scored/unscored metrics belong to Eval Hub, not here."""
-    from triton_evaluation.service.metrics import ALLOWED_METRICS
+    from ascend_op_eval.control.metrics import ALLOWED_METRICS
 
     assert not any("grade_record" in name for name in ALLOWED_METRICS)
     assert "correctness_domain_outcomes_total" in ALLOWED_METRICS
@@ -197,10 +196,9 @@ async def test_auth_and_error_dimensions_are_instrumented(app):
 
 
 async def test_terminal_dimensions_are_instrumented(app, make_command):
+    from ascend_op_eval.control.models import WorkerIdentity, new_worker_id
     from conftest import make_caller, make_completed_result
     from test_api import algorithms
-
-    from triton_evaluation.service.models import WorkerIdentity, new_worker_id
 
     app.store.create_or_replay(
         make_command(caller=make_caller("trial-caller", "trial",
@@ -218,9 +216,8 @@ async def test_terminal_dimensions_are_instrumented(app, make_command):
 
 
 def test_worker_dimensions_are_instrumented(app):
+    from ascend_op_eval.control.models import WorkerIdentity, new_worker_id
     from test_api import algorithms
-
-    from triton_evaluation.service.models import WorkerIdentity, new_worker_id
 
     identity = WorkerIdentity(new_worker_id(), app.settings.evaluator_build,
                               algorithms(app.settings))
@@ -232,7 +229,7 @@ def test_worker_dimensions_are_instrumented(app):
 
 
 def test_shaping_and_execution_dimensions_exist(app):
-    from triton_evaluation.service.metrics import ALLOWED_METRICS
+    from ascend_op_eval.control.metrics import ALLOWED_METRICS
 
     assert "shaping_failures_total" in ALLOWED_METRICS
     assert "worker_compatibility_total" in ALLOWED_METRICS
@@ -253,7 +250,7 @@ def test_shaping_and_execution_dimensions_exist(app):
     ("set_gauge", ("card_health_state", 1)),
 ])
 def test_best_effort_emission_accepts_optional_or_failing_adapters(operation, arguments):
-    from triton_evaluation.service import metrics
+    from ascend_op_eval.control import metrics
 
     class FailingMetrics:
         def __getattr__(self, name):
@@ -267,7 +264,7 @@ def test_best_effort_emission_accepts_optional_or_failing_adapters(operation, ar
 
 
 def test_best_effort_emission_preserves_labels_and_values():
-    from triton_evaluation.service.metrics import increment, observe, set_gauge
+    from ascend_op_eval.control.metrics import increment, observe, set_gauge
 
     calls = []
 

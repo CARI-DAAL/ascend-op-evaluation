@@ -96,7 +96,7 @@ async def test_alias_update_does_not_allocate_another_record(tmp_path):
 
 
 async def test_expired_registry_data_releases_its_quota(tmp_path):
-    from triton_evaluation.serialization import canonical_json_bytes
+    from ascend_op_eval.serialization import canonical_json_bytes
 
     app = build_app(tmp_path, None)
     app.settings.method_registry_max_records = 1
@@ -139,9 +139,8 @@ async def test_concurrent_uploads_cannot_overbook_record_budget(tmp_path):
 
 
 async def test_admitted_materials_remain_readable_after_registry_expiry(tmp_path):
+    from ascend_op_eval.serialization import canonical_json_bytes
     from test_api import seed_worker
-
-    from triton_evaluation.serialization import canonical_json_bytes
 
     app = build_app(tmp_path, None)
     seed_worker(app, execution_class="cpu")

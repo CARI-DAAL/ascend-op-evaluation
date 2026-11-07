@@ -2,12 +2,11 @@
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from ascend_op_eval.api.contract import EvaluationRequest
+from ascend_op_eval.evaluators.base import EngineCheckResult, LeaseLostError, engine_failure
+from ascend_op_eval.evaluators.evaluation import EvaluationEvaluator
+from ascend_op_eval.evaluators.shaping import ShapingError, shape_profile_runs
 from test_evaluation_evaluator import RecordingSink, full_harness, load, trial_pinned
-
-from triton_evaluation.api.contract import EvaluationRequest
-from triton_evaluation.evaluators.base import EngineCheckResult, LeaseLostError, engine_failure
-from triton_evaluation.evaluators.evaluation import EvaluationEvaluator
-from triton_evaluation.evaluators.shaping import ShapingError, shape_profile_runs
 
 
 def trace_raw():
@@ -123,7 +122,7 @@ def test_joint_timing_must_match_requested_protocol_and_verified_inventory(tmp_p
 
 @pytest.mark.parametrize("invalid", ["zero_duration", "duplicate_names", "wrong_percentages"])
 def test_trace_shaping_rejects_invalid_duration_breakdown(invalid):
-    from triton_evaluation.api.contract import ProfileParams
+    from ascend_op_eval.api.contract import ProfileParams
 
     raw = trace_raw()
     kernels = raw["cases"][0]["kernels"]

@@ -32,7 +32,7 @@ def _run(tmp_path, mode, case_idx):
     output = tmp_path / f"{mode}_{case_idx}.json"
     engine = (
         Path(__file__).parents[1]
-        / "triton_evaluation"
+        / "ascend_op_eval"
         / "engine"
         / "profile_runner.py"
     )

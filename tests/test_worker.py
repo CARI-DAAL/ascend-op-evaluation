@@ -10,19 +10,18 @@ from pathlib import Path
 
 import pytest
 import redis
-from conftest import make_caller, make_completed_result, make_provenance, make_request
-
-from triton_evaluation.api.contract import (
+from ascend_op_eval.api.contract import (
     CheckSucceeded,
     CorrectnessResult,
     DomainFailure,
     EvaluationResource,
     EvaluationResult,
 )
-from triton_evaluation.config import Settings
-from triton_evaluation.evaluators.base import LeaseLostError
-from triton_evaluation.runtime.worker import LeaseKeeper, Worker
-from triton_evaluation.service.models import AlgorithmVersions, WorkerIdentity, new_worker_id
+from ascend_op_eval.config import Settings
+from ascend_op_eval.control.models import AlgorithmVersions, WorkerIdentity, new_worker_id
+from ascend_op_eval.evaluators.base import LeaseLostError
+from ascend_op_eval.execution.worker import LeaseKeeper, Worker
+from conftest import make_caller, make_completed_result, make_provenance, make_request
 
 
 class StubEvaluator:
@@ -594,7 +593,7 @@ def test_worker_records_attempt_card_even_when_affinity_avoidance_is_disabled(
 
 def test_shape_dependent_compile_error_is_not_reused_for_other_inputs(store, settings, clock,
                                                     make_command, redis_client):
-    from triton_evaluation.runtime import verdict_cache
+    from ascend_op_eval.execution import verdict_cache
 
     settings = settings.model_copy(update={"cann_fingerprint": "cann-test"})
     result = make_completed_result(settings)
@@ -621,7 +620,7 @@ def test_shape_dependent_compile_error_is_not_reused_for_other_inputs(store, set
 
 
 def test_correct_terminal_does_not_feed_cache(store, settings, clock, make_command, redis_client):
-    from triton_evaluation.runtime import verdict_cache
+    from ascend_op_eval.execution import verdict_cache
 
     cache = verdict_cache.VerdictCache(redis_client, prefix=settings.redis_prefix)
     worker = build_worker(
@@ -692,7 +691,7 @@ def test_corrupted_compile_request_keeps_cpu_check_identity(
 def test_canonical_source_replacement_cannot_change_admitted_request_identity(
     store, settings, clock, make_command,
 ):
-    from triton_evaluation.serialization import canonical_json_bytes
+    from ascend_op_eval.serialization import canonical_json_bytes
 
     resource = store.create_or_replay(make_command()).resource
     key = f"{settings.redis_prefix}:resource:{resource.evaluation_id}"
@@ -711,9 +710,9 @@ def test_canonical_source_replacement_cannot_change_admitted_request_identity(
 def test_native_build_and_comparator_survive_later_failure(
     store, settings, clock, make_command, ending,
 ):
-    from triton_evaluation.api.contract import NativeBuildEvidence
-    from triton_evaluation.operator_input import OperatorRequest, to_evaluation_request
-    from triton_evaluation.service.terminal_results import complete_evaluation
+    from ascend_op_eval.api.contract import NativeBuildEvidence
+    from ascend_op_eval.control.terminal_results import complete_evaluation
+    from ascend_op_eval.operator_input import OperatorRequest, to_evaluation_request
 
     request = to_evaluation_request(OperatorRequest.model_validate({
         "definition": {"inputs": {}, "reference": "def run(): return 1"},
@@ -761,10 +760,9 @@ def test_native_build_and_comparator_survive_later_failure(
 def test_replacement_attempt_does_not_inherit_native_build_logs(
     store, settings, clock, make_command, make_worker,
 ):
+    from ascend_op_eval.api.contract import NativeBuildEvidence
+    from ascend_op_eval.operator_input import OperatorRequest, to_evaluation_request
     from test_native_candidate import payload
-
-    from triton_evaluation.api.contract import NativeBuildEvidence
-    from triton_evaluation.operator_input import OperatorRequest, to_evaluation_request
 
     request = to_evaluation_request(OperatorRequest.model_validate(payload()))
     resource = store.create_or_replay(make_command(request=request)).resource

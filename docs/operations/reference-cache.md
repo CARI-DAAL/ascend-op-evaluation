@@ -1,7 +1,14 @@
+---
+status: current
+applies_to: legacy-evaluation-and-custom-method-v1
+verified_revision: e1dbe98977ebf1634c233fb1bfc127c8d62287f9
+owner: maintainers
+---
+
 # Pinned reference caches
 
 For automatic Torch timing reuse in two-source operator comparisons, see
-[baseline timing reuse](../usage/evaluations.md#reuse-torch-baseline-timings).
+[baseline timing reuse](../guides/evaluations.md#reuse-torch-baseline-timings).
 Comparison benchmarks use that cache and bypass the pinned timing paths described
 below. Single-source benchmarks always measure fresh and read or write neither
 baseline nor pinned timing caches. This page covers retained reference-output
@@ -37,7 +44,7 @@ Create one `CacheDeployment` JSON for all workers in the frozen generation:
 - `algorithm_files`: engine basenames and their SHA256 hashes, including at least
   `verify.py`, `benchmark.py`, `_common_utils.py`. A configured
   [profiler runtime](profiler-runtime.md) additionally requires the fixed key
-  `../runtime/profiler_runtime.py`; no other sibling traversal is allowed. Its actual
+  `../runtimes/profiler_runtime.py`; no other sibling traversal is allowed. Its actual
   manifest/dependency files also belong in the immutable runtime closure. With
   the canonical CANN environment quartet configured, this includes the vendor
   source, captured environment artifact, observed version metadata and actual
@@ -96,10 +103,10 @@ audit procedure to obtain broad reuse. A partial index remains valid evidence.
 Configure all four settings as one deployment change:
 
 ```text
-TRITON_EVAL_REFERENCE_CACHE_DIR=/absolute/audited-cache
-TRITON_EVAL_REFERENCE_CACHE_BINDING=/absolute/cache-index.json
-TRITON_EVAL_REFERENCE_CACHE_SHA256=<SHA256 of exact index bytes>
-TRITON_EVAL_REFERENCE_CACHE_STATE_DIR=/absolute/cache-invalidations
+ASCEND_OP_EVAL_REFERENCE_CACHE_DIR=/absolute/audited-cache
+ASCEND_OP_EVAL_REFERENCE_CACHE_BINDING=/absolute/cache-index.json
+ASCEND_OP_EVAL_REFERENCE_CACHE_SHA256=<SHA256 of exact index bytes>
+ASCEND_OP_EVAL_REFERENCE_CACHE_STATE_DIR=/absolute/cache-invalidations
 ```
 
 All four must be present together. The effective correctness protocol identity
@@ -166,8 +173,8 @@ runtime transition (for example original -> patched-Triton), configured like
 the other pinned anchors:
 
 ```text
-TRITON_EVAL_REFERENCE_TIMING_REUSE_POLICY=/absolute/validated-timing-reuse-policy.json
-TRITON_EVAL_REFERENCE_TIMING_REUSE_SHA256=<SHA256 of exact policy bytes>
+ASCEND_OP_EVAL_REFERENCE_TIMING_REUSE_POLICY=/absolute/validated-timing-reuse-policy.json
+ASCEND_OP_EVAL_REFERENCE_TIMING_REUSE_SHA256=<SHA256 of exact policy bytes>
 ```
 
 The policy declares the source deployment digest, cache root and sealed index
@@ -206,7 +213,7 @@ index and manifests are never modified or rekeyed.
 ### Sandbox delivery of the policy pair
 
 `--clearenv` sandbox children receive the policy pair ONLY through the pinned
-engine runtime overlay: `TRITON_EVAL_REFERENCE_TIMING_REUSE_POLICY` and
+engine runtime overlay: `ASCEND_OP_EVAL_REFERENCE_TIMING_REUSE_POLICY` and
 `..._SHA256` form one complete group in `RUNTIME_ENV` and in the overlay's
 allowed environment (both-or-neither everywhere; a state mount without the
 pair is refused too). The overlay verifies the policy bytes against the pinned

@@ -8,10 +8,9 @@ from contextlib import asynccontextmanager
 
 import httpx
 import pytest
+from ascend_op_eval.api.listeners import serve_app
+from ascend_op_eval.config import Settings
 from test_api import build_app
-
-from triton_evaluation.api.listeners import serve_app
-from triton_evaluation.config import Settings
 
 pytestmark = pytest.mark.anyio
 

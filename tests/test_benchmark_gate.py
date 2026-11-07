@@ -1,6 +1,5 @@
 import pytest
-
-from triton_evaluation.engine import benchmark
+from ascend_op_eval.engine import benchmark
 
 
 def test_benchmark_cli_cannot_bypass_verify_gate():

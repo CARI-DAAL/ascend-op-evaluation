@@ -11,14 +11,14 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from triton_evaluation.runtime.profiler_runtime import DIGEST_ENV, MANIFEST_ENV  # noqa: E402
-from triton_evaluation.runtime.reference_cache import (  # noqa: E402
+from ascend_op_eval.execution.reference_cache import (  # noqa: E402
     BINDING_ENV,
     CACHE_ENV,
     STATE_ENV,
 )
-from triton_evaluation.runtime.reference_cache import DIGEST_ENV as CACHE_DIGEST_ENV  # noqa: E402
-from triton_evaluation.runtime.sandbox import (  # noqa: E402
+from ascend_op_eval.execution.reference_cache import DIGEST_ENV as CACHE_DIGEST_ENV  # noqa: E402
+from ascend_op_eval.runtimes.profiler_runtime import DIGEST_ENV, MANIFEST_ENV  # noqa: E402
+from ascend_op_eval.runtimes.sandbox import (  # noqa: E402
     EngineRuntimeOverlay,
     EngineSandbox,
     apply_runtime_overlay,

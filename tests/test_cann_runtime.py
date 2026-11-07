@@ -9,11 +9,10 @@ import sys
 from pathlib import Path
 
 import pytest
+from ascend_op_eval.evaluators.base import run_script
+from ascend_op_eval.runtimes import profiler_runtime as runtime
+from ascend_op_eval.runtimes import sandbox
 from test_profiler_export_replay import elf_binding  # noqa: F401
-
-from triton_evaluation.evaluators.base import run_script
-from triton_evaluation.runtime import profiler_runtime as runtime
-from triton_evaluation.runtime import sandbox
 
 
 @pytest.fixture
@@ -80,7 +79,7 @@ def test_prepare_uses_clean_vendor_capture_and_pins_metadata_existing_libraries(
 ):
     monkeypatch.setenv("HQ_SENTINEL_SECRET", "not inherited by trusted source")
     monkeypatch.setenv("ASCEND_HOME_PATH", "/old/deleted")
-    target = prepare(canonical_cann, tmp_path / "runtime")
+    target = prepare(canonical_cann, tmp_path / "execution")
     model = runtime.read_runtime(str(target), runtime.sha(target), check_resolution=False)
     cann = runtime.read_cann_environment(model)
     root = canonical_cann[0]
@@ -141,7 +140,7 @@ def test_preparation_rejects_noncanonical_or_incomplete_runtime(canonical_cann, 
 def test_cann_quartet_layout_hash_unknown_keys_and_required_directory_fail_closed(
     canonical_cann, tmp_path
 ):
-    target = prepare(canonical_cann, tmp_path / "runtime")
+    target = prepare(canonical_cann, tmp_path / "execution")
     model = runtime.read_runtime(str(target), runtime.sha(target), check_resolution=False)
     for field in (
         "cann_set_env_path",
@@ -165,7 +164,7 @@ def test_cann_quartet_layout_hash_unknown_keys_and_required_directory_fail_close
 def test_derive_removes_only_version_boundary_keeps_non_cann_driver_and_languages(
     canonical_cann, tmp_path
 ):
-    target = prepare(canonical_cann, tmp_path / "runtime")
+    target = prepare(canonical_cann, tmp_path / "execution")
     model = runtime.read_runtime(str(target), runtime.sha(target), check_resolution=False)
     root = canonical_cann[0]
     old = root.parent / "cann-0.0.old"
@@ -219,7 +218,7 @@ def test_real_bwrap_old_cann_red_then_derived_child_loader_and_conditions_green(
     canonical_cann, tmp_path, monkeypatch
 ):
     require_bwrap()
-    target = prepare(canonical_cann, tmp_path / "runtime")
+    target = prepare(canonical_cann, tmp_path / "execution")
     model = runtime.read_runtime(str(target), runtime.sha(target), check_resolution=False)
     root = canonical_cann[0]
     mounts = [(path, path) for path in dict.fromkeys(("/usr", sys.base_prefix, sys.prefix))]
@@ -269,7 +268,7 @@ def test_real_bwrap_old_cann_red_then_derived_child_loader_and_conditions_green(
     probe = work / "probe.py"
     probe.write_text(
         "import json,os,subprocess,sys\nfrom pathlib import Path\n"
-        "from triton_evaluation.runtime import profiler_runtime as r\n"
+        "from ascend_op_eval.runtimes import profiler_runtime as r\n"
         "description=r.describe_runtime()\n"
         "with r.profiler_export_runtime() as trace:\n"
         " code='import ctypes; ctypes.CDLL('+repr(description['consumer_path'])+')'\n"
@@ -312,13 +311,13 @@ def test_actual_cache_requires_cann_source_artifact_metadata_and_library_pins(
 ):
     import importlib.metadata
 
-    from triton_evaluation.runtime.reference_cache import (
+    from ascend_op_eval.execution.reference_cache import (
         CacheDeployment,
         CacheMeasurement,
         ReferenceCacheError,
     )
 
-    target = prepare(canonical_cann, tmp_path / "runtime")
+    target = prepare(canonical_cann, tmp_path / "execution")
     model = runtime.read_runtime(str(target), runtime.sha(target), check_resolution=False)
     cann = runtime.read_cann_environment(model)
     for key, value in runtime.derive_cann_environment(model, {}).items():
@@ -341,7 +340,7 @@ def test_actual_cache_requires_cann_source_artifact_metadata_and_library_pins(
         name: runtime.sha(engine / name)
         for name in ("verify.py", "benchmark.py", "_common_utils.py")
     }
-    algorithms["../runtime/profiler_runtime.py"] = runtime.sha(Path(runtime.__file__))
+    algorithms["../runtimes/profiler_runtime.py"] = runtime.sha(Path(runtime.__file__))
     deployment = CacheDeployment(
         generation="controlled-cpu-cann",
         runtime_versions={"pytest": importlib.metadata.version("pytest")},
@@ -372,7 +371,7 @@ def test_actual_cache_requires_cann_source_artifact_metadata_and_library_pins(
 def test_worker_rejects_changed_cann_conditions_before_measurement(
     canonical_cann, tmp_path, monkeypatch, fault
 ):
-    target = prepare(canonical_cann, tmp_path / "runtime")
+    target = prepare(canonical_cann, tmp_path / "execution")
     model = runtime.read_runtime(str(target), runtime.sha(target), check_resolution=False)
     for key, value in runtime.derive_cann_environment(model, {}).items():
         monkeypatch.setenv(key, value)
@@ -397,7 +396,7 @@ def test_actual_prepare_cli_import_ban_keeps_existing_cann_and_system_bytes(
     root, source, library, library_sha, consumer, consumer_sha, msprof = canonical_cann
     before = {path: runtime.sha(path) for path in (source, library, consumer, msprof)}
     output = tmp_path / "cli-runtime"
-    script = Path(runtime.__file__).parents[2] / "scripts/prepare_profiler_runtime.py"
+    script = Path(__file__).resolve().parents[1] / "scripts/prepare_profiler_runtime.py"
     argv = [
         str(script),
         "--output",

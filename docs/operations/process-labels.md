@@ -1,3 +1,10 @@
+---
+status: current
+applies_to: legacy-evaluation-and-custom-method-v1
+verified_revision: e1dbe98977ebf1634c233fb1bfc127c8d62287f9
+owner: maintainers
+---
+
 # NPU process labels
 
 Service-owned workers and engine processes set their Linux `comm` name, including
@@ -55,7 +62,7 @@ does not preserve a previously set kernel process name. A custom Python NPU
 runner can opt into the inherited task context before loading the device runtime:
 
 ```python
-from triton_evaluation.runtime.process_title import set_stage
+from ascend_op_eval.execution.process_title import set_stage
 
 set_stage("benchmark", initialize=True)
 ```

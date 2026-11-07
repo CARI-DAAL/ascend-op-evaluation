@@ -3,12 +3,12 @@ name: triton-eval
 description: Measure or profile PyTorch, Triton or native AscendC operators, compare candidates against a reference for correctness and speedup, or recover a deployed evaluation.
 ---
 
-# Triton evaluation
+# Ascend Op Eval
 
 Use the bundled [client](scripts/triton_eval.py) with Python 3.10+; it needs only
 the standard library. The HTTP service is deployed separately. Obtain its URL
 and the caller capability-file path from the user's existing configuration:
-`EVALUATION_URL` and `EVALUATION_CAPABILITY_FILE`, or the equivalent `--url` and
+`ASCEND_OP_EVAL_CLIENT_URL` and `ASCEND_OP_EVAL_CLIENT_CAPABILITY_FILE`, or the equivalent `--url` and
 `--capability-file` flags. Resolve the script relative to this `SKILL.md`, then
 invoke its absolute path from the directory containing the user's inputs.
 
@@ -25,10 +25,10 @@ Choose `verify` with a reference in the definition and a candidate Triton
 source. `benchmark` measures one implementation, or compares correctness and
 speedup when both are present. `profile` accepts one or both implementations.
 Each implementation defines `run` with arguments matching definition input
-order. With `TRITON_EVAL_CLI` set to the resolved client path:
+order. With `ASCEND_OP_EVAL_CLI` set to the resolved client path:
 
 ```bash
-python3 "$TRITON_EVAL_CLI" verify \
+python3 "$ASCEND_OP_EVAL_CLI" verify \
   --definition definition.json --workloads workloads.jsonl \
   --triton triton_impl.py --save-handle evaluation-handle.json
 ```
@@ -38,8 +38,8 @@ For Triton alone, use `--triton-only` to remove the reference from the submitted
 definition while preserving the official file on disk:
 
 ```bash
-python3 "$TRITON_EVAL_CLI" benchmark --definition definition.json --workloads workloads.jsonl
-python3 "$TRITON_EVAL_CLI" profile --definition definition.json --workloads workloads.jsonl \
+python3 "$ASCEND_OP_EVAL_CLI" benchmark --definition definition.json --workloads workloads.jsonl
+python3 "$ASCEND_OP_EVAL_CLI" profile --definition definition.json --workloads workloads.jsonl \
   --triton triton_impl.py --triton-only
 ```
 
@@ -112,7 +112,7 @@ Use `evaluate` for explicit combinations. For correctness, event speedup and a
 kernel-duration trace in one request:
 
 ```bash
-python3 "$TRITON_EVAL_CLI" evaluate \
+python3 "$ASCEND_OP_EVAL_CLI" evaluate \
   --definition definition.json --workloads workloads.jsonl --triton triton_impl.py \
   --checks correctness performance profile --profile-mode trace --profile-cases 0 \
   --warmup 5 --repeats 20 --measurement-method event \
@@ -150,7 +150,7 @@ deployment for its service version, the API contracts it implements, its build
 and whether it verified its own release:
 
 ```bash
-python3 "$TRITON_EVAL_CLI" version --url SERVICE_URL --capability-file "$EVALUATION_CAPABILITY_FILE"
+python3 "$ASCEND_OP_EVAL_CLI" version --url SERVICE_URL --capability-file "$ASCEND_OP_EVAL_CLIENT_CAPABILITY_FILE"
 ```
 
 Report both versions when an evaluation outcome depends on the deployment, and
@@ -161,7 +161,7 @@ report `release.verified: false` as an unverified deployment identity.
 Once an `evaluation_id` is known, use `get` on its original service URL:
 
 ```bash
-python3 "$TRITON_EVAL_CLI" get EVALUATION_ID --url ORIGINAL_SERVICE_URL
+python3 "$ASCEND_OP_EVAL_CLI" get EVALUATION_ID --url ORIGINAL_SERVICE_URL
 ```
 
 `--save-handle` records `url`, `evaluation_id`, `idempotency_key` and `session_id`.

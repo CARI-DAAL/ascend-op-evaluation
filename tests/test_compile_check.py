@@ -1,4 +1,5 @@
 """Compile evidence is acquired only by fenced CPU or NPU attempts."""
+
 import json
 import time
 from datetime import datetime, timedelta, timezone
@@ -6,6 +7,15 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+from ascend_op_eval.control.models import AlgorithmVersions, WorkerIdentity, new_worker_id
+from ascend_op_eval.evaluators.base import engine_failure
+from ascend_op_eval.evaluators.benchmark import BenchmarkEvaluator
+from ascend_op_eval.evaluators.evaluation import EvaluationEvaluator
+from ascend_op_eval.evaluators.profile import ProfileEvaluator
+from ascend_op_eval.evaluators.verify import VerifyEvaluator
+from ascend_op_eval.execution.verdict_cache import VerdictCache
+from ascend_op_eval.execution.worker import FencedProgress
+from ascend_op_eval.operator_input import OperatorRequest, to_evaluation_request
 from conftest import FakeClock
 from test_api import (
     build_app,
@@ -18,29 +28,27 @@ from test_api import (
 from test_evaluation_evaluator import ENVIRONMENT, Harness, RecordingSink, succeeded, trial_pinned
 from test_worker import build_worker
 
-from triton_evaluation.evaluators.base import engine_failure
-from triton_evaluation.evaluators.benchmark import BenchmarkEvaluator
-from triton_evaluation.evaluators.evaluation import EvaluationEvaluator
-from triton_evaluation.evaluators.profile import ProfileEvaluator
-from triton_evaluation.evaluators.verify import VerifyEvaluator
-from triton_evaluation.operator_input import OperatorRequest, to_evaluation_request
-from triton_evaluation.runtime.verdict_cache import VerdictCache
-from triton_evaluation.runtime.worker import FencedProgress
-from triton_evaluation.service.models import AlgorithmVersions, WorkerIdentity, new_worker_id
-
 
 def payload(checks, source="def run(): pass"):
     return request_payload(triton_code=source, checks=checks)
 
 
 def app_with_precheck(tmp_path, release_catalog_files, **overrides):
-    settings = make_test_settings(tmp_path).model_copy(update={
-        "verdict_cache_enabled": False,
-        "engine_dir": str(Path(__file__).resolve().parents[1] / "triton_evaluation" / "engine"),
-        **overrides,
-    })
+    settings = make_test_settings(tmp_path).model_copy(
+        update={
+            "verdict_cache_enabled": False,
+            "engine_dir": str(
+                Path(__file__).resolve().parents[1]
+                / "packages/ascend-op-eval/src/ascend_op_eval"
+                / "engine"
+            ),
+            **overrides,
+        }
+    )
     return build_app(
-        tmp_path, release_catalog_files, settings=settings,
+        tmp_path,
+        release_catalog_files,
+        settings=settings,
         clock=FakeClock(int(time.time() * 1000)),
     )
 
@@ -48,32 +56,43 @@ def app_with_precheck(tmp_path, release_catalog_files, **overrides):
 def cpu_worker(app):
     seed_worker(app, execution_class="cpu")
     return build_worker(
-        app.store, app.settings, EvaluationEvaluator(
+        app.store,
+        app.settings,
+        EvaluationEvaluator(
             verify=VerifyEvaluator(app.settings.engine_dir),
             benchmark=BenchmarkEvaluator(app.settings.engine_dir),
             profile=ProfileEvaluator(app.settings.engine_dir),
         ),
-        app.clock, device_id=None,
+        app.clock,
+        device_id=None,
         verdict_cache=VerdictCache(app.store._r, prefix=app.settings.redis_prefix),
     )
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("source,status,outcome", [
-    ("def run(): pass", "succeeded", "compiled"),
-    ("def broken(: pass", "succeeded", "compile_error"),
-    ("raise OSError('temporarily unavailable')", "failed", None),
-])
+@pytest.mark.parametrize(
+    "source,status,outcome",
+    [
+        ("def run(): pass", "succeeded", "compiled"),
+        ("def broken(: pass", "succeeded", "compile_error"),
+        ("raise OSError('temporarily unavailable')", "failed", None),
+    ],
+)
 async def test_compile_only_is_admitted_then_executed_by_cpu_attempt(
-    tmp_path, release_catalog_files, source, status, outcome,
+    tmp_path,
+    release_catalog_files,
+    source,
+    status,
+    outcome,
 ):
     app = app_with_precheck(tmp_path, release_catalog_files)
     with (
         mock.patch(
-            "triton_evaluation.runtime.worker.health.CardHealth", side_effect=AssertionError,
+            "ascend_op_eval.execution.worker.health.CardHealth",
+            side_effect=AssertionError,
         ),
         mock.patch(
-            "triton_evaluation.runtime.worker.build_execution_environment",
+            "ascend_op_eval.execution.worker.build_execution_environment",
             side_effect=AssertionError,
         ),
     ):
@@ -105,7 +124,8 @@ async def test_compile_only_is_admitted_then_executed_by_cpu_attempt(
 
 @pytest.mark.anyio
 async def test_candidate_import_is_not_executed_before_worker_claims(
-    tmp_path, release_catalog_files,
+    tmp_path,
+    release_catalog_files,
 ):
     app = app_with_precheck(tmp_path, release_catalog_files)
     worker = cpu_worker(app)
@@ -120,13 +140,20 @@ async def test_candidate_import_is_not_executed_before_worker_claims(
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("source,compile_status,compile_verdict", [
-    ("def run(): pass", "succeeded", "compiled"),
-    ("def broken(: pass", "succeeded", "compile_error"),
-    ("raise OSError('temporarily unavailable')", "failed", None),
-])
+@pytest.mark.parametrize(
+    "source,compile_status,compile_verdict",
+    [
+        ("def run(): pass", "succeeded", "compiled"),
+        ("def broken(: pass", "succeeded", "compile_error"),
+        ("raise OSError('temporarily unavailable')", "failed", None),
+    ],
+)
 async def test_compile_profile_executes_precheck_in_npu_attempt_then_profiles(
-    tmp_path, release_catalog_files, source, compile_status, compile_verdict,
+    tmp_path,
+    release_catalog_files,
+    source,
+    compile_status,
+    compile_verdict,
 ):
     app = app_with_precheck(tmp_path, release_catalog_files)
     seed_worker(app)
@@ -154,7 +181,8 @@ async def test_compile_profile_executes_precheck_in_npu_attempt_then_profiles(
 
 @pytest.mark.anyio
 async def test_inconclusive_compile_is_not_inferred_from_failed_correctness(
-    tmp_path, release_catalog_files,
+    tmp_path,
+    release_catalog_files,
 ):
     from test_evaluation_evaluator import StubCheck
 
@@ -162,16 +190,24 @@ async def test_inconclusive_compile_is_not_inferred_from_failed_correctness(
     seed_worker(app)
     evaluator = Harness(verify=StubCheck(engine_failure("correctness", "runtime unavailable")))
     worker = build_worker(
-        app.store, app.settings, evaluator, app.clock, canary=lambda **kwargs: True,
+        app.store,
+        app.settings,
+        evaluator,
+        app.clock,
+        canary=lambda **kwargs: True,
     )
     other_card = build_worker(
-        app.store, app.settings, evaluator, app.clock, device_id=1,
+        app.store,
+        app.settings,
+        evaluator,
+        app.clock,
+        device_id=1,
         canary=lambda **kwargs: True,
     )
     async with app.http as client:
-        response = await post(client, payload(
-            ["compile", "correctness"], "raise OSError('temporarily unavailable')"
-        ))
+        response = await post(
+            client, payload(["compile", "correctness"], "raise OSError('temporarily unavailable')")
+        )
         eid = response.json()["evaluation_id"]
         # Opt-in engine failures without check evidence requeue under the shared
         # attempt budget instead of terminalizing the first attempt; the
@@ -181,7 +217,7 @@ async def test_inconclusive_compile_is_not_inferred_from_failed_correctness(
         assert requeued.json()["state"] == "running"
         assert not worker.run_once()  # card 0 is avoided by last_failed_card
         assert other_card.run_once()  # attempt 2 on another card, requeued again
-        assert worker.run_once()      # attempt 3: budget exhausted, terminal
+        assert worker.run_once()  # attempt 3: budget exhausted, terminal
         got = await client.get(f"/evaluations/{eid}", headers=trial_headers())
     assert got.json()["state"] == "completed"
     result = got.json()["result"]
@@ -192,7 +228,8 @@ async def test_inconclusive_compile_is_not_inferred_from_failed_correctness(
 
 @pytest.mark.anyio
 async def test_precheck_pass_does_not_claim_backend_jit_success(
-    tmp_path, release_catalog_files,
+    tmp_path,
+    release_catalog_files,
 ):
     app = app_with_precheck(tmp_path, release_catalog_files)
     seed_worker(app)
@@ -216,10 +253,13 @@ def test_missing_evidence_is_failed_and_fenced_before_other_checks(tmp_path):
         request=to_evaluation_request(
             OperatorRequest.model_validate(payload(["compile", "correctness"]))
         ),
-        work_dir=tmp_path, device_id=0,
+        work_dir=tmp_path,
+        device_id=0,
         deadline_at=datetime.now(timezone.utc) + timedelta(minutes=10),
-        lease_valid=lambda: True, execution_environment=ENVIRONMENT,
-        pinned=trial_pinned(), progress=sink,
+        lease_valid=lambda: True,
+        execution_environment=ENVIRONMENT,
+        pinned=trial_pinned(),
+        progress=sink,
     )
     assert result.compile.status == "failed"
     assert result.compile.error.retryable is True
@@ -229,19 +269,26 @@ def test_missing_evidence_is_failed_and_fenced_before_other_checks(tmp_path):
 
 @pytest.mark.anyio
 async def test_replacement_does_not_retain_previous_attempt_compile_evidence(
-    tmp_path, release_catalog_files,
+    tmp_path,
+    release_catalog_files,
 ):
-    from triton_evaluation.service.terminal_results import compile_outcome_from_precheck
+    from ascend_op_eval.control.terminal_results import compile_outcome_from_precheck
 
     app = app_with_precheck(tmp_path, release_catalog_files)
     seed_worker(app)
     async with app.http as client:
         response = await post(client, payload(["compile", "correctness"]))
         evaluation_id = response.json()["evaluation_id"]
-        identity = WorkerIdentity(new_worker_id(), app.settings.evaluator_build, AlgorithmVersions(
-            app.settings.correctness_algorithm_version, app.settings.decoy_algorithm_version,
-            app.settings.benchmark_algorithm_version, app.settings.profiler_algorithm_version,
-        ))
+        identity = WorkerIdentity(
+            new_worker_id(),
+            app.settings.evaluator_build,
+            AlgorithmVersions(
+                app.settings.correctness_algorithm_version,
+                app.settings.decoy_algorithm_version,
+                app.settings.benchmark_algorithm_version,
+                app.settings.profiler_algorithm_version,
+            ),
+        )
         lease = app.store.claim_next(identity)
         progress = FencedProgress(app.store, lease)
         assert progress.begin("compile")
@@ -257,28 +304,36 @@ async def test_replacement_does_not_retain_previous_attempt_compile_evidence(
     assert result["compile"]["status"] == "timeout"
     assert result["compile"]["data"] is None
     assert result["correctness"]["status"] == "skipped"
-    assert json.loads(app.store._r.hget(
-        f"{app.settings.redis_prefix}:resource:{evaluation_id}", "resource"
-    )) == got.json()
+    assert (
+        json.loads(
+            app.store._r.hget(f"{app.settings.redis_prefix}:resource:{evaluation_id}", "resource")
+        )
+        == got.json()
+    )
 
 
 @pytest.mark.anyio
 async def test_cached_compile_pass_is_used_only_after_cpu_claim(
-    tmp_path, release_catalog_files,
+    tmp_path,
+    release_catalog_files,
 ):
-    from triton_evaluation.runtime import verdict_cache
+    from ascend_op_eval.execution import verdict_cache
 
     app = app_with_precheck(tmp_path, release_catalog_files, verdict_cache_enabled=True)
     worker = cpu_worker(app)
     source = "def run(): pass"
     internal = to_evaluation_request(OperatorRequest.model_validate(payload(["compile"], source)))
     digest = verdict_cache.digest_for(
-        internal.kernel_code, "triton_ascend_impl", app.settings.cann_fingerprint,
+        internal.kernel_code,
+        "triton_ascend_impl",
+        app.settings.cann_fingerprint,
     )
     VerdictCache(app.store._r, prefix=app.settings.redis_prefix).put(
-        digest, "precheck_passed", 60,
+        digest,
+        "precheck_passed",
+        60,
     )
-    with mock.patch("triton_evaluation.runtime.precheck.run_script", side_effect=AssertionError):
+    with mock.patch("ascend_op_eval.execution.precheck.run_script", side_effect=AssertionError):
         async with app.http as client:
             response = await post(client, payload(["compile"], source))
             assert response.status_code == 202, response.text
@@ -293,7 +348,9 @@ async def test_cached_compile_pass_is_used_only_after_cpu_claim(
 @pytest.mark.anyio
 @pytest.mark.parametrize("include_compile", [True, False])
 async def test_definitive_precheck_failure_never_replaces_correctness_or_profile(
-    tmp_path, release_catalog_files, include_compile,
+    tmp_path,
+    release_catalog_files,
+    include_compile,
 ):
     app = app_with_precheck(tmp_path, release_catalog_files)
     seed_worker(app)

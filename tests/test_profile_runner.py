@@ -5,8 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
-
-from triton_evaluation.engine import profile_runner as profile
+from ascend_op_eval.engine import profile_runner as profile
 
 
 def test_engine_directory_does_not_shadow_stdlib_profile():
@@ -345,7 +344,7 @@ def test_runner_registers_path_modules_before_execution(tmp_path):
 
 
 def test_profile_child_uses_real_default_preparation_before_candidate_call(tmp_path):
-    from triton_evaluation.engine import _common_utils
+    from ascend_op_eval.engine import _common_utils
 
     _write_fake_runtime(tmp_path)
     # Keep this test's NPU stub but execute the real shared invocation/default

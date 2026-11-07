@@ -2,6 +2,7 @@
 from dataclasses import replace
 
 import pytest
+from ascend_op_eval.control.models import WorkerIdentity, new_worker_id
 from conftest import make_caller, make_request
 from test_api import (
     algorithms,
@@ -12,8 +13,6 @@ from test_api import (
     seed_worker,
     trial_headers,
 )
-
-from triton_evaluation.service.models import WorkerIdentity, new_worker_id
 
 
 def cpu_worker(settings):

@@ -1,16 +1,15 @@
 """Recovery: deadlines, worker crashes, reconnects, heartbeats, index cleanup."""
 import fakeredis
+from ascend_op_eval.api.contract import EvaluationResource
+from ascend_op_eval.control.broker import MAX_ATTEMPTS, EvaluationStore
+from ascend_op_eval.control.models import AlgorithmVersions, WorkerCompatibility
+from ascend_op_eval.serialization import sha256_hex
 from conftest import (
     make_caller,
     make_completed_result,
     make_correctness_success,
     make_request,
 )
-
-from triton_evaluation.api.contract import EvaluationResource
-from triton_evaluation.serialization import sha256_hex
-from triton_evaluation.service.broker import MAX_ATTEMPTS, EvaluationStore
-from triton_evaluation.service.models import AlgorithmVersions, WorkerCompatibility
 
 
 def _key(settings, suffix):

@@ -4,17 +4,16 @@ import copy
 from pathlib import Path
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
-
-from triton_evaluation.api.contract import (
+from ascend_op_eval.api.contract import (
     DeepProfileResult,
     EvaluationRequest,
     OpProfileResult,
     PerformanceOutcome,
     SinglePerformanceResult,
 )
-from triton_evaluation.operator_input import OperatorRequest, to_evaluation_request
-from triton_evaluation.serialization import canonical_json_bytes, sha256_hex
+from ascend_op_eval.operator_input import OperatorRequest, to_evaluation_request
+from ascend_op_eval.serialization import canonical_json_bytes, sha256_hex
+from pydantic import TypeAdapter, ValidationError
 
 SOURCE = "def run(x):\n    return x + 1\n"
 WORKLOADS = [{"inputs": {"x": {"type": "random", "shape": [4], "dtype": "float32"}}}]

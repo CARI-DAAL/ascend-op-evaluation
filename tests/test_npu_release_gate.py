@@ -6,9 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 import test_npu_release_calibration as calibration
+from ascend_op_eval.operator_input import OperatorRequest
 
 from scripts import npu_release_gate as gate
-from triton_evaluation.operator_input import OperatorRequest
 
 
 class JsonResponse(io.BytesIO):

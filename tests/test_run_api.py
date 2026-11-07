@@ -5,9 +5,8 @@ from unittest import mock
 
 import fakeredis
 import redis
-
-from triton_evaluation.config import Settings
-from triton_evaluation.service.security import CapabilityRegistry
+from ascend_op_eval.config import Settings
+from ascend_op_eval.control.security import CapabilityRegistry
 
 
 def test_api_assembles_shared_metrics_with_bounded_connection(monkeypatch, tmp_path):
@@ -17,7 +16,9 @@ def test_api_assembles_shared_metrics_with_bounded_connection(monkeypatch, tmp_p
     monkeypatch.setattr(redis.Redis, "from_url", factory)
     monkeypatch.setattr(Settings, "from_env", lambda: settings)
     monkeypatch.setattr(CapabilityRegistry, "from_secret_file", lambda _path: object())
-    assembled = runpy.run_module("scripts.run_api", run_name="api_composition_test")
+    assembled = runpy.run_module(
+        "ascend_op_eval.entrypoints.run_api", run_name="api_composition_test"
+    )
     instance = assembled["app"].state.context.instance
     assert instance.metrics is instance.store._metrics
     instance.metrics.increment("worker_heartbeats_total", {})

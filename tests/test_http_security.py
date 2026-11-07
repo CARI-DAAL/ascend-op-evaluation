@@ -2,9 +2,8 @@
 import re
 
 import pytest
+from ascend_op_eval.api.contract import ErrorEnvelope
 from test_api import build_app, post, trial_headers
-
-from triton_evaluation.api.contract import ErrorEnvelope
 
 pytestmark = pytest.mark.anyio
 

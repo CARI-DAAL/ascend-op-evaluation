@@ -4,8 +4,7 @@ import sys
 from types import ModuleType, SimpleNamespace
 
 import pytest
-
-from triton_evaluation.engine import verify
+from ascend_op_eval.engine import verify
 
 
 def _fake_torch_module():
@@ -163,8 +162,8 @@ def test_candidate_missing_model_new_writes_compilation_failure(tmp_path, monkey
 def test_candidate_import_error_uses_workload_metadata_without_inputs(
     tmp_path, monkeypatch, policy,
 ):
-    from triton_evaluation.evaluators.shaping import shape_correctness
-    from triton_evaluation.operator_input import OperatorRequest, to_evaluation_request
+    from ascend_op_eval.evaluators.shaping import shape_correctness
+    from ascend_op_eval.operator_input import OperatorRequest, to_evaluation_request
 
     request = OperatorRequest.model_validate({
         "definition": {"inputs": {"x": {}}, "reference": "def run(x): return x"},
@@ -572,7 +571,7 @@ def test_ensure_npu_ambient_device_is_the_single_invariant():
     runner (torch.npu evaluated before torch_npu import raises AttributeError
     during argument evaluation, which hasattr does not swallow).
     """
-    from triton_evaluation.engine import _common_utils, benchmark, verify
+    from ascend_op_eval.engine import _common_utils, benchmark, verify
 
     for module in (verify, benchmark):
         source = module.__file__
@@ -595,7 +594,7 @@ def test_ensure_npu_ambient_device_guards_missing_npu():
     """Attribute shapes that raised during argument evaluation historically."""
     from types import ModuleType, SimpleNamespace
 
-    from triton_evaluation.engine._common_utils import ensure_npu_ambient_device
+    from ascend_op_eval.engine._common_utils import ensure_npu_ambient_device
 
     bare = ModuleType("torch_without_npu")  # no `npu` attribute at all
     assert ensure_npu_ambient_device(bare) is False
@@ -615,7 +614,7 @@ def test_ensure_npu_ambient_device_guards_missing_npu():
 
 
 def test_ensure_npu_ambient_device_switches_when_available(monkeypatch):
-    from triton_evaluation.engine._common_utils import ensure_npu_ambient_device
+    from ascend_op_eval.engine._common_utils import ensure_npu_ambient_device
 
     switched = []
     torch = _fake_torch_module()
@@ -629,7 +628,7 @@ def test_ensure_npu_ambient_device_switches_when_available(monkeypatch):
 
 def test_ensure_npu_ambient_device_retries_transient_unavailability(monkeypatch):
     """drvGetDevNum 瞬态失败：有界等待重试后设备出现，绝不选择 CPU。"""
-    from triton_evaluation.engine import _common_utils
+    from ascend_op_eval.engine import _common_utils
 
     monkeypatch.setattr(_common_utils, "AMBIENT_POLL_SECONDS", 0.0)
     torch = _fake_torch_module()
@@ -650,7 +649,7 @@ def test_ensure_npu_ambient_device_retries_transient_unavailability(monkeypatch)
 
 def test_ensure_npu_ambient_device_stops_at_bounded_deadline(monkeypatch):
     """等待耗尽仍不可用则返回 False（调用方立刻显式失败），不循环不回退。"""
-    from triton_evaluation.engine import _common_utils
+    from ascend_op_eval.engine import _common_utils
 
     monkeypatch.setattr(_common_utils, "AMBIENT_POLL_SECONDS", 0.0)
     torch = _fake_torch_module()
@@ -671,7 +670,7 @@ def test_ensure_npu_ambient_device_stops_at_bounded_deadline(monkeypatch):
 
 def test_npu_strict_guard_raises_only_after_bounded_wait(tmp_path, monkeypatch):
     """npu-strict 守护保留大声 fail-fast：有界等待耗尽后仍抛同样错误。"""
-    from triton_evaluation.engine import _common_utils
+    from ascend_op_eval.engine import _common_utils
 
     monkeypatch.setattr(_common_utils, "AMBIENT_POLL_SECONDS", 0.0)
     monkeypatch.setattr(verify, "_AMBIENT_WAIT_CAP_SECONDS", 0.05)
@@ -706,7 +705,7 @@ def test_npu_strict_guard_raises_only_after_bounded_wait(tmp_path, monkeypatch):
 
 def test_npu_strict_guard_recovers_within_bounded_wait(tmp_path, monkeypatch):
     """瞬态窗口内恢复：守护等待后继续执行，不把基础设施瞬态当失败。"""
-    from triton_evaluation.engine import _common_utils
+    from ascend_op_eval.engine import _common_utils
 
     monkeypatch.setattr(_common_utils, "AMBIENT_POLL_SECONDS", 0.0)
     reference = SimpleNamespace(
@@ -750,7 +749,7 @@ def test_npu_strict_guard_recovers_within_bounded_wait(tmp_path, monkeypatch):
 def test_ensure_npu_ambient_device_default_wait_follows_policy(monkeypatch):
     """未显式传 wait_seconds 的调用点（benchmark / profile runner）由部署策略推导：
     npu-strict 有界等待恢复，其余（含未配置）保持单次探测。"""
-    from triton_evaluation.engine import _common_utils
+    from ascend_op_eval.engine import _common_utils
 
     monkeypatch.setattr(_common_utils, "AMBIENT_POLL_SECONDS", 0.0)
     calls = {"n": 0}
@@ -780,7 +779,7 @@ def test_ensure_npu_ambient_device_default_wait_follows_policy(monkeypatch):
 def test_benchmark_npu_strict_fails_loud_without_ambient_device():
     """benchmark 在 npu-strict 下同样大声失败：不静默退回 CPU 物化路径。
     （该字节变更使 timing-reuse policy 目标指纹不再匹配 → 回退 fresh。）"""
-    from triton_evaluation.engine import benchmark
+    from ascend_op_eval.engine import benchmark
 
     text = open(benchmark.__file__, encoding="utf-8").read()
     assert "npu-strict benchmark requires the ambient NPU device" in text
@@ -814,20 +813,20 @@ class _VarArgsModel:
 def test_invoke_model_binds_overflow_to_keyword_only_names():
     """The engine must honor the declared signature: positional slots take the
     leading inputs, the overflow binds to keyword-only parameter names."""
-    from triton_evaluation.engine._common_utils import invoke_model
+    from ascend_op_eval.engine._common_utils import invoke_model
 
     out = invoke_model(_KwOnlyModel(), [1, 2, 3, 4])
     assert out == (1, 2, 3, 4)
 
 
 def test_invoke_model_plain_signature_unchanged():
-    from triton_evaluation.engine._common_utils import invoke_model
+    from ascend_op_eval.engine._common_utils import invoke_model
 
     assert invoke_model(_PlainModel(), [1, 2]) == 3
 
 
 def test_invoke_model_varargs_absorbs_positionally():
-    from triton_evaluation.engine._common_utils import invoke_model
+    from ascend_op_eval.engine._common_utils import invoke_model
 
     assert invoke_model(_VarArgsModel(), [1, 2, 3]) == (1, (2, 3))
 
@@ -836,8 +835,7 @@ def test_invoke_model_count_mismatch_falls_through_naturally():
     """Overflow without matching keyword slots keeps Python's own error —
     honest failure semantics are preserved for genuinely wrong inputs."""
     import pytest as _pytest
-
-    from triton_evaluation.engine._common_utils import invoke_model
+    from ascend_op_eval.engine._common_utils import invoke_model
 
     with _pytest.raises(TypeError):
         invoke_model(_KwOnlyModel(), [1, 2, 3, 4, 5])

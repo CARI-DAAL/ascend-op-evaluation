@@ -3,12 +3,11 @@ The canary body itself is NPU-only (tests/test_card_health_npu.py)."""
 from types import SimpleNamespace
 from unittest import mock
 
+import ascend_op_eval.resources.health as health
 import pytest
 import redis
-
-import triton_evaluation.runtime.health as health
-from triton_evaluation.config import Settings
-from triton_evaluation.service import metrics
+from ascend_op_eval.config import Settings
+from ascend_op_eval.control import metrics
 
 
 def test_ladder_cleanup_step_runs_without_device():

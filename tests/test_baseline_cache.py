@@ -4,8 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 import fakeredis
 import pytest
 import redis
-
-from triton_evaluation.runtime.baseline_cache import BaselineCache, BaselineSnapshot
+from ascend_op_eval.execution.baseline_cache import BaselineCache, BaselineSnapshot
 
 
 @pytest.fixture
@@ -104,7 +103,7 @@ def test_redis_errors_are_fail_open_and_redacted(caplog):
 def test_key_uses_canonical_protocol_and_conventional_prefix(cache):
     import hashlib
 
-    from triton_evaluation.serialization import canonical_json_bytes
+    from ascend_op_eval.serialization import canonical_json_bytes
 
     protocol = {
         "namespace": "torch-baseline-v1",

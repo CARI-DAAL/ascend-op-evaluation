@@ -3,12 +3,11 @@ import json
 import re
 
 import pytest
+from ascend_op_eval.api.contract import EvaluationRequest
+from ascend_op_eval.control.admission import ForbiddenError, admit
+from ascend_op_eval.control.security import Caller
+from ascend_op_eval.serialization import canonical_json_bytes, sha256_hex
 from pydantic import ValidationError
-
-from triton_evaluation.api.contract import EvaluationRequest
-from triton_evaluation.serialization import canonical_json_bytes, sha256_hex
-from triton_evaluation.service.admission import ForbiddenError, admit
-from triton_evaluation.service.security import Caller
 
 KERNEL_CODE = "import torch\n\n\nclass ModelNew(torch.nn.Module):\n    pass\n"
 

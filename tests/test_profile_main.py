@@ -3,8 +3,7 @@ import sys
 from pathlib import Path
 
 import pytest
-
-from triton_evaluation.engine import profile_runner as profile
+from ascend_op_eval.engine import profile_runner as profile
 
 
 def _config(tmp_path, **overrides):

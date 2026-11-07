@@ -8,6 +8,9 @@ import subprocess
 import sys
 
 import pytest
+from ascend_op_eval import versioning
+from ascend_op_eval.api.dependencies import AppContext
+from ascend_op_eval.config import Settings
 from test_api import (
     OBSERVER_TOKEN,
     TRIAL_TOKEN,
@@ -17,10 +20,6 @@ from test_api import (
     trial_headers,
 )
 from test_cli_plugin import SCRIPT, TOKEN, server
-
-from triton_evaluation import versioning
-from triton_evaluation.api.dependencies import AppContext
-from triton_evaluation.config import Settings
 
 pytestmark = pytest.mark.anyio
 
@@ -165,7 +164,7 @@ def version_document(**overrides):
 
 
 def test_copied_client_reports_its_own_version_offline(tmp_path):
-    copied = tmp_path / "triton_eval.py"
+    copied = tmp_path / "ascend_op_eval.py"
     copied.write_bytes(SCRIPT.read_bytes())
     result = run_cli("--version", cwd=tmp_path)
     assert result.returncode == 0, result.stderr

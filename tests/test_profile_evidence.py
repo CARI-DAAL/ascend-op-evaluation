@@ -6,16 +6,15 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-
-from triton_evaluation.api.contract import EvaluationRequest, ProfileParams
-from triton_evaluation.evaluators import profile as profile_module
-from triton_evaluation.evaluators.base import ScriptOutcome
-from triton_evaluation.evaluators.benchmark import BenchmarkEvaluator
-from triton_evaluation.evaluators.evaluation import EvaluationEvaluator
-from triton_evaluation.evaluators.profile import ProfileEvaluator
-from triton_evaluation.evaluators.shaping import ShapingError, shape_profile_runs
-from triton_evaluation.evaluators.verify import VerifyEvaluator
-from triton_evaluation.service.models import AlgorithmVersions, PinnedProvenance
+from ascend_op_eval.api.contract import EvaluationRequest, ProfileParams
+from ascend_op_eval.control.models import AlgorithmVersions, PinnedProvenance
+from ascend_op_eval.evaluators import profile as profile_module
+from ascend_op_eval.evaluators.base import ScriptOutcome
+from ascend_op_eval.evaluators.benchmark import BenchmarkEvaluator
+from ascend_op_eval.evaluators.evaluation import EvaluationEvaluator
+from ascend_op_eval.evaluators.profile import ProfileEvaluator
+from ascend_op_eval.evaluators.shaping import ShapingError, shape_profile_runs
+from ascend_op_eval.evaluators.verify import VerifyEvaluator
 
 FIXTURES = Path(__file__).parent / "fixtures" / "engine"
 

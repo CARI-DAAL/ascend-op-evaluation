@@ -15,9 +15,10 @@ from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from ascend_op_eval.api.contract import EvaluationResource
+from ascend_op_eval.operator_input import OperatorRequest, to_evaluation_request
+
 from scripts.test_eval_service import http_json
-from triton_evaluation.api.contract import EvaluationResource
-from triton_evaluation.operator_input import OperatorRequest, to_evaluation_request
 
 FIXTURE = ROOT / "tests/fixtures/npu_kernelbench/batchmatmul"
 OFFICIAL_DIGEST = "57e902365bd9b2fa437cc500cf0d862989b5881f439b2157de7341b127126c73"

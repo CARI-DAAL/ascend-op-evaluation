@@ -3,8 +3,7 @@ import json
 from pathlib import Path
 
 import pytest
-
-from triton_evaluation.api.contract import (
+from ascend_op_eval.api.contract import (
     CheckFailed,
     CheckSkipped,
     CheckTimedOut,
@@ -12,8 +11,8 @@ from triton_evaluation.api.contract import (
     EvaluationResult,
     SkipInfo,
 )
-from triton_evaluation.service.models import AlgorithmVersions, PinnedProvenance
-from triton_evaluation.service.terminal_results import (
+from ascend_op_eval.control.models import AlgorithmVersions, PinnedProvenance
+from ascend_op_eval.control.terminal_results import (
     complete_evaluation,
     persisted_check_outcomes,
 )

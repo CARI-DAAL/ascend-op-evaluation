@@ -38,6 +38,15 @@ class ClientError(Exception):
         super().__init__(message)
 
 
+def client_setting(name, legacy):
+    """Accept the documented old setting without exposing credential values."""
+    current = "ASCEND_OP_EVAL_CLIENT_" + name
+    value, previous = os.environ.get(current), os.environ.get(legacy)
+    if value is not None and previous is not None and value != previous:
+        raise ClientError("CONFIG_CONFLICT", f"conflicting settings: {current}, {legacy}")
+    return value if value is not None else previous
+
+
 class Parser(argparse.ArgumentParser):
     def error(self, message):
         # argparse's message can contain arbitrary argument values; never echo it.
@@ -74,15 +83,18 @@ def arguments(argv):
     commands = parser.add_subparsers(dest="command", required=True)
     for action in ("verify", "benchmark", "profile", "evaluate", "get", "progress"):
         command = commands.add_parser(action)
-        command.add_argument("--url", default=os.environ.get("EVALUATION_URL"))
+        command.add_argument("--url", default=client_setting("URL", "EVALUATION_URL"))
         command.add_argument(
-            "--capability-file", type=Path, default=os.environ.get("EVALUATION_CAPABILITY_FILE")
+            "--capability-file",
+            type=Path,
+            default=client_setting("CAPABILITY_FILE", "EVALUATION_CAPABILITY_FILE"),
         )
         command.add_argument("--timeout", type=positive, default=3660.0)
         command.add_argument("--poll-interval", type=positive, default=1.0)
         command.add_argument("--no-wait", action="store_true")
         command.add_argument(
-            "--wait-for", choices=("compile", "correctness", "performance", "profile"),
+            "--wait-for",
+            choices=("compile", "correctness", "performance", "profile"),
             help="return the progress snapshot once this check has evidence",
         )
         command.add_argument("--save-handle", type=Path)
@@ -96,8 +108,9 @@ def arguments(argv):
             command.add_argument("--candidate-only", action="store_true")
             candidate = command.add_mutually_exclusive_group()
             candidate.add_argument("--triton", type=Path)
-            candidate.add_argument("--native-project", type=Path,
-                                   help="JSON manifest with explicit project file paths")
+            candidate.add_argument(
+                "--native-project", type=Path, help="JSON manifest with explicit project file paths"
+            )
             command.add_argument("--workloads", type=Path, required=True)
             command.add_argument("--idempotency-key")
             command.add_argument("--session-id")
@@ -106,7 +119,9 @@ def arguments(argv):
             command.add_argument("--case-indices", type=case_indices)
         if action == "evaluate":
             command.add_argument(
-                "--checks", nargs="+", choices=("compile", "correctness", "performance", "profile"),
+                "--checks",
+                nargs="+",
+                choices=("compile", "correctness", "performance", "profile"),
             )
             for check_name in ("correctness", "performance", "profile"):
                 command.add_argument("--" + check_name + "-cases", type=case_indices)
@@ -115,35 +130,56 @@ def arguments(argv):
             command.add_argument("--correctness-from")
         if action in {"profile", "evaluate"}:
             command.add_argument("--profile-mode", choices=("op", "deep", "trace"))
-            command.add_argument("--metric-groups", nargs="+", choices=(
-                "PipeUtilization", "ArithmeticUtilization", "Memory", "MemoryL0",
-                "MemoryUB", "L2Cache", "ResourceConflictRatio",
-            ))
+            command.add_argument(
+                "--metric-groups",
+                nargs="+",
+                choices=(
+                    "PipeUtilization",
+                    "ArithmeticUtilization",
+                    "Memory",
+                    "MemoryL0",
+                    "MemoryUB",
+                    "L2Cache",
+                    "ResourceConflictRatio",
+                ),
+            )
             command.add_argument("--no-per-core", action="store_true")
             command.add_argument("--max-kernels-per-case", type=int)
         if action in {"benchmark", "evaluate"}:
             command.add_argument("--warmup", type=int)
             command.add_argument("--repeats", type=int)
             command.add_argument(
-                "--measurement-method", "--method", choices=("event", "profiler"),
-                help=("timing backend (Triton default: event; native default: profiler); "
-                      "profiler returns available pipe counters"),
+                "--measurement-method",
+                "--method",
+                choices=("event", "profiler"),
+                help=(
+                    "timing backend (Triton default: event; native default: profiler); "
+                    "profiler returns available pipe counters"
+                ),
             )
             cache = command.add_mutually_exclusive_group()
             cache.add_argument(
-                "--use-baseline-cache", dest="use_baseline_cache", action="store_true",
+                "--use-baseline-cache",
+                dest="use_baseline_cache",
+                action="store_true",
                 help="reuse Torch baseline timing for a two-source comparison (default)",
             )
             cache.add_argument(
-                "--no-baseline-cache", dest="use_baseline_cache", action="store_false",
-                help=("bypass comparison baseline caching; "
-                      "single-source measurements are always fresh"),
+                "--no-baseline-cache",
+                dest="use_baseline_cache",
+                action="store_false",
+                help=(
+                    "bypass comparison baseline caching; "
+                    "single-source measurements are always fresh"
+                ),
             )
             command.set_defaults(use_baseline_cache=None)
     discovery = commands.add_parser("version")
-    discovery.add_argument("--url", default=os.environ.get("EVALUATION_URL"))
+    discovery.add_argument("--url", default=client_setting("URL", "EVALUATION_URL"))
     discovery.add_argument(
-        "--capability-file", type=Path, default=os.environ.get("EVALUATION_CAPABILITY_FILE")
+        "--capability-file",
+        type=Path,
+        default=client_setting("CAPABILITY_FILE", "EVALUATION_CAPABILITY_FILE"),
     )
     discovery.add_argument("--timeout", type=positive, default=30.0)
     args = parser.parse_args(argv)
@@ -151,8 +187,12 @@ def arguments(argv):
         return args
     if args.command not in {"get", "progress"} and args.triton_only and args.triton is None:
         raise ClientError("INVALID_ARGUMENT", "--triton-only requires --triton")
-    if (args.command not in {"get", "progress"} and args.candidate_only
-            and args.triton is None and args.native_project is None):
+    if (
+        args.command not in {"get", "progress"}
+        and args.candidate_only
+        and args.triton is None
+        and args.native_project is None
+    ):
         raise ClientError("INVALID_ARGUMENT", "--candidate-only requires a candidate")
     if args.wait_for and (args.no_wait or args.command == "progress"):
         raise ClientError("INVALID_ARGUMENT", "--wait-for requires a waiting evaluation or get")
@@ -170,11 +210,14 @@ def apply_controls(payload, args):
     maps = {
         "correctness": {"stop_on": "stop_on", "correctness_cases": "case_indices"},
         "performance": {
-            "performance_cases": "case_indices", "warmup": "warmup", "repeats": "repeats",
+            "performance_cases": "case_indices",
+            "warmup": "warmup",
+            "repeats": "repeats",
             "measurement_method": "method",
         },
         "profile": {
-            "profile_cases": "case_indices", "profile_mode": "mode",
+            "profile_cases": "case_indices",
+            "profile_mode": "mode",
             "metric_groups": "metric_groups",
             "max_kernels_per_case": "max_kernels_per_case",
         },
@@ -183,7 +226,8 @@ def apply_controls(payload, args):
     for check_name, fields in maps.items():
         params = {
             field: getattr(args, option)
-            for option, field in fields.items() if getattr(args, option, None) is not None
+            for option, field in fields.items()
+            if getattr(args, option, None) is not None
         }
         if shortcut.get(args.command) == check_name and args.case_indices is not None:
             params["case_indices"] = args.case_indices
@@ -245,19 +289,28 @@ def read_native_project(manifest_path: Path) -> dict:
         manifest = json_value(data.decode("utf-8"))
     except (AttributeError, OSError, ValueError, UnicodeError):
         raise ClientError(
-            "INVALID_INPUT", "native manifest must be a regular UTF-8 file of at most 1 MiB "
+            "INVALID_INPUT",
+            "native manifest must be a regular UTF-8 file of at most 1 MiB "
             "without symlinks; native packaging requires POSIX no-follow file APIs",
         ) from None
     fields = {
-        "kind", "files", "build", "entrypoint", "build_timeout_seconds",
-        "kernel_names", "event_timing",
+        "kind",
+        "files",
+        "build",
+        "entrypoint",
+        "build_timeout_seconds",
+        "kernel_names",
+        "event_timing",
     }
     if not isinstance(manifest, dict) or manifest.keys() - fields:
         raise ClientError("INVALID_INPUT", "invalid native project manifest fields")
     paths = manifest.get("files")
-    if (not isinstance(paths, list) or not 1 <= len(paths) <= 128
-            or any(not isinstance(path, str) for path in paths)
-            or len(set(paths)) != len(paths)):
+    if (
+        not isinstance(paths, list)
+        or not 1 <= len(paths) <= 128
+        or any(not isinstance(path, str) for path in paths)
+        or len(set(paths)) != len(paths)
+    ):
         raise ClientError("INVALID_INPUT", "native files must be a nonempty unique path list")
     sources = {}
     total = 0
@@ -269,18 +322,24 @@ def read_native_project(manifest_path: Path) -> dict:
         try:
             for path in paths:
                 parts = path.split("/")
-                if (not path or "\\" in path or "\x00" in path
-                        or any(part in ("", ".", "..") for part in parts)):
+                if (
+                    not path
+                    or "\\" in path
+                    or "\x00" in path
+                    or any(part in ("", ".", "..") for part in parts)
+                ):
                     raise ValueError("invalid project path")
                 parent_fd = os.dup(root_fd)
                 try:
                     for part in parts[:-1]:
-                        next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                                          dir_fd=parent_fd)
+                        next_fd = os.open(
+                            part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd
+                        )
                         os.close(parent_fd)
                         parent_fd = next_fd
-                    fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
-                                 dir_fd=parent_fd)
+                    fd = os.open(
+                        parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd
+                    )
                     with os.fdopen(fd, "rb") as source:
                         if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
                             raise ValueError("nonregular source")
@@ -295,7 +354,8 @@ def read_native_project(manifest_path: Path) -> dict:
             os.close(root_fd)
     except (OSError, ValueError, UnicodeError):
         raise ClientError(
-            "INVALID_INPUT", "native files must be regular UTF-8 files inside the project "
+            "INVALID_INPUT",
+            "native files must be regular UTF-8 files inside the project "
             "without symlinks, totaling at most 2 MiB",
         ) from None
     return {**manifest, "kind": manifest.get("kind", "native"), "files": sources}
@@ -499,8 +559,10 @@ class Client:
                     if response.status not in {200, 202}:
                         raise ClientError("INVALID_RESPONSE", "unexpected service response status")
                     validate = (
-                        validate_version if path == "/version"
-                        else validate_progress if path.endswith("/progress")
+                        validate_version
+                        if path == "/version"
+                        else validate_progress
+                        if path.endswith("/progress")
                         else validate_resource
                     )
                     value = validate(json_value(response.read()))
@@ -527,8 +589,7 @@ class Client:
         if self.args.command == "version":
             # Identity discovery: the service answers even with no worker able
             # to serve, so this never waits or polls.
-            return {"client_version": __version__,
-                    "service": self.request("GET", "/version")}, 0
+            return {"client_version": __version__, "service": self.request("GET", "/version")}, 0
         if self.args.command in {"get", "progress"}:
             if not ID.fullmatch(self.evaluation_id):
                 raise ClientError("INVALID_ARGUMENT", "evaluation ID has an invalid format")
@@ -560,12 +621,17 @@ class Client:
                 )
             text = read_text(self.args.workloads, "workloads file").strip()
             workloads = (
-                json_value(text) if text.startswith("[") else
-                [json_value(line) for line in text.splitlines() if line.strip()]
+                json_value(text)
+                if text.startswith("[")
+                else [json_value(line) for line in text.splitlines() if line.strip()]
             )
-            if not isinstance(workloads, list) or not workloads or any(
-                not isinstance(workload, dict) or not isinstance(workload.get("inputs"), dict)
-                for workload in workloads
+            if (
+                not isinstance(workloads, list)
+                or not workloads
+                or any(
+                    not isinstance(workload, dict) or not isinstance(workload.get("inputs"), dict)
+                    for workload in workloads
+                )
             ):
                 raise ClientError("INVALID_INPUT", "workloads must be nonempty named input objects")
             payload = {"definition": definition, "workloads": workloads, "seed": self.args.seed}
@@ -579,15 +645,15 @@ class Client:
                 )
             uses_custom = any(
                 isinstance(spec, dict) and spec.get("type") == "custom"
-                for workload in workloads for spec in workload["inputs"].values()
+                for workload in workloads
+                for spec in workload["inputs"].values()
             )
             if uses_custom:
                 if not definition.get("custom_inputs_entrypoint"):
                     raise ClientError(
                         "INVALID_INPUT", "custom inputs require custom_inputs_entrypoint"
                     )
-                if (candidate_only and self.args.custom_inputs is None
-                        and original_reference):
+                if candidate_only and self.args.custom_inputs is None and original_reference:
                     payload["custom_inputs_code"] = original_reference
                 if not (reference or payload.get("custom_inputs_code")):
                     raise ClientError(
@@ -598,8 +664,10 @@ class Client:
                     raise ClientError("INVALID_ARGUMENT", "native timing does not reuse baselines")
                 if getattr(self.args, "correctness_from", None) is not None:
                     raise ClientError("INVALID_ARGUMENT", "native correctness reuse is unsupported")
-                if (getattr(self.args, "measurement_method", None) == "event"
-                        and payload["candidate"].get("event_timing") is not True):
+                if (
+                    getattr(self.args, "measurement_method", None) == "event"
+                    and payload["candidate"].get("event_timing") is not True
+                ):
                     raise ClientError(
                         "INVALID_ARGUMENT", "native Event timing requires event_timing=true"
                     )
@@ -607,14 +675,20 @@ class Client:
             expected_checks = {
                 "verify": ["correctness"],
                 "benchmark": (
-                    ["correctness", "performance"] if reference and candidate_present
+                    ["correctness", "performance"]
+                    if reference and candidate_present
                     else ["performance"]
                 ),
                 "profile": ["profile"],
-            }.get(self.args.command, payload.get("checks") or (
-                ["correctness", "performance"] if reference and candidate_present
-                else ["performance"]
-            ))
+            }.get(
+                self.args.command,
+                payload.get("checks")
+                or (
+                    ["correctness", "performance"]
+                    if reference and candidate_present
+                    else ["performance"]
+                ),
+            )
             if self.args.wait_for is not None and self.args.wait_for not in expected_checks:
                 raise ClientError("INVALID_ARGUMENT", "--wait-for must name a requested check")
             if self.key is None:
@@ -649,9 +723,12 @@ class Client:
                     and evidence["data"].get("complete", True) is False
                 )
                 if evidence is not None and not partial_performance:
-                    status = exit_status({
-                        "state": "completed", "result": {self.args.wait_for: evidence},
-                    })
+                    status = exit_status(
+                        {
+                            "state": "completed",
+                            "result": {self.args.wait_for: evidence},
+                        }
+                    )
                     return snapshot, status
             if resource["state"] in TERMINAL or self.args.no_wait:
                 status = exit_status(resource)

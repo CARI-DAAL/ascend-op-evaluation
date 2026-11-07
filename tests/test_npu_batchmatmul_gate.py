@@ -5,10 +5,10 @@ import json
 import sys
 
 import pytest
+from ascend_op_eval.engine.validate_triton_impl import validate
+from ascend_op_eval.evaluators.shaping import shape_profile
 
 from scripts import npu_batchmatmul_gate as gate
-from triton_evaluation.engine.validate_triton_impl import validate
-from triton_evaluation.evaluators.shaping import shape_profile
 
 FIXTURES = gate.ROOT / "tests/fixtures"
 

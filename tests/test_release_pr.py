@@ -1,4 +1,5 @@
 """Release automation with real Git repositories and a substituted GitHub adapter."""
+
 import json
 import re
 import shutil
@@ -6,9 +7,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from ascend_op_eval import versioning
 
 from scripts import release_manifest, release_pr
-from triton_evaluation import versioning
 
 
 @pytest.fixture
@@ -16,21 +17,36 @@ def repository(tmp_path, monkeypatch):
     root = tmp_path / "checkout"
     root.mkdir()
     original_root = release_pr.ROOT
-    for name in ["pyproject.toml", *release_manifest.PLUGIN_MANIFESTS, release_manifest.CLI_SCRIPT]:
+    for name in [
+        release_manifest.SERVICE_PROJECT,
+        *release_manifest.PLUGIN_MANIFESTS,
+        release_manifest.CLI_SCRIPT,
+    ]:
         destination = root / name
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(original_root / name, destination)
     # Keep historical test scenarios independent of the live release version.
-    project = root / "pyproject.toml"
-    project.write_text(re.sub(r'^version = "[^"]+"', 'version = "0.1.0"',
-                              project.read_text(), count=1, flags=re.MULTILINE))
+    project = root / release_manifest.SERVICE_PROJECT
+    project.write_text(
+        re.sub(
+            r'^version = "[^"]+"',
+            'version = "0.1.0"',
+            project.read_text(),
+            count=1,
+            flags=re.MULTILINE,
+        )
+    )
     (root / "CHANGELOG.md").write_text("# Changelog\n\n## Unreleased\n")
-    (root / "triton_evaluation").mkdir()
-    (root / "triton_evaluation/__init__.py").write_text('"""Test release source."""\n')
+    (root / "packages/ascend-op-eval/src/ascend_op_eval").mkdir(parents=True)
+    (root / "packages/ascend-op-eval/src/ascend_op_eval/__init__.py").write_text(
+        '"""Test release source."""\n'
+    )
     monkeypatch.setattr(release_pr, "ROOT", root)
     # The workflow installs each release's distribution before generating its manifest.
     monkeypatch.setattr(
-        versioning, "service_version", lambda: release_manifest.pyproject_version(root),
+        versioning,
+        "service_version",
+        lambda: release_manifest.pyproject_version(root),
     )
     real_run = release_pr.run
     real_run("git", "init", "-b", "main")
@@ -58,8 +74,9 @@ def repository(tmp_path, monkeypatch):
             tag, artifact = args[3:5]
             assert "--verify-tag" in args
             state["assets"][tag] = Path(artifact).read_bytes()
-            state["releases"].append({"tag_name": tag, "draft": False,
-                                       "assets": [{"name": "release-manifest.json"}]})
+            state["releases"].append(
+                {"tag_name": tag, "draft": False, "assets": [{"name": "release-manifest.json"}]}
+            )
             return ""
         if args[1:3] == ("release", "download"):
             destination = Path(args[args.index("--dir") + 1])
@@ -87,16 +104,16 @@ def prepare(root, tmp_path):
 
 
 def commit_release(run):
-    run("git", "add", "pyproject.toml", "CHANGELOG.md")
+    run("git", "add", release_manifest.SERVICE_PROJECT, "CHANGELOG.md")
     run("git", "commit", "-m", "chore(release): reviewed version")
     run("git", "push", "origin", "main")
     return run("git", "rev-parse", "HEAD")
 
 
 def service_change(root, run, message):
-    source = root / "triton_evaluation/__init__.py"
+    source = root / "packages/ascend-op-eval/src/ascend_op_eval/__init__.py"
     source.write_text(source.read_text() + "# Service change\n")
-    run("git", "add", "triton_evaluation/__init__.py")
+    run("git", "add", "packages/ascend-op-eval/src/ascend_op_eval/__init__.py")
     run("git", "commit", "-m", message)
 
 
@@ -104,18 +121,21 @@ def publish(head):
     release_pr.main(["publish", "--repo", "example/evaluation", "--reviewed-head", head])
 
 
-@pytest.mark.parametrize("current,messages,expected", [
-    ("0.1.0", ["docs: explain", "test: cover", "chore: clean", "refactor: move"], None),
-    ("0.1.0", ["fix(cli): repair"], "patch"),
-    ("0.1.0", ["perf: faster"], "patch"),
-    ("0.1.0", ["revert: restore"], "patch"),
-    ("0.1.0", ["fix: repair", "feat: add option"], "minor"),
-    ("0.1.0", ["refactor!: change contract"], "minor"),
-    ("0.1.0", ["fix: change\n\nBREAKING CHANGE: migration"], "minor"),
-    ("1.2.3", ["feat: add", "fix: change\n\nBREAKING-CHANGE: migration"], "major"),
-    ("1.2.3", ["feat!: change contract"], "major"),
-    ("1.2.3", ["Merge pull request #1", "fix: nested commit"], "patch"),
-])
+@pytest.mark.parametrize(
+    "current,messages,expected",
+    [
+        ("0.1.0", ["docs: explain", "test: cover", "chore: clean", "refactor: move"], None),
+        ("0.1.0", ["fix(cli): repair"], "patch"),
+        ("0.1.0", ["perf: faster"], "patch"),
+        ("0.1.0", ["revert: restore"], "patch"),
+        ("0.1.0", ["fix: repair", "feat: add option"], "minor"),
+        ("0.1.0", ["refactor!: change contract"], "minor"),
+        ("0.1.0", ["fix: change\n\nBREAKING CHANGE: migration"], "minor"),
+        ("1.2.3", ["feat: add", "fix: change\n\nBREAKING-CHANGE: migration"], "major"),
+        ("1.2.3", ["feat!: change contract"], "major"),
+        ("1.2.3", ["Merge pull request #1", "fix: nested commit"], "patch"),
+    ],
+)
 def test_version_policy(current, messages, expected):
     assert release_pr.suggested_bump(current, messages) == expected
 
@@ -150,10 +170,13 @@ def test_prepare_is_deterministic_and_rolls_migration_notes(repository, tmp_path
     run("git", "tag", "v0.1.0")
     service_change(root, run, "feat: new counter")
     output, body = prepare(root, tmp_path)
-    generated = {name: (root / name).read_bytes() for name in ["pyproject.toml", "CHANGELOG.md"]}
+    generated = {
+        name: (root / name).read_bytes()
+        for name in [release_manifest.SERVICE_PROJECT, "CHANGELOG.md"]
+    }
     notes = body.read_bytes()
     # Restore only test-owned preparation files to repeat the same input.
-    run("git", "restore", "pyproject.toml", "CHANGELOG.md")
+    run("git", "restore", release_manifest.SERVICE_PROJECT, "CHANGELOG.md")
     assert prepare(root, tmp_path)[0] == output
     assert body.read_bytes() == notes
     assert generated == {name: (root / name).read_bytes() for name in generated}
@@ -282,8 +305,8 @@ def test_changed_tree_since_review_refuses_publication(repository, tmp_path):
 def test_code_changes_inside_release_pr_are_refused(repository, tmp_path):
     root, state, run = repository
     prepare(root, tmp_path)
-    (root / "triton_evaluation/__init__.py").write_text("changed = True\n")
-    run("git", "add", "triton_evaluation/__init__.py")
+    (root / "packages/ascend-op-eval/src/ascend_op_eval/__init__.py").write_text("changed = True\n")
+    run("git", "add", "packages/ascend-op-eval/src/ascend_op_eval/__init__.py")
     head = commit_release(run)
     with pytest.raises(ValueError, match="only pyproject"):
         publish(head)
@@ -317,22 +340,32 @@ def test_stale_bootstrap_stays_draft_until_refreshed(repository, tmp_path):
     base = run("git", "rev-parse", "HEAD")
     run("git", "commit", "--allow-empty", "-m", "docs: advance main")
     run("git", "push", "origin", "main")
-    state["pr"] = {"state": "OPEN", "isDraft": True,
-                   "headRefName": "automation/release", "headRefOid": "a" * 40}
+    state["pr"] = {
+        "state": "OPEN",
+        "isDraft": True,
+        "headRefName": "automation/release",
+        "headRefOid": "a" * 40,
+    }
     output = tmp_path / "outputs"
     release_pr.check_base(base, "0.1.0", "example/evaluation", output, "7", "a" * 40)
     assert output.read_text() == "current=false\n"
     assert state["pr"]["state"] == "OPEN"
-    release_pr.check_base(run("git", "rev-parse", "HEAD"), "0.1.0", "example/evaluation",
-                          output, "7", "a" * 40)
+    release_pr.check_base(
+        run("git", "rev-parse", "HEAD"), "0.1.0", "example/evaluation", output, "7", "a" * 40
+    )
     assert output.read_text() == "current=true\n"
 
 
 def test_changed_pr_head_cannot_be_marked_ready(repository, tmp_path):
     _, state, run = repository
-    state["pr"] = {"state": "OPEN", "isDraft": True,
-                   "headRefName": "automation/release", "headRefOid": "b" * 40}
+    state["pr"] = {
+        "state": "OPEN",
+        "isDraft": True,
+        "headRefName": "automation/release",
+        "headRefOid": "b" * 40,
+    }
     output = tmp_path / "outputs"
-    release_pr.check_base(run("git", "rev-parse", "HEAD"), "0.1.0", "example/evaluation",
-                          output, "7", "a" * 40)
+    release_pr.check_base(
+        run("git", "rev-parse", "HEAD"), "0.1.0", "example/evaluation", output, "7", "a" * 40
+    )
     assert output.read_text() == "current=false\n"

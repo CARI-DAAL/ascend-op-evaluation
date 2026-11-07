@@ -1,0 +1,128 @@
+name: ${ASCEND_OP_EVAL_COMPOSE_PROJECT_NAME:?set the existing project name before upgrading}
+
+# One independent v2.1 evaluation instance per host. Configure its private bind,
+# cards and host runtime paths in docker/.env; the consumer owns instance selection.
+# AOF data survives container replacement. Never remove the named data volume.
+# Start through deploy/compose/compose.sh after exporting the same docker/.env inputs.
+# The wrapper sets --project-directory to the repository root for relative paths
+# and the existing Compose project / Redis volume identity.
+
+services:
+  ascend-op-eval:
+    build:
+      context: .
+      dockerfile: deploy/images/Dockerfile
+      args:
+        # Same declared build as `docker build -f deploy/images/Dockerfile .`; versions live in pyproject [npu].
+        # Keep the BASE_IMAGE default in sync with the Dockerfile ARG.
+        BASE_IMAGE: ${BASE_IMAGE:-python:3.11}
+        PIP_EXTRA_INDEX_URL: ${PIP_EXTRA_INDEX_URL:-}
+    # Immutable digest reference required at deploy time; preflight rejects tag-only
+    # references and RepoDigest mismatches. No :latest fallback exists on purpose.
+    image: ${ASCEND_OP_EVAL_IMAGE:?ASCEND_OP_EVAL_IMAGE must be a sha256 digest reference}
+    command: ["all"]
+    restart: unless-stopped
+    depends_on: [redis]          # start redis first (host network; eval tolerates a brief gap)
+    network_mode: host           # bind the configured private host address
+    privileged: true             # required for NPU device access in-container (see note above)
+    shm_size: "32gb"             # torch_npu needs a large /dev/shm
+    environment:
+      PYTHON_BIN: python3
+      HOME: /tmp
+      ASCEND_OP_EVAL_REDIS_URL: ${ASCEND_OP_EVAL_REDIS_URL:-redis://127.0.0.1:6379/7}
+      ASCEND_OP_EVAL_REDIS_PREFIX: triton-eval:v2.1
+      ASCEND_OP_EVAL_BASELINE_CACHE_NAMESPACE: ${ASCEND_OP_EVAL_BASELINE_CACHE_NAMESPACE:-torch-baseline-v1}
+      ASCEND_OP_EVAL_CANN_FINGERPRINT: ${ASCEND_OP_EVAL_CANN_FINGERPRINT:-}
+      # Explicit private address; each host runs an independent API and Redis.
+      ASCEND_OP_EVAL_API_HOST: ${ASCEND_OP_EVAL_API_HOST:?set the instance private IPv4 address}
+      ASCEND_OP_EVAL_API_PORT: "11907"
+      ASCEND_OP_EVAL_CARDS: ${ASCEND_OP_EVAL_CARDS:-0}
+      ASCEND_OP_EVAL_CPU_WORKERS: ${ASCEND_OP_EVAL_CPU_WORKERS-1}
+      # Device memory each worker holds from startup so npu-smi shows it while idle.
+      ASCEND_OP_EVAL_DEVICE_HOLD_MB: ${ASCEND_OP_EVAL_DEVICE_HOLD_MB:-64}
+      # The build identity is the image's sha256:<64-hex> digest, without its registry/name
+      # (or an explicitly reviewed git:<40-hex> dev build).
+      ASCEND_OP_EVAL_IMAGE: ${ASCEND_OP_EVAL_IMAGE}
+      ASCEND_OP_EVAL_EVALUATOR_BUILD: ${ASCEND_OP_EVAL_EVALUATOR_BUILD:?must equal the image sha256 digest}
+      # Release identity. The manifest is generated after the image is built,
+      # so it is mounted rather than contained in the image it describes; the
+      # API and workers refuse to start when it does not describe them.
+      ASCEND_OP_EVAL_RELEASE_MODE: release
+      ASCEND_OP_EVAL_RELEASE_MANIFEST: /opt/ascend-op-eval/release-manifest.json
+      ASCEND_OP_EVAL_REFERENCE_DEVICE_POLICY: ${ASCEND_OP_EVAL_REFERENCE_DEVICE_POLICY:-cpu-first}
+      ASCEND_OP_EVAL_REFERENCE_DIAGNOSTICS_DIR: /opt/ascend-op-eval/logs/reference-diagnostics
+      # Whole-run caps, also bounded by the remaining admitted request deadline.
+      ASCEND_OP_EVAL_VERIFY_BUDGET_CAP_SECONDS: ${ASCEND_OP_EVAL_VERIFY_BUDGET_CAP_SECONDS:-3600}
+      ASCEND_OP_EVAL_BENCHMARK_TIMEOUT_SECONDS: ${ASCEND_OP_EVAL_BENCHMARK_TIMEOUT_SECONDS:-3600}
+      ASCEND_OP_EVAL_TRIAL_RATE_LIMIT_PER_MINUTE: ${ASCEND_OP_EVAL_TRIAL_RATE_LIMIT_PER_MINUTE-60}
+      ASCEND_OP_EVAL_TRUSTED_RATE_LIMIT_PER_MINUTE: ${ASCEND_OP_EVAL_TRUSTED_RATE_LIMIT_PER_MINUTE-60}
+      ASCEND_OP_EVAL_TRIAL_MAX_INFLIGHT: ${ASCEND_OP_EVAL_TRIAL_MAX_INFLIGHT-4}
+      ASCEND_OP_EVAL_TRUSTED_MAX_INFLIGHT: ${ASCEND_OP_EVAL_TRUSTED_MAX_INFLIGHT-4}
+      ASCEND_OP_EVAL_SESSION_MAX_INFLIGHT: ${ASCEND_OP_EVAL_SESSION_MAX_INFLIGHT-2}
+      ASCEND_OP_EVAL_ROLLOUT_CALLER_IDS: ${ASCEND_OP_EVAL_ROLLOUT_CALLER_IDS-[]}
+      ASCEND_OP_EVAL_ROLLOUT_RATE_LIMIT_PER_MINUTE: ${ASCEND_OP_EVAL_ROLLOUT_RATE_LIMIT_PER_MINUTE-600}
+      ASCEND_OP_EVAL_ROLLOUT_MAX_INFLIGHT: ${ASCEND_OP_EVAL_ROLLOUT_MAX_INFLIGHT-256}
+      ASCEND_OP_EVAL_POISON_DEATH_THRESHOLD: ${ASCEND_OP_EVAL_POISON_DEATH_THRESHOLD-2}
+      ASCEND_OP_EVAL_CARD_AFFINITY_AVOIDANCE: ${ASCEND_OP_EVAL_CARD_AFFINITY_AVOIDANCE-true}
+      ASCEND_OP_EVAL_CANARY_BUDGET_SECONDS: ${ASCEND_OP_EVAL_CANARY_BUDGET_SECONDS-120}
+      ASCEND_OP_EVAL_CANARY_INTERVAL_SECONDS: ${ASCEND_OP_EVAL_CANARY_INTERVAL_SECONDS-60}
+      ASCEND_OP_EVAL_CARD_RESET_COMMAND: ${ASCEND_OP_EVAL_CARD_RESET_COMMAND-}
+      ASCEND_OP_EVAL_CARD_RECOVERY_MAX_STEP: ${ASCEND_OP_EVAL_CARD_RECOVERY_MAX_STEP-2}
+      ASCEND_OP_EVAL_CARD_RECOVERY_RETRY_SECONDS: ${ASCEND_OP_EVAL_CARD_RECOVERY_RETRY_SECONDS-300}
+      ASCEND_OP_EVAL_CARD_CANARY_ON_STARTUP: ${ASCEND_OP_EVAL_CARD_CANARY_ON_STARTUP-true}
+      ASCEND_OP_EVAL_VERDICT_CACHE_ENABLED: ${ASCEND_OP_EVAL_VERDICT_CACHE_ENABLED-true}
+      ASCEND_OP_EVAL_VERDICT_CACHE_TTL_SECONDS: ${ASCEND_OP_EVAL_VERDICT_CACHE_TTL_SECONDS-604800}
+      ASCEND_OP_EVAL_PRECHECK_BUDGET_SECONDS: ${ASCEND_OP_EVAL_PRECHECK_BUDGET_SECONDS-60}
+      # Operator declarations from this host's actual inventory, recorded in provenance.
+      ASCEND_OP_EVAL_WORKER_HARDWARE_MODEL: ${ASCEND_OP_EVAL_WORKER_HARDWARE_MODEL-Ascend910}
+      ASCEND_OP_EVAL_WORKER_DRIVER_VERSION: ${ASCEND_OP_EVAL_WORKER_DRIVER_VERSION-26.0.rc1}
+      ASCEND_OP_EVAL_WORKER_RUNTIME_VERSION: ${ASCEND_OP_EVAL_WORKER_RUNTIME_VERSION-CANN-9.1.1}
+      ASCEND_OP_EVAL_WORKER_TOOLCHAIN_VERSION: ${ASCEND_OP_EVAL_WORKER_TOOLCHAIN_VERSION-CANN 9.1.1 / python 3.10 / torch 2.9.0 / torch_npu 2.9.0.post8 / triton_ascend 3.2.0}
+      ASCEND_OP_EVAL_CAPABILITY_SECRET_PATH: /run/secrets/ascend-op-eval
+      CANN_SET_ENV_PATH: /opt/cann/ascend-toolkit/set_env.sh
+      ASCEND_DRIVER_PATH: /usr/local/Ascend/driver                     # mounted from host
+    volumes:
+      # The image contains the declared Python stack; only host CANN/driver is mounted.
+      - ${CANN_HOST:-/usr/local/Ascend}:/opt/cann:ro
+      - /usr/local/dcmi:/usr/local/dcmi
+      # Full host driver (lib64/device/kernel/...). GE op-store init needs more than lib64.
+      - /usr/local/Ascend/driver:/usr/local/Ascend/driver
+      - /usr/local/bin/npu-smi:/usr/local/bin/npu-smi
+      - /etc/ascend_install.info:/etc/ascend_install.info
+      - ./logs:/opt/ascend-op-eval/logs
+      # Generated by scripts/release_manifest.py for the deployed image digest.
+      - ${ASCEND_OP_EVAL_RELEASE_MANIFEST_HOST:?set the generated release manifest path}:/opt/ascend-op-eval/release-manifest.json:ro
+      # Caller-scoped opaque capabilities: mounted read-only, container sees only the path.
+      - ${ASCEND_OP_EVAL_CAPABILITY_SECRET_PATH:-/run/secrets/ascend-op-eval}:/run/secrets/ascend-op-eval:ro
+
+  # Redis: the durable source of truth for evaluation API v2. Compose-managed so it
+  # comes up with the service and survives reboot (restart: unless-stopped). AOF with
+  # appendfsync always makes EXEC acknowledgement the durability boundary for accepted
+  # evaluations; the named /data volume preserves them across container replacement.
+  # Binds 127.0.0.1:6379 on the host network — the same address ASCEND_OP_EVAL_REDIS_URL
+  # points at. The image is the pinned multi-platform index resolved 2026-08-13 with
+  # `docker buildx imagetools inspect`; a Redis update requires recording a new exact
+  # tag+index digest and rerunning the deployment/AOF tests.
+  redis:
+    image: docker.io/library/redis:7.4.10-alpine3.21@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - redis-server
+      - --bind
+      - 127.0.0.1
+      - --port
+      - "6379"
+      - --save
+      - ""
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - always
+      - --aof-use-rdb-preamble
+      - "yes"
+    volumes:
+      - triton-eval-redis-v2:/data
+
+volumes:
+  triton-eval-redis-v2:

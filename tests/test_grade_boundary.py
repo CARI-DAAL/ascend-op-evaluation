@@ -10,11 +10,10 @@ infrastructure outcomes (unscored), and why eligibility is not a score.
 import json
 from pathlib import Path
 
+import ascend_op_eval.api.contract as contract
 import pytest
+from ascend_op_eval.api.contract import EvaluationResource, Provenance
 from pydantic import ValidationError
-
-import triton_evaluation.api.contract as contract
-from triton_evaluation.api.contract import EvaluationResource, Provenance
 
 FIXTURES = (
     Path(__file__).parent.parent

@@ -1,7 +1,0 @@
-{
-  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "eval-adapter-kit",
-  "version": "0.1.0",
-  "description": "Design external operator-evaluation adapters using reusable capabilities, explicit parameter mappings and conformance evidence.",
-  "repository": "https://github.com/CARI-DAAL/ascend-op-evaluation"
-}

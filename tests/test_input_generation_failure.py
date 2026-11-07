@@ -4,18 +4,17 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from conftest import make_request
-
-from triton_evaluation.evaluators.base import ScriptOutcome, input_generation_failure
-from triton_evaluation.evaluators.benchmark import BenchmarkEvaluator
-from triton_evaluation.evaluators.profile import ProfileEvaluator
-from triton_evaluation.evaluators.verify import VerifyEvaluator
-from triton_evaluation.operator_input import (
+from ascend_op_eval.evaluators.base import ScriptOutcome, input_generation_failure
+from ascend_op_eval.evaluators.benchmark import BenchmarkEvaluator
+from ascend_op_eval.evaluators.profile import ProfileEvaluator
+from ascend_op_eval.evaluators.verify import VerifyEvaluator
+from ascend_op_eval.execution.input_generation import InputGenerationError, generate_inputs
+from ascend_op_eval.operator_input import (
     INPUT_GENERATION_FAILURE_PREFIX,
     OperatorRequest,
     to_evaluation_request,
 )
-from triton_evaluation.runtime.input_generation import InputGenerationError, generate_inputs
+from conftest import make_request
 
 
 def custom_case():

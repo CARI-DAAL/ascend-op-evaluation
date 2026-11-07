@@ -97,6 +97,7 @@ def main():
 
     try:
         base = ROOT / "examples/custom_methods"
+        cannbench = ROOT / "adapters/cannbench/src/ascend_op_eval_adapter_cannbench/bundle"
         checker = register(base / "checker/method.json")
         inputs = {
             name: upload_file(base / f"checker/{name}.json") for name in ("actual", "reference")
@@ -149,9 +150,9 @@ def main():
         if not entry["passed"]:
             raise ValueError("cancellation did not reach acknowledged cancelled state")
         if args.include_cannbench_components:
-            method = register(base / "cannbench/checker.method.json")
+            method = register(cannbench / "checker.method.json")
             inputs = {
-                name: upload_file(base / f"cannbench/{name}.json")
+                name: upload_file(cannbench / f"{name}.json")
                 for name in ("actual", "reference", "native")
             }
             run_case("pinned comparator default rejects", method, inputs, {}, "failed")
@@ -162,9 +163,9 @@ def main():
                 {"custom_thresholds": {"float32": 0.1}},
                 "passed",
             )
-            method = register(base / "cannbench/measurement.method.json")
+            method = register(cannbench / "measurement.method.json")
             data = {
-                "kernel_details": upload_file(base / "cannbench/kernel_details.csv", "text/csv")
+                "kernel_details": upload_file(cannbench / "kernel_details.csv", "text/csv")
             }
             resource, entry = run_case("pinned CSV aggregation", method, data, {}, "completed")
             if resource["result"]["method"]["data"]["report"]["value"] != 200:

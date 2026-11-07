@@ -19,7 +19,7 @@ VERSION = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
 CONVENTIONAL = re.compile(r"^(\w+)(?:\([^\n]+\))?(!)?: .+")
 BREAKING = re.compile(r"^BREAKING[ -]CHANGE: ", re.MULTILINE)
 RELEASE_BRANCH = "automation/release"
-SERVICE_PATHS = ("triton_evaluation", "scripts", "pyproject.toml", "docker", "adapters",
+SERVICE_PATHS = ("packages/ascend-op-eval", "scripts", "deploy", "adapters",
                  ".env.example")
 
 
@@ -121,7 +121,7 @@ def prepare(body_file: Path, output_file: Path) -> None:
     changelog_path.write_text(
         prefix + f"## Unreleased\n\n## {version} — {date}\n\n" + body + "\n" + older
     )
-    project = ROOT / "pyproject.toml"
+    project = ROOT / release_manifest.SERVICE_PROJECT
     source, count = re.subn(
         r'(?ms)(^\[project\]\n(?:(?!^\[).)*?^version = ")[^"]+("$)',
         lambda match: match[1] + version + match[2], project.read_text(), count=1,
@@ -165,7 +165,7 @@ def check_base(base_sha: str, version: str, repo: str, output_file: Path,
         return
     output_file.write_text("current=false\n")
     print("main advanced; a subsequent run will refresh the release PR.")
-    source = run("git", "show", f"{latest}:pyproject.toml")
+    source = run("git", "show", f"{latest}:{release_manifest.SERVICE_PROJECT}")
     current = re.search(r'^version = "([^"]+)"', source, re.MULTILINE)[1]
     released = version_parts(current) > version_parts(version)
     if details and current == version:
@@ -183,11 +183,11 @@ def publish(repo: str, reviewed_head: str) -> None:
     run("git", "merge-base", "--is-ancestor", commit, "refs/remotes/origin/main")
     run("git", "diff", "--exit-code", reviewed_head, commit)
     changed = set(run("git", "diff", "--name-only", "HEAD^", "HEAD").splitlines())
-    if not changed or changed - {"pyproject.toml", "CHANGELOG.md"}:
+    if not changed or changed - {release_manifest.SERVICE_PROJECT, "CHANGELOG.md"}:
         raise ValueError("release PR must change only pyproject.toml and CHANGELOG.md")
     version = release_manifest.pyproject_version(ROOT)
     version_parts(version)
-    previous_project = run("git", "show", "HEAD^:pyproject.toml")
+    previous_project = run("git", "show", f"HEAD^:{release_manifest.SERVICE_PROJECT}")
     previous = re.search(r'^version = "([^"]+)"', previous_project, re.MULTILINE)[1]
     previous_changelog = run("git", "show", "HEAD^:CHANGELOG.md")
     notes = release_entry((ROOT / "CHANGELOG.md").read_text(), version)

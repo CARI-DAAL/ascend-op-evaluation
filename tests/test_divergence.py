@@ -2,8 +2,7 @@ import math
 import random
 
 import pytest
-
-from triton_evaluation.engine._divergence import (
+from ascend_op_eval.engine._divergence import (
     _finite_upper_median_below,
     classify_divergence,
     worst_sample,

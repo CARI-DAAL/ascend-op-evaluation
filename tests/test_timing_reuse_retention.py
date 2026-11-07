@@ -2,7 +2,7 @@
 
 CONTROLLED EVIDENCE (CPU fixture, not a device observation): the trace below
 is constructed to the exact emitted schema of the real engine writer
-(``triton_evaluation/engine/benchmark.py`` ``_try_validated_timing_reuse``
+(``ascend_op_eval/engine/benchmark.py`` ``_try_validated_timing_reuse``
 trace dicts, merged into ``verify_reference.json`` ``performance_cache`` by
 ``_write_reference_cache_trace``, plus the ``verify.py`` case entries).
 No torch/NPU is available on this host, so the engine itself cannot run here;
@@ -25,14 +25,13 @@ import json
 from pathlib import Path
 
 import pytest
-from test_worker import StubEvaluator, build_worker
-
-from triton_evaluation.service.admission import admit
-from triton_evaluation.service.models import (
+from ascend_op_eval.control.admission import admit
+from ascend_op_eval.control.models import (
     AlgorithmVersions,
     CreateResourceCommand,
     new_evaluation_id,
 )
+from test_worker import StubEvaluator, build_worker
 
 POLICY_SHA = "3d9198dfcaa68f81442f09a43c8aac88dd77de62c601eb561b7731b44dfe9d02"
 SCOPE = (
@@ -261,7 +260,7 @@ def test_retained_timing_reuse_observations_round_trip_through_the_model(
 ):
     # The retained record must be re-loadable by the same strict model, so an
     # auditor can validate retained evidence against the parser itself.
-    from triton_evaluation.runtime.reference_diagnostics import _ReferenceTrace
+    from ascend_op_eval.execution.reference_diagnostics import _ReferenceTrace
 
     record = _run_retention(
         tmp_path, store, settings, clock, make_command, _timing_reuse_trace("timing_reuse")

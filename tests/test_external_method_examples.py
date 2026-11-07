@@ -13,6 +13,10 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1] / "examples/custom_methods"
+CANNBENCH = (
+    Path(__file__).resolve().parents[1]
+    / "adapters/cannbench/src/ascend_op_eval_adapter_cannbench/bundle"
+)
 
 
 def module(path, name):
@@ -80,7 +84,7 @@ def test_external_measurement_counts_repeated_and_conditional_launches(tmp_path)
 
 
 def test_pinned_cannbench_modules_are_byte_identical_to_recorded_source():
-    vendor = ROOT / "cannbench/vendor"
+    vendor = CANNBENCH / "vendor"
     provenance = json.loads((vendor / "provenance.json").read_text())
     assert provenance["revision"] == "f0488d95b4d44a6a0da1b8cd99e91fbd06181962"
     for entry in provenance["files"]:
@@ -109,10 +113,10 @@ def test_cannbench_checker_matches_real_upstream_numeric_code(
 ):
     import torch
 
-    monkeypatch.syspath_prepend(str(ROOT / "cannbench"))
+    monkeypatch.syspath_prepend(str(CANNBENCH))
     from vendor.pinned.utils.compare import compare_tensors
 
-    checker = module(ROOT / "cannbench/cannbench_checker.py", "pinned_checker")
+    checker = module(CANNBENCH / "cannbench_checker.py", "pinned_checker")
     invocation = request(
         tmp_path,
         {"custom_thresholds": {} if threshold is None else {"float32": threshold}},
@@ -132,8 +136,8 @@ def test_cannbench_checker_matches_real_upstream_numeric_code(
 
 
 def test_cannbench_checker_compares_composite_and_integer_outputs(tmp_path, monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT / "cannbench"))
-    checker = module(ROOT / "cannbench/cannbench_checker.py", "pinned_checker_multi")
+    monkeypatch.syspath_prepend(str(CANNBENCH))
+    checker = module(CANNBENCH / "cannbench_checker.py", "pinned_checker_multi")
     data = {
         "outputs": [
             {"dtype": "float32", "data": [1.0]},
@@ -155,11 +159,11 @@ def test_cannbench_checker_compares_composite_and_integer_outputs(tmp_path, monk
 def test_cannbench_measurement_matches_pinned_parser_not_median_of_totals(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
-    monkeypatch.syspath_prepend(str(ROOT / "cannbench"))
+    monkeypatch.syspath_prepend(str(CANNBENCH))
     from vendor.pinned.perf_strategy import KernelDetailsStrategy, ProfFileLocations
 
-    measure = module(ROOT / "cannbench/cannbench_measurement.py", "pinned_measurement")
-    source = ROOT / "cannbench/kernel_details.csv"
+    measure = module(CANNBENCH / "cannbench_measurement.py", "pinned_measurement")
+    source = CANNBENCH / "kernel_details.csv"
     invocation = request(tmp_path, {})
     invocation["inputs"]["kernel_details"] = {"path": str(source), "media_type": "text/csv"}
     expected = SimpleNamespace(elapsed_us=0, error_msg=None, metadata={}, op_times={})
@@ -172,7 +176,7 @@ def test_cannbench_measurement_matches_pinned_parser_not_median_of_totals(tmp_pa
 
 
 def test_harness_rejects_archive_path_escape_before_writing_outside(tmp_path):
-    harness = module(ROOT / "cannbench/harness.py", "harness_safety")
+    harness = module(CANNBENCH / "harness.py", "harness_safety")
     data = io.BytesIO()
     with tarfile.open(fileobj=data, mode="w:gz") as archive:
         info = tarfile.TarInfo("../outside")
@@ -184,8 +188,8 @@ def test_harness_rejects_archive_path_escape_before_writing_outside(tmp_path):
 
 
 def test_harness_builds_exact_argument_tokens_and_preserves_zero_false(tmp_path):
-    harness = module(ROOT / "cannbench/harness.py", "harness_arguments")
-    manifest = json.loads((ROOT / "cannbench/harness.method.json").read_text())
+    harness = module(CANNBENCH / "harness.py", "harness_arguments")
+    manifest = json.loads((CANNBENCH / "harness.method.json").read_text())
     parameters = {
         name: field["default"]
         for name, field in manifest["descriptor"]["parameters_schema"]["properties"].items()
@@ -207,7 +211,7 @@ def test_harness_builds_exact_argument_tokens_and_preserves_zero_false(tmp_path)
 
 
 def test_upstream_archive_uses_pinned_git_bytes_not_dirty_worktree(tmp_path, monkeypatch):
-    prepare = module(ROOT / "cannbench/prepare_harness.py", "prepare_harness_test")
+    prepare = module(CANNBENCH / "prepare_harness.py", "prepare_harness_test")
     checkout = tmp_path / "checkout"
     checkout.mkdir()
     for relative in [
@@ -249,7 +253,7 @@ def test_upstream_archive_uses_pinned_git_bytes_not_dirty_worktree(tmp_path, mon
 
 
 def test_harness_pip_installs_only_into_private_python(tmp_path):
-    harness = module(ROOT / "cannbench/harness.py", "harness_private_python")
+    harness = module(CANNBENCH / "harness.py", "harness_private_python")
     python = harness.private_python(tmp_path / "python-env")
     wheel = tmp_path / "cannbench_method_fixture-1.0-py3-none-any.whl"
     with zipfile.ZipFile(wheel, "w") as archive:

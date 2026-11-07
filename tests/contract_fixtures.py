@@ -7,10 +7,9 @@ import math
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 
+from ascend_op_eval.api import contract as m
+from ascend_op_eval.serialization import canonical_json_bytes, sha256_hex
 from pydantic.json_schema import models_json_schema
-
-from triton_evaluation.api import contract as m
-from triton_evaluation.serialization import canonical_json_bytes, sha256_hex
 
 CONTRACT_ROOT = Path(__file__).parent / "fixtures/evaluation_api/2.1"
 SCHEMA_ID = "urn:triton-evaluation:evaluation-api:2.1:schema"

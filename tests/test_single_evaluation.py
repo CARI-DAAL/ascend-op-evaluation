@@ -4,6 +4,10 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from ascend_op_eval.api.contract import CheckTimedOut, ErrorInfo
+from ascend_op_eval.control.terminal_results import complete_evaluation
+from ascend_op_eval.evaluators.base import EngineCheckResult, LeaseLostError, materialize
+from ascend_op_eval.operator_input import OperatorRequest, to_evaluation_request
 from test_api import build_app, seed_worker, trial_headers
 from test_compile_check import app_with_precheck, cpu_worker
 from test_evaluation_evaluator import (
@@ -15,11 +19,6 @@ from test_evaluation_evaluator import (
     trial_pinned,
 )
 from test_worker import build_worker
-
-from triton_evaluation.api.contract import CheckTimedOut, ErrorInfo
-from triton_evaluation.evaluators.base import EngineCheckResult, LeaseLostError, materialize
-from triton_evaluation.operator_input import OperatorRequest, to_evaluation_request
-from triton_evaluation.service.terminal_results import complete_evaluation
 
 
 def payload(implementation, **options):

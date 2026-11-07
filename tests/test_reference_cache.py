@@ -7,11 +7,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from pydantic import ValidationError
-
-from triton_evaluation.config import Settings
-from triton_evaluation.engine import benchmark, verify
-from triton_evaluation.runtime.reference_cache import (
+from ascend_op_eval.config import Settings
+from ascend_op_eval.engine import benchmark, verify
+from ascend_op_eval.execution.reference_cache import (
     BINDING_ENV,
     CACHE_ENV,
     DIGEST_ENV,
@@ -23,6 +21,7 @@ from triton_evaluation.runtime.reference_cache import (
     ReferenceCacheMiss,
     sha256,
 )
+from pydantic import ValidationError
 
 torch = pytest.importorskip("torch")
 
@@ -306,7 +305,7 @@ def test_config_cache_index_attestation_preserves_existing_anchors(tmp_path):
 
 
 def test_retained_private_cache_trace_has_no_tensor_values(tmp_path):
-    from triton_evaluation.runtime.reference_diagnostics import _read_trace
+    from ascend_op_eval.execution.reference_diagnostics import _read_trace
 
     trace = {
         "reference_device_policy": "npu-strict",

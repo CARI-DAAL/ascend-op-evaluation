@@ -8,14 +8,13 @@ import time
 from pathlib import Path
 
 import pytest
-
-from triton_evaluation.evaluators.base import run_script
-from triton_evaluation.runtime.sandbox import EngineSandbox
+from ascend_op_eval.evaluators.base import run_script
+from ascend_op_eval.runtimes.sandbox import EngineSandbox
 
 
 def test_runtime_manifest_cannot_overlay_attempt_state(tmp_path):
     work = tmp_path / "attempt"
-    runtime = tmp_path / "runtime"
+    runtime = tmp_path / "execution"
     work.mkdir()
     runtime.mkdir()
     with pytest.raises(ValueError, match="parent traversal"):

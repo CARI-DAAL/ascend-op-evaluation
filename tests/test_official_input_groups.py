@@ -17,9 +17,8 @@ import sys
 from types import ModuleType, SimpleNamespace
 
 import pytest
-
-from triton_evaluation.engine import verify
-from triton_evaluation.engine._common_utils import (
+from ascend_op_eval.engine import verify
+from ascend_op_eval.engine._common_utils import (
     _OfficialInputGroups,
     build_input_groups,
 )

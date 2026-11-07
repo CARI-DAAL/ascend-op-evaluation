@@ -5,8 +5,7 @@ import subprocess
 import sys
 
 import pytest
-
-from triton_evaluation.runtime import sandbox
+from ascend_op_eval.runtimes import sandbox
 
 
 @pytest.fixture

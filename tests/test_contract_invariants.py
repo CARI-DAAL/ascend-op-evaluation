@@ -9,9 +9,7 @@ import math
 from datetime import datetime, timezone
 
 import pytest
-from pydantic import ValidationError
-
-from triton_evaluation.api.contract import (
+from ascend_op_eval.api.contract import (
     CaseFailure,
     CaseMetrics,
     CorrectnessResult,
@@ -32,6 +30,7 @@ from triton_evaluation.api.contract import (
     SkipInfo,
     UnmeasuredPerformanceCase,
 )
+from pydantic import ValidationError
 
 T0 = datetime(2026, 8, 15, 0, 0, 0, tzinfo=timezone.utc)
 T1 = datetime(2026, 8, 15, 0, 0, 1, tzinfo=timezone.utc)

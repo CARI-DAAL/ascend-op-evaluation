@@ -2,8 +2,7 @@
 
 import pytest
 import torch
-
-from triton_evaluation.engine import native_support
+from ascend_op_eval.engine import native_support
 
 
 def test_native_outputs_reject_scalar_instead_of_tensor():
@@ -110,7 +109,7 @@ def test_native_profile_rejects_ambiguous_exports(tmp_path):
 
 
 def test_native_verify_route_cannot_accept_mutated_nested_reference_inputs():
-    from triton_evaluation.engine import verify
+    from ascend_op_eval.engine import verify
 
     class Reference(torch.nn.Module):
         def forward(self, values):
@@ -135,7 +134,7 @@ def test_native_verify_route_cannot_accept_mutated_nested_reference_inputs():
 
 
 def test_native_verify_route_rejects_non_tensor_output():
-    from triton_evaluation.engine import verify
+    from ascend_op_eval.engine import verify
 
     class Reference(torch.nn.Module):
         def forward(self, x):
@@ -193,7 +192,7 @@ def test_native_measurement_is_mean_of_full_invocations(tmp_path, monkeypatch):
 def test_native_profile_uses_explicit_kernel_names_without_triton(tmp_path):
     import sys
 
-    from triton_evaluation.engine import profile_runner
+    from ascend_op_eval.engine import profile_runner
 
     config = profile_runner.ProfileConfig(
         op_name="native",
@@ -240,8 +239,8 @@ def test_native_profile_uses_explicit_kernel_names_without_triton(tmp_path):
 def test_native_mismatch_is_published_as_wrong_not_infrastructure_failure(monkeypatch):
     from types import SimpleNamespace
 
-    from triton_evaluation.engine import verify
-    from triton_evaluation.evaluators.shaping import shape_correctness
+    from ascend_op_eval.engine import verify
+    from ascend_op_eval.evaluators.shaping import shape_correctness
 
     monkeypatch.setattr(
         torch, "npu", SimpleNamespace(manual_seed=lambda seed: None), raising=False
@@ -294,7 +293,7 @@ def test_native_contract_checks_remain_enabled_under_python_optimization():
             "-O",
             "-c",
             "import torch; "
-            "from triton_evaluation.engine.native_support import compare_outputs; "
+            "from ascend_op_eval.engine.native_support import compare_outputs; "
             "compare_outputs(torch.ones(1), 1)",
         ],
         capture_output=True,
@@ -309,7 +308,7 @@ def test_native_contract_checks_remain_enabled_under_python_optimization():
 def test_native_measurement_first_device_transfer_preserves_alias(mode, monkeypatch, tmp_path):
     from types import SimpleNamespace
 
-    from triton_evaluation.engine import benchmark, joint_measurement, single_benchmark
+    from ascend_op_eval.engine import benchmark, joint_measurement, single_benchmark
 
     class Model(torch.nn.Module):
         _native_candidate = True

@@ -3,11 +3,10 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import fakeredis
+from ascend_op_eval.config import Settings
+from ascend_op_eval.control.broker import EvaluationStore, _digest_text
+from ascend_op_eval.serialization import sha256_hex
 from conftest import make_caller, make_grade_caller, make_grade_request, make_request
-
-from triton_evaluation.config import Settings
-from triton_evaluation.serialization import sha256_hex
-from triton_evaluation.service.broker import EvaluationStore, _digest_text
 
 
 def _key(settings, suffix):

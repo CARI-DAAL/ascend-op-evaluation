@@ -4,8 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-
-from triton_evaluation.evaluators.shaping import (
+from ascend_op_eval.evaluators.shaping import (
     ShapingError,
     shape_correctness,
     shape_performance,
@@ -84,6 +83,8 @@ def test_native_trace_rejects_a_different_measurement_protocol(tmp_path, method,
     import sys
     from datetime import datetime, timedelta, timezone
 
+    from ascend_op_eval.evaluators.base import EngineCheckResult
+    from ascend_op_eval.operator_input import OperatorRequest, to_evaluation_request
     from test_evaluation_evaluator import (
         ENVIRONMENT,
         Harness,
@@ -91,9 +92,6 @@ def test_native_trace_rejects_a_different_measurement_protocol(tmp_path, method,
         StubCheck,
         trial_pinned,
     )
-
-    from triton_evaluation.evaluators.base import EngineCheckResult
-    from triton_evaluation.operator_input import OperatorRequest, to_evaluation_request
 
     request = to_evaluation_request(OperatorRequest.model_validate({
         "definition": {"inputs": {}, "reference": "def run(): return 1"},

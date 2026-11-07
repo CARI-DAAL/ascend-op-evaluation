@@ -6,12 +6,11 @@ from pathlib import Path
 
 import fakeredis
 import pytest
-
-from triton_evaluation.api.contract import EvaluationRequest
-from triton_evaluation.evaluators import benchmark as evaluator_module
-from triton_evaluation.evaluators.base import LeaseLostError, ScriptOutcome
-from triton_evaluation.evaluators.benchmark import BenchmarkEvaluator
-from triton_evaluation.runtime.baseline_cache import BaselineCache
+from ascend_op_eval.api.contract import EvaluationRequest
+from ascend_op_eval.evaluators import benchmark as evaluator_module
+from ascend_op_eval.evaluators.base import LeaseLostError, ScriptOutcome
+from ascend_op_eval.evaluators.benchmark import BenchmarkEvaluator
+from ascend_op_eval.execution.baseline_cache import BaselineCache
 
 
 def request(implementation="comparison", **kwargs):
@@ -332,7 +331,7 @@ def test_explicit_correctness_handoff_only_reaches_candidate_command(tmp_path, j
 
 
 def test_real_process_publishes_checkpoint_while_trace_is_still_running(tmp_path, monkeypatch):
-    from triton_evaluation.evaluators import base
+    from ascend_op_eval.evaluators import base
 
     # Exercise the actual subprocess poller without requiring an NPU or an
     # installed deployment sandbox. The child cannot finish until its timing
@@ -397,15 +396,14 @@ def test_reused_correctness_materializes_sources_for_the_real_engine_gate(
 ):
     from types import SimpleNamespace
 
-    from conftest import make_correctness_success, make_provenance
-    from test_evaluation_evaluator import ENVIRONMENT
-
-    from triton_evaluation.engine.benchmark import check_correctness_gate
-    from triton_evaluation.runtime.correctness_evidence import (
+    from ascend_op_eval.engine.benchmark import check_correctness_gate
+    from ascend_op_eval.execution.correctness_evidence import (
         CorrectnessEvidence,
         CorrectnessSubject,
         write_handoff,
     )
+    from conftest import make_correctness_success, make_provenance
+    from test_evaluation_evaluator import ENVIRONMENT
 
     evidence_id = "ev_" + "a" * 32
     requested = request().model_copy(update={

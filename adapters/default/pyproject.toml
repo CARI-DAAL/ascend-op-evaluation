@@ -1,0 +1,12 @@
+[project]
+name = "ascend-op-eval-adapter-default"
+version = "0.4.0"
+requires-python = ">=3.10"
+dependencies = ["ascend-op-eval-client>=0.4,<0.5"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

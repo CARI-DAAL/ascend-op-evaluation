@@ -16,7 +16,7 @@ import sys
 import textwrap
 from pathlib import Path
 
-from triton_evaluation.evaluators.verify import _COUNT_RESULT_PREFIX, _COUNT_SNIPPET
+from ascend_op_eval.evaluators.verify import _COUNT_RESULT_PREFIX, _COUNT_SNIPPET
 
 _HAS_TORCH_NPU = importlib.util.find_spec("torch_npu") is not None
 

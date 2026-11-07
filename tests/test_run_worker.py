@@ -3,8 +3,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import pytest
-
-from scripts import run_worker
+from ascend_op_eval.entrypoints import run_worker
 
 
 def test_cpu_cli_never_holds_an_npu(monkeypatch):
@@ -30,8 +29,7 @@ def test_worker_cli_requires_exactly_one_valid_execution_resource(monkeypatch, o
 
 def test_worker_assembles_independent_dependencies_and_shared_runner(monkeypatch, tmp_path):
     import fakeredis
-
-    from triton_evaluation.config import Settings
+    from ascend_op_eval.config import Settings
 
     settings = Settings(
         redis_url="redis://localhost:6380/2", redis_prefix="test-owner",
@@ -75,13 +73,13 @@ def test_worker_assembles_independent_dependencies_and_shared_runner(monkeypatch
 
 
 def test_baseline_cache_namespace_can_be_set_from_environment(monkeypatch):
-    from triton_evaluation.config import Settings
+    from ascend_op_eval.config import Settings
 
     monkeypatch.setenv("TRITON_EVAL_BASELINE_CACHE_NAMESPACE", "runtime-2026")
     assert Settings().baseline_cache_namespace == "runtime-2026"
 
 
 def test_scalar_baseline_reuse_has_explicit_algorithm_identity():
-    from triton_evaluation.config import Settings
+    from ascend_op_eval.config import Settings
 
     assert Settings().benchmark_algorithm_version == "geometric-mean-baseline-v2"

@@ -11,6 +11,8 @@ import json
 import re
 from datetime import datetime, timezone
 
+from ascend_op_eval.control.broker import MAX_ATTEMPTS
+from ascend_op_eval.serialization import sha256_hex
 from conftest import (
     make_caller,
     make_completed_result,
@@ -19,9 +21,6 @@ from conftest import (
     make_grade_request,
     make_request,
 )
-
-from triton_evaluation.serialization import sha256_hex
-from triton_evaluation.service.broker import MAX_ATTEMPTS
 
 
 def _key(settings, suffix):

@@ -28,7 +28,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from triton_evaluation.runtime.profiler_runtime import (  # noqa: E402
+from ascend_op_eval.runtimes.profiler_runtime import (  # noqa: E402
     inspect_sqlite_binding,
     probe_alias_binding,
 )
@@ -171,8 +171,8 @@ def replay(
             name: sha(ROOT / name)
             for name in (
                 "scripts/replay_profiler_export.py",
-                "triton_evaluation/engine/benchmark.py",
-                "triton_evaluation/runtime/profiler_runtime.py",
+                "packages/ascend-op-eval/src/ascend_op_eval/engine/benchmark.py",
+                "packages/ascend-op-eval/src/ascend_op_eval/runtimes/profiler_runtime.py",
             )
         },
         "msprof_path": str(executable),
@@ -246,7 +246,7 @@ def replay(
             )
         evidence["cann_csv_observations"] = csv_observations
         evidence["cann_text_data_present"] = any(row["data_rows"] for row in csv_observations)
-        from triton_evaluation.engine.benchmark import parse_operator_latency
+        from ascend_op_eval.engine.benchmark import parse_operator_latency
 
         operators, latency = parse_operator_latency(str(copy_root), 5, 20, keep_res=True)
         evidence["raw_latency"] = repr(latency)

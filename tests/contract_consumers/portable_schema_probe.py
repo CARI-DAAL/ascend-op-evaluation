@@ -3,7 +3,7 @@
 
 Stdlib only plus the sole narrow direct dependency ``jsonschema`` (whose
 resolver runtime dependency ``referencing`` is also permitted). It never
-imports Eval Hub, FastAPI, Pydantic, Redis, or ``triton_evaluation``, and it
+imports Eval Hub, FastAPI, Pydantic, Redis, or ``ascend_op_eval``, and it
 contains no handwritten Evaluation field/type validator: every wire decision
 comes from the three frozen ``$defs`` entrypoints of the published schema.
 """
@@ -20,7 +20,7 @@ import jsonschema
 from referencing import Registry, Resource
 
 _FORBIDDEN_MODULES = (
-    "fastapi", "pydantic", "redis", "triton_evaluation", "uvicorn", "httpx",
+    "fastapi", "pydantic", "redis", "ascend_op_eval", "uvicorn", "httpx",
     "starlette", "anyio",
 )
 

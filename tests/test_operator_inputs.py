@@ -6,20 +6,21 @@ import sys
 from pathlib import Path
 
 import pytest
+from ascend_op_eval.api.contract import MAX_SOURCE_BYTES
+from ascend_op_eval.operator_input import OperatorRequest, to_evaluation_request
+from ascend_op_eval.serialization import canonical_json_bytes, sha256_hex
 from pydantic import ValidationError
-
-from triton_evaluation.api.contract import MAX_SOURCE_BYTES
-from triton_evaluation.operator_input import OperatorRequest, to_evaluation_request
-from triton_evaluation.serialization import canonical_json_bytes, sha256_hex
 
 
 def request(*, reference="def run(x): return x + 1", **overrides):
-    return OperatorRequest.model_validate({
-        "definition": {"inputs": {"x": {}}, "reference": reference},
-        "triton_code": "def run(x): return x + 1",
-        "workloads": [{"inputs": {"x": {"type": "random", "shape": [4], "dtype": "float32"}}}],
-        **overrides,
-    })
+    return OperatorRequest.model_validate(
+        {
+            "definition": {"inputs": {"x": {}}, "reference": reference},
+            "triton_code": "def run(x): return x + 1",
+            "workloads": [{"inputs": {"x": {"type": "random", "shape": [4], "dtype": "float32"}}}],
+            **overrides,
+        }
+    )
 
 
 def test_minimal_request_and_durable_defaults():
@@ -31,7 +32,7 @@ def test_minimal_request_and_durable_defaults():
     assert durable.purpose == "trial"
     assert durable.performance is not None
     assert durable.grade_context is None
-    assert "triton_evaluation" not in durable.reference_code
+    assert "ascend_op_eval" not in durable.reference_code
 
 
 def test_check_coupling_uses_final_endpoint_checks():
@@ -65,8 +66,10 @@ def test_generated_source_limit_is_an_explicit_input_error():
 
 def test_workload_order_values_and_seed_are_part_of_durable_identity():
     cases = [{"inputs": {"x": {"type": "scalar", "value": n}}} for n in (1, 2)]
+
     def identity(body):
         return sha256_hex(canonical_json_bytes(to_evaluation_request(body).model_dump(mode="json")))
+
     body = request(workloads=cases)
     assert identity(body) == identity(OperatorRequest.model_validate_json(body.model_dump_json()))
     assert identity(body) != identity(request(workloads=list(reversed(cases))))
@@ -76,7 +79,7 @@ def test_workload_order_values_and_seed_are_part_of_durable_identity():
 
 
 def test_candidate_wrapper_remains_visible_to_engine_decoy_check(tmp_path):
-    source = '''import torch
+    source = """import torch
 import triton
 import triton.language as tl
 
@@ -89,24 +92,27 @@ def run(x):
     result = torch.empty_like(x)
     add[(1,)](x, result, x.numel())
     return result
-'''
+"""
     generated = to_evaluation_request(request(triton_code=source))
     candidate = tmp_path / "candidate.py"
     candidate.write_text(generated.kernel_code)
     validator = (
-        Path(__file__).resolve().parents[1] / "triton_evaluation/engine/validate_triton_impl.py"
+        Path(__file__).resolve().parents[1]
+        / "packages/ascend-op-eval/src/ascend_op_eval/engine/validate_triton_impl.py"
     )
     result = subprocess.run(
         [sys.executable, str(validator), str(candidate), "--json"],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    report = json.loads(result.stdout[result.stdout.index("{"):])
+    report = json.loads(result.stdout[result.stdout.index("{") :])
     assert report["valid"] is True
 
 
 def test_baseline_cache_defaults_preserve_durable_request_bytes():
-    from triton_evaluation.api.contract import EvaluationRequest, dump_contract
+    from ascend_op_eval.api.contract import EvaluationRequest, dump_contract
 
     legacy = to_evaluation_request(request())
     original = dump_contract(legacy)
@@ -129,11 +135,14 @@ def test_baseline_cache_requires_boolean(value):
 
 
 def test_baseline_cache_evidence_preserves_legacy_result_bytes():
-    from triton_evaluation.api.contract import PerformanceCase, dump_contract
+    from ascend_op_eval.api.contract import PerformanceCase, dump_contract
 
     case = PerformanceCase(
-        case_idx=0, input_shapes=[], implementation_latency_ms=1.0,
-        reference_latency_ms=2.0, speedup_vs_reference=2.0,
+        case_idx=0,
+        input_shapes=[],
+        implementation_latency_ms=1.0,
+        reference_latency_ms=2.0,
+        speedup_vs_reference=2.0,
     )
     original = dump_contract(case)
     assert b"baseline_cache_hit" not in original

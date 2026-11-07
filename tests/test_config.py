@@ -1,6 +1,6 @@
 import os
 
-from triton_evaluation.config import Settings
+from ascend_op_eval.config import Settings
 
 
 def test_defaults():
@@ -8,7 +8,7 @@ def test_defaults():
     assert s.redis_prefix == "triton-eval:v2.1"
     assert s.api_poll_interval_seconds == 0.25
     # engine is vendored inside the package; default points at the bundled dir
-    assert s.engine_dir.endswith(os.path.join("triton_evaluation", "engine"))
+    assert s.engine_dir.endswith(os.path.join("ascend_op_eval", "engine"))
     assert s.capability_secret_path is None
 
 
@@ -50,7 +50,7 @@ def test_plan_c_health_env_override(monkeypatch):
 
 
 def test_command_environment_uses_settings_and_preserves_toolchain(monkeypatch):
-    from triton_evaluation.config import command_environment
+    from ascend_op_eval.config import command_environment
 
     settings = Settings(
         engine_dir="/validated/engine", reference_device_policy="npu-strict",
@@ -79,9 +79,8 @@ def test_command_environment_uses_settings_and_preserves_toolchain(monkeypatch):
 
 def test_sandbox_settings_are_loaded_and_validated(monkeypatch):
     import pytest
+    from ascend_op_eval.config import command_environment
     from pydantic import ValidationError
-
-    from triton_evaluation.config import command_environment
 
     monkeypatch.setenv("TRITON_EVAL_ENGINE_SANDBOX_CONFIG", "/runtime/sandbox.json")
     monkeypatch.setenv("TRITON_EVAL_ENGINE_SANDBOX_SHA256", "a" * 64)

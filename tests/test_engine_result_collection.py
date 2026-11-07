@@ -10,15 +10,13 @@ import sys
 from pathlib import Path
 
 import pytest
-
-from triton_evaluation.evaluators.base import read_json, run_script
+from ascend_op_eval.evaluators.base import read_json, run_script
 
 
 @pytest.mark.parametrize("entry_kind", ["symbolic", "hard"])
 def test_restaging_replaces_entries_without_mutating_previous_targets(tmp_path, entry_kind):
+    from ascend_op_eval.evaluators.base import materialize, safe_module_stem
     from conftest import make_request
-
-    from triton_evaluation.evaluators.base import materialize, safe_module_stem
 
     work = tmp_path / "attempt"
     work.mkdir()

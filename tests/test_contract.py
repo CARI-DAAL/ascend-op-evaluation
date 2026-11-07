@@ -7,13 +7,12 @@ and rejection of nonstandard JSON constants.
 import json
 
 import pytest
-from pydantic import ValidationError
-
-from triton_evaluation.api.contract import (
+from ascend_op_eval.api.contract import (
     ErrorEnvelope,
     ErrorInfo,
     EvaluationRequest,
 )
+from pydantic import ValidationError
 
 GRADE_CONTEXT = {
     "manifest_id": "release-1",

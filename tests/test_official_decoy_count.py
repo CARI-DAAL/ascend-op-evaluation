@@ -4,8 +4,7 @@ import subprocess
 import sys
 
 import pytest
-
-from triton_evaluation.evaluators.verify import _COUNT_SNIPPET
+from ascend_op_eval.evaluators.verify import _COUNT_SNIPPET
 
 
 @pytest.mark.parametrize("count", [1, 79, 1046])

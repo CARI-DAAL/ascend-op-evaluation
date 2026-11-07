@@ -8,28 +8,27 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from ascend_op_eval.api.contract import (
+    CorrectnessCoverage,
+    CorrectnessResult,
+    EvaluationRequest,
+)
+from ascend_op_eval.control.instance import EvaluationInstance
+from ascend_op_eval.control.models import PinnedProvenance, WorkerIdentity, new_worker_id
+from ascend_op_eval.evaluators.base import EngineCheckResult, LeaseLostError
+from ascend_op_eval.evaluators.evaluation import EvaluationEvaluator
+from ascend_op_eval.execution.correctness_evidence import (
+    CorrectnessEvidenceError,
+    validate_handoff,
+    write_handoff,
+)
+from ascend_op_eval.execution.worker import Worker
+from ascend_op_eval.operator_input import to_evaluation_request
 from conftest import make_caller, make_completed_result, make_provenance
 from pydantic import ValidationError
 from test_api import algorithms, build_app, post, request_payload, seed_worker, trial_headers
 from test_evaluation_evaluator import ENVIRONMENT, StubCheck, load
 from test_operator_inputs import request as operator_request
-
-from triton_evaluation.api.contract import (
-    CorrectnessCoverage,
-    CorrectnessResult,
-    EvaluationRequest,
-)
-from triton_evaluation.evaluators.base import EngineCheckResult, LeaseLostError
-from triton_evaluation.evaluators.evaluation import EvaluationEvaluator
-from triton_evaluation.operator_input import to_evaluation_request
-from triton_evaluation.runtime.correctness_evidence import (
-    CorrectnessEvidenceError,
-    validate_handoff,
-    write_handoff,
-)
-from triton_evaluation.runtime.worker import Worker
-from triton_evaluation.service.instance import EvaluationInstance
-from triton_evaluation.service.models import PinnedProvenance, WorkerIdentity, new_worker_id
 
 
 @pytest.fixture
@@ -431,7 +430,7 @@ def test_worker_reuses_zero_verify_and_publishes_typed_outcome(
     environment = ENVIRONMENT if environment_valid else ENVIRONMENT.model_copy(update={
         "runtime_version": "changed",
     })
-    monkeypatch.setattr("triton_evaluation.runtime.worker.build_execution_environment",
+    monkeypatch.setattr("ascend_op_eval.execution.worker.build_execution_environment",
                         lambda settings: environment)
     worker = Worker(
         store, EvaluationEvaluator(verify=verify, benchmark=benchmark, profile=None),
@@ -480,7 +479,7 @@ def test_expiry_while_queued_fails_without_verification(
         target_request(source), make_caller(), session_id="reuse", idempotency_key="expiry",
     )
     clock.advance_ms(11_000)
-    monkeypatch.setattr("triton_evaluation.runtime.worker.build_execution_environment",
+    monkeypatch.setattr("ascend_op_eval.execution.worker.build_execution_environment",
                         lambda settings: ENVIRONMENT)
     verify = StubCheck(None)
     benchmark = EvidenceBenchmark()

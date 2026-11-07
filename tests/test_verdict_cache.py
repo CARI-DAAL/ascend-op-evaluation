@@ -6,8 +6,7 @@ from unittest import mock
 
 import pytest
 import redis
-
-from triton_evaluation.runtime import verdict_cache
+from ascend_op_eval.execution import verdict_cache
 
 
 @pytest.fixture

@@ -1,3 +1,10 @@
+---
+status: current
+applies_to: legacy-evaluation-and-custom-method-v1
+verified_revision: e1dbe98977ebf1634c233fb1bfc127c8d62287f9
+owner: maintainers
+---
+
 # Deploy the pinned profiler SQLite alias
 
 Use this compatibility artifact when the deployed CANN profiler consumer requires
@@ -63,8 +70,8 @@ and SHA. Artifact files have mode `0444`, and their directories have mode `0555`
 Add both non-anchor variables to the API and worker runtime configuration:
 
 ```text
-TRITON_EVAL_PROFILER_RUNTIME_MANIFEST=/absolute/new-service-owned-runtime/manifest.json
-TRITON_EVAL_PROFILER_RUNTIME_SHA256=<actual CLI output SHA>
+ASCEND_OP_EVAL_PROFILER_RUNTIME_MANIFEST=/absolute/new-service-owned-runtime/manifest.json
+ASCEND_OP_EVAL_PROFILER_RUNTIME_SHA256=<actual CLI output SHA>
 ```
 
 Missing halves, changed files, writable artifacts or unexpected resolved
@@ -88,8 +95,8 @@ python scripts/prepare_engine_runtime_overlay.py \
 ```
 
 Deploy the printed file path and SHA as the non-anchor pair
-`TRITON_EVAL_ENGINE_RUNTIME_OVERLAY_CONFIG` and
-`TRITON_EVAL_ENGINE_RUNTIME_OVERLAY_SHA256`. The strict
+`ASCEND_OP_EVAL_ENGINE_RUNTIME_OVERLAY_CONFIG` and
+`ASCEND_OP_EVAL_ENGINE_RUNTIME_OVERLAY_SHA256`. The strict
 `engine-runtime-overlay-v1` file contains only `environment`. It accepts the
 complete profiler pair and/or all four reference-cache variables; arbitrary environment
 keys, mounts and source paths are rejected. For cache-on execution add the CLI
@@ -134,8 +141,8 @@ actual runtime manifest, alias, ELF observations, source SQLite ELF, consumer,
 resolved msprof and complete CANN/torch_npu parser/native dependency closure in
 `runtime_files`. Bind the changed benchmark and fixed service-owned helper in
 `algorithm_files`. The only permitted sibling key is
-`../runtime/profiler_runtime.py`, resolving to
-`triton_evaluation/runtime/profiler_runtime.py` within the validated service root;
+`../runtimes/profiler_runtime.py`, resolving to
+`ascend_op_eval/runtimes/profiler_runtime.py` within the validated service root;
 other traversal, absolute keys and symlink escape are refused. This is a fixed
 deployment dependency and does not expand candidate H/K materials. The three
 historically required engine files remain required and do not by themselves

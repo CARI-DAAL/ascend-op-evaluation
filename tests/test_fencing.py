@@ -9,9 +9,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import fakeredis
+from ascend_op_eval.control.broker import EvaluationStore
 from conftest import make_caller, make_completed_result, make_correctness_success
-
-from triton_evaluation.service.broker import EvaluationStore
 
 
 def _key(settings, suffix):

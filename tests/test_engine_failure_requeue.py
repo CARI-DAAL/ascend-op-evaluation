@@ -1,22 +1,21 @@
 """Opt-in retries of unknown engine failures preserve evidence and fencing."""
 import pytest
-from conftest import (
-    make_caller,
-    make_completed_result,
-    make_request,
-)
-from test_worker import StubEvaluator, _healthy_worker, _ScriptedCanary, build_worker
-
-from triton_evaluation.api.contract import (
+from ascend_op_eval.api.contract import (
     CheckFailed,
     CheckSkipped,
     ErrorInfo,
     EvaluationResult,
     SkipInfo,
 )
-from triton_evaluation.runtime.worker import _retryable_engine_failure
-from triton_evaluation.service.broker import MAX_ATTEMPTS
-from triton_evaluation.service.terminal_results import compile_outcome_from_precheck
+from ascend_op_eval.control.broker import MAX_ATTEMPTS
+from ascend_op_eval.control.terminal_results import compile_outcome_from_precheck
+from ascend_op_eval.execution.worker import _retryable_engine_failure
+from conftest import (
+    make_caller,
+    make_completed_result,
+    make_request,
+)
+from test_worker import StubEvaluator, _healthy_worker, _ScriptedCanary, build_worker
 
 
 def test_engine_failure_retry_requires_explicit_opt_in(settings):

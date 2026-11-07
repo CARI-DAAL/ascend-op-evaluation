@@ -4,8 +4,7 @@ import importlib.util
 import json
 
 import pytest
-
-from triton_evaluation.api.contract import CaseMetrics
+from ascend_op_eval.api.contract import CaseMetrics
 
 # CI installs only [test,dev]; the engine-comparison test needs real torch
 # tensors and runs wherever the NPU release gate or a torch-equipped host does.
@@ -29,8 +28,7 @@ def test_engine_reports_max_abs_diff_as_double():
     from unittest.mock import MagicMock
 
     import torch
-
-    from triton_evaluation.engine.verify import _compare_integer_compute
+    from ascend_op_eval.engine.verify import _compare_integer_compute
 
     garbage = torch.tensor([-4899916394579100000], dtype=torch.int64)
     reference = torch.tensor([1], dtype=torch.int64)
@@ -53,8 +51,7 @@ def test_engine_quant_path_reports_max_abs_diff_as_double():
     from unittest.mock import MagicMock
 
     import torch
-
-    from triton_evaluation.engine.verify import _compare_quant_fp_to_int
+    from ascend_op_eval.engine.verify import _compare_quant_fp_to_int
 
     garbage = torch.tensor([-4899916394579100000], dtype=torch.int64)
     reference = torch.tensor([1.25], dtype=torch.float32)

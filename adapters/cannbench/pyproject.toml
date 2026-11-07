@@ -1,0 +1,18 @@
+[project]
+name = "ascend-op-eval-adapter-cannbench"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["ascend-op-eval-client>=0.4,<0.5"]
+
+[project.scripts]
+ascend-op-eval-cannbench-prepare = "ascend_op_eval_adapter_cannbench.bundle.prepare_harness:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"ascend_op_eval_adapter_cannbench" = ["bundle/*.md", "bundle/*.json", "bundle/*.csv", "bundle/vendor/LICENSE", "bundle/vendor/provenance.json"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
