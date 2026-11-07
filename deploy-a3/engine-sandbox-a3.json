@@ -1,0 +1,24 @@
+{
+  "executable": "/usr/bin/bwrap-ascend",
+  "readonly_mounts": [
+    ["/usr", "/usr"],
+    ["/etc", "/etc"],
+    ["/opt/cann/cann-9.2.0", "/opt/cann/cann-9.2.0"]
+  ],
+  "shared_npu_devices": [
+    "/dev/davinci_manager",
+    "/dev/devmm_svm",
+    "/dev/hisi_hdc"
+  ],
+  "environment": {
+    "PATH": "/opt/cann/cann-9.2.0/bin:/opt/cann/cann-9.2.0/compiler/ccec_compiler/bin:/opt/cann/cann-9.2.0/tools/ccec_compiler/bin:/opt/cann/cann-9.2.0/tools/profiler/bin:/usr/local/python3.12.13/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "LD_LIBRARY_PATH": "/opt/cann/cann-9.2.0/aarch64-linux/lib64:/opt/cann/cann-9.2.0/lib64:/opt/cann/cann-9.2.0/lib64/plugin/opskernel:/opt/cann/cann-9.2.0/lib64/plugin/nnengine:/opt/cann/cann-9.2.0/opp/built-in/op_impl/ai_core/tbe/op_tiling:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/python3.12.13/lib",
+    "ASCEND_TOOLKIT_HOME": "/opt/cann/cann-9.2.0",
+    "ASCEND_HOME_PATH": "/opt/cann/cann-9.2.0",
+    "ASCEND_OPP_PATH": "/opt/cann/cann-9.2.0/opp",
+    "ASCEND_AICPU_PATH": "/opt/cann/cann-9.2.0",
+    "PYTHONPATH": "/opt/cann/cann-9.2.0/python/site-packages:/opt/cann/cann-9.2.0/opp/built-in/op_impl/ai_core/tbe",
+    "TORCH_DEVICE_BACKEND_AUTOLOAD": "0",
+    "LANG": "C.UTF-8"
+  }
+}
