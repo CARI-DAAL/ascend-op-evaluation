@@ -10,6 +10,7 @@ from fastapi.responses import Response
 from ..methods.contracts import (
     ArtifactUpload,
     MethodAlias,
+    MethodExecution,
     MethodPackage,
     MethodSubmission,
     Name,
@@ -244,3 +245,16 @@ def evaluation_artifact(evaluation_id: str, name: str, caller: ReadCaller, insta
     if artifact is None:
         raise errors.not_found()
     return artifact
+
+
+@router.get(
+    "/evaluations/{evaluation_id}/method-materials",
+    response_model=MethodExecution,
+    responses=errors.error_responses(401, 403, 404),
+)
+def method_materials(evaluation_id: str, caller: ReadCaller, instance: Instance):
+    """Recover admission-frozen bytes independently of registry object expiry."""
+    request = instance.store.request_visible(evaluation_id, caller)
+    if request is None or request.method_execution is None:
+        raise errors.not_found()
+    return request.method_execution

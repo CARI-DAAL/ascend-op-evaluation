@@ -37,6 +37,8 @@ class Settings(BaseSettings):
         default="worker-python-v1", pattern=r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$",
     )
     method_capabilities: list[str] = Field(default_factory=lambda: ["python"], max_length=64)
+    method_registry_max_bytes: int = Field(default=64 * 1024 * 1024, ge=1, le=1024 * 1024 * 1024)
+    method_registry_max_records: int = Field(default=256, ge=1, le=4096)
     reference_device_policy: Literal["cpu-first", "npu-strict"] = "cpu-first"
     reference_diagnostics_dir: Path | None = None
     # Optional reference-cache settings are pinned as one deployment group.
