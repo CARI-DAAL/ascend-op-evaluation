@@ -1,0 +1,159 @@
+{
+  "contract_version": "custom-method-v1",
+  "descriptor": {
+    "name": "cannbench-public-harness",
+    "version": "1.0.0+f0488d95",
+    "kind": "harness",
+    "entrypoint": "harness:run",
+    "parameters_schema": {
+      "type": "object",
+      "properties": {
+        "execution_mode": {
+          "type": "string",
+          "enum": [
+            "staged",
+            "single"
+          ],
+          "default": "staged"
+        },
+        "operator": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128,
+          "default": null
+        },
+        "case_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128,
+          "default": null
+        },
+        "warmup": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "default": 3
+        },
+        "repeat": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 5
+        },
+        "profiler_level": {
+          "type": "string",
+          "enum": [
+            "Level1",
+            "Level2"
+          ],
+          "default": "Level1"
+        },
+        "eval_seed": {
+          "type": "integer",
+          "minimum": -1,
+          "maximum": 2147483647,
+          "default": 0
+        },
+        "input_dist": {
+          "type": "string",
+          "enum": [
+            "uniform",
+            "normal"
+          ],
+          "default": "uniform"
+        },
+        "build_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600,
+          "default": 600
+        },
+        "operator_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600,
+          "default": 300
+        },
+        "perf_metric_strategy": {
+          "type": "string",
+          "enum": [
+            "kernel_details",
+            "msprof_summary",
+            "trace_view"
+          ],
+          "default": "kernel_details"
+        },
+        "batch_cases": {
+          "type": "boolean",
+          "default": true
+        },
+        "no_perf": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "inputs": {
+      "candidate": {
+        "required": true,
+        "media_type": "application/gzip"
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "required": [
+        "completed",
+        "exit_code",
+        "reports",
+        "upstream_revision"
+      ],
+      "properties": {
+        "completed": {
+          "type": "boolean"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "reports": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_artifacts": {
+      "harness.json": {
+        "required": true,
+        "media_type": "application/json"
+      }
+    },
+    "requirements": {
+      "runtime": "worker-python-v1",
+      "device": "npu",
+      "capabilities": [
+        "python",
+        "npu",
+        "process-isolation"
+      ],
+      "packages": {
+        "torch": "2.9.0",
+        "torch-npu": "2.9.0.post8"
+      },
+      "tools": [
+        "bash",
+        "cmake",
+        "bisheng"
+      ]
+    }
+  },
+  "files": [
+    "harness.py",
+    "upstream.json"
+  ]
+}

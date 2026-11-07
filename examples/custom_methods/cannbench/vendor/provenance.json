@@ -1,0 +1,37 @@
+{
+  "repository": "https://gitcode.com/cann/cann-bench",
+  "revision": "f0488d95b4d44a6a0da1b8cd99e91fbd06181962",
+  "files": [
+    {
+      "source_path": "src/kernel_eval/utils/compare.py",
+      "target_path": "pinned/utils/compare.py",
+      "sha256": "863f68629192ea4e2ee7a25b5705d3473f380a8ce2e12d4b5ea563ea8ed7101c"
+    },
+    {
+      "source_path": "src/kernel_eval/utils/thresholds.py",
+      "target_path": "pinned/utils/thresholds.py",
+      "sha256": "6a26f1709a4dbb72de21da19165bb1655797053939d34ab125f3fd7c935e92dd"
+    },
+    {
+      "source_path": "src/kernel_eval/utils/tensor_utils.py",
+      "target_path": "pinned/utils/tensor_utils.py",
+      "sha256": "bcc015891442d5e1770c0bca152abc47f317ad8aecfb1c25411d927eebe7623b"
+    },
+    {
+      "source_path": "src/kernel_eval/base/perf_strategy.py",
+      "target_path": "pinned/perf_strategy.py",
+      "sha256": "4cd5d7b41615e95725028c45d2a4795eb5834a632e95c5f789fb924598a97e70"
+    },
+    {
+      "source_path": "LICENSE",
+      "target_path": "LICENSE",
+      "sha256": "cb282ac2b66d7d6734c3fb354db792b28cf23ab29fbc16d5cfd8bd542bedeb1e"
+    },
+    {
+      "source_path": "src/kernel_eval/base/result.py",
+      "target_path": "pinned/result.py",
+      "sha256": "8e26a9731c64073df1318d9799da68b734a5a363c9fafccbd1c2f805c478b59b"
+    }
+  ],
+  "namespace_note": "Initializer files are local wrappers; upstream module bytes are unchanged."
+}

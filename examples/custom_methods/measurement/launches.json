@@ -1,0 +1,7 @@
+{
+  "invocations": [
+    {"launches": [{"name": "a", "duration_us": 0.5}, {"name": "a", "duration_us": 0.5}, {"name": "b", "duration_us": 100}]},
+    {"launches": [{"name": "a", "duration_us": 100}, {"name": "b", "duration_us": 1}]},
+    {"launches": [{"name": "a", "duration_us": 100}, {"name": "b", "duration_us": 100}]}
+  ]
+}

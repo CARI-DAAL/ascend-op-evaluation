@@ -1,0 +1,56 @@
+{
+  "contract_version": "custom-method-v1",
+  "descriptor": {
+    "name": "cannbench-kernel-details",
+    "version": "1.0.0+f0488d95",
+    "kind": "measurement",
+    "entrypoint": "cannbench_measurement:run",
+    "parameters_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "inputs": {
+      "kernel_details": {
+        "required": true,
+        "media_type": "text/csv"
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "required": [
+        "metric",
+        "unit",
+        "value",
+        "samples",
+        "aggregation"
+      ]
+    },
+    "requirements": {
+      "runtime": "worker-python-v1",
+      "device": "cpu",
+      "capabilities": [
+        "python"
+      ]
+    },
+    "output_artifacts": {
+      "measurement.json": {
+        "required": true,
+        "media_type": "application/json"
+      }
+    }
+  },
+  "files": [
+    "cannbench_checker.py",
+    "cannbench_measurement.py",
+    "vendor/LICENSE",
+    "vendor/pinned/__init__.py",
+    "vendor/pinned/perf_strategy.py",
+    "vendor/pinned/utils/__init__.py",
+    "vendor/pinned/utils/compare.py",
+    "vendor/pinned/utils/tensor_utils.py",
+    "vendor/pinned/utils/thresholds.py",
+    "vendor/provenance.json",
+    "vendor/pinned/result.py"
+  ]
+}

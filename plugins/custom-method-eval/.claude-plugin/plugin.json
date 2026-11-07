@@ -1,0 +1,7 @@
+{
+  "name": "custom-method-eval",
+  "version": "0.1.0",
+  "description": "Package, submit, recover and cancel versioned external evaluation methods.",
+  "repository": "https://github.com/CARI-DAAL/ascend-op-evaluation",
+  "skills": "./skills/"
+}
