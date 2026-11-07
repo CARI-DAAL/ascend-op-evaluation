@@ -32,3 +32,15 @@
 本机无 NPU、CANN、msprof。完成可执行开发和 CPU 差分，不以 mock、skip 或 exit=0 代替真实设备或线上兼容结论。报告分别回答自定义方法是否端到端可用、固定公开 CANNBench 哪些行为已验证、哪些仍需 server 验收或未支持。
 
 本轮不推送、发布、生产切流或删除历史数据。既有未提交设计材料保留。
+
+## 实施结果
+
+CM-01、CM-02、CM-03 已集成；CM-04 的 CPU 集成和独立复审完成。
+全量回归 2693 通过、20 项环境相关跳过、0 失败；新增自定义方法测试无跳过。
+审查发现的动态参数默认值、原子改名产物扫描、首次导入循环及 OpenAPI
+类型问题均已修复并经独立复查。临时实施工作树已清理，提交分支保留。
+
+接口与调用见 `docs/usage/custom-methods.md`，固定上游覆盖矩阵见
+`examples/custom_methods/cannbench/README.md`。准确的代码版本、命令、
+测试日志摘要及服务器验收计划记录在 `custom-methods-validation.json`。
+完整 NPU harness 尚未通过设备验收，不声称完整 CANNBench 快照覆盖。

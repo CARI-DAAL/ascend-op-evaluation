@@ -1,0 +1,148 @@
+{
+  "scope": "custom-method-v1 implementation and CPU verification; no NPU qualification",
+  "integration_branch": "feat/custom-methods",
+  "base_commit": "a34ed5923aa02ab82ac34480c0a4c4a25166163f",
+  "verified_code_commit": "07c9c6a5207d149d2272a63b15a55fd3e9fc24aa",
+  "environment": {
+    "python": "3.12.3",
+    "packages": {
+      "torch": "2.9.0+cpu",
+      "numpy": "2.2.6",
+      "pandas": "2.2.3",
+      "pydantic": "2.13.4",
+      "jsonschema": "4.26.0",
+      "pytest": "9.1.1"
+    },
+    "npu_available": false,
+    "cann_available": false,
+    "msprof_available": false
+  },
+  "full_regression": {
+    "command": "OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 /tmp/ascendc-test-venv/bin/python -m pytest -q",
+    "passed": 2693,
+    "skipped": 20,
+    "failed": 0,
+    "warnings": 1,
+    "seconds": 136.55,
+    "warning": "Pinned FastAPI/Starlette TestClient uses deprecated httpx integration.",
+    "log": ".scratch/ascend-op-eval/custom-methods-cpu-test.log",
+    "log_sha256": "968893fa6df99715a836ba3a3fcd65f5b9beba41b636dd13e92ef5a88543f712",
+    "skip_scope": [
+      "Real NPU/deployed-service gates (7 tests).",
+      "Existing external consumer checkout, sealed device/cache data and torchless-host-specific checks (13 tests)."
+    ],
+    "new_custom_method_tests_skipped": 0
+  },
+  "other_checks": [
+    {
+      "command": "python -m ruff check .",
+      "result": "passed"
+    },
+    {
+      "command": "python -m compileall -q triton_evaluation scripts plugins",
+      "result": "passed"
+    },
+    {
+      "command": "python -m scripts.release_manifest consistency",
+      "result": {
+        "consistent": true,
+        "mismatches": []
+      }
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    },
+    {
+      "scope": "Targeted public API, method regressions, OpenAPI and contract snapshots",
+      "passed": 44
+    },
+    {
+      "scope": "Independent final standards/fix recheck",
+      "passed": 19,
+      "blocking_findings": 0
+    },
+    {
+      "scope": "Independent final specification recheck",
+      "passed": 33,
+      "blocking_findings": 0
+    }
+  ],
+  "public_api_verified": [
+    "register immutable method without importing source",
+    "register named actual/reference/dependency artifacts",
+    "submit immutable ref or frozen alias with validated/defaulted parameters",
+    "execute checker and measurement in real CPU worker subprocess",
+    "recover result, raw output and frozen admitted materials",
+    "queued and running cancellation, cleanup acknowledgement",
+    "worker loss, attempt replacement and stale artifact publication rejection"
+  ],
+  "identity": {
+    "contract": "custom-method-v1",
+    "authority": "caller_method",
+    "recorded": [
+      "method ref and version",
+      "descriptor and implementation digest",
+      "dependency and input digests",
+      "requested and effective parameters",
+      "runtime fingerprint and observed packages/tools",
+      "attempt-bound raw artifact hashes, sizes and truncation/missing state"
+    ],
+    "legacy_cache_reuse": false
+  },
+  "cannbench": {
+    "upstream_revision": "f0488d95b4d44a6a0da1b8cd99e91fbd06181962",
+    "framework_version": "1.0.0",
+    "task_version": "2.0.0",
+    "implemented_and_cpu_verified": [
+      "Exact pinned compare_tensors with effective per-dtype thresholds, pass/fail and composite/integer outputs",
+      "Exact pinned KernelDetailsStrategy on original CSV: sum of per-kernel medians = 200 us for fixture",
+      "Public upload/submit/worker/recovery/artifact flow for both pinned components",
+      "Generic repeated/multi/conditional launch aggregation (not a live upstream profiler capture)",
+      "Archive path rejection, dependency packaging mechanics and private-install command construction"
+    ],
+    "implemented_device_unverified": [
+      "Task-scoped frozen source and candidate archive bridge",
+      "Private upstream and cann_bench_utils installation",
+      "Original upstream CLI with supported descriptor parameters",
+      "Actual fixed-checkout packaging, native compilation, NPU correctness and profiler capture",
+      "Upstream/direct versus service full task differential"
+    ],
+    "not_supported_or_not_claimed": [
+      "All Config/BenchConfig/environment parameters in the sample adapter",
+      "All proto contracts, hooks, guards and HAP through numeric-only component",
+      "Multi-NPU/multi-host tasks",
+      "Large PROF exports exceeding bounded storage",
+      "Website deployment or hidden-case equivalence"
+    ],
+    "complete_snapshot_coverage": false,
+    "coverage_matrix": "examples/custom_methods/cannbench/README.md"
+  },
+  "limits": {
+    "schema": "Bounded Draft 2020-12 vocabulary; unsupported features rejected.",
+    "runtime": "Deployment-declared runtime and permissions; exact package/tool checks, no shared environment installation.",
+    "trust": "Caller method report is not service-certified correctness. Host mode is not a judge isolation boundary.",
+    "storage": "1 MiB input/dependency artifact, 8 MiB frozen execution; bounded output/logs. See guide for detailed limits.",
+    "compatibility": "Existing operator endpoints/defaults and old results retained; added explicit method and cancelled states require matching client/API/worker builds."
+  },
+  "server_acceptance_plan": [
+    "Provision an isolated test worker with matching service build, qualified sandbox, exclusive NPU, CANN/msprof and exact pinned upstream-compatible dependencies.",
+    "Freeze upstream revision, task source, candidate, runtime versions, parameter defaults/overrides, and paired timing tolerances before measurement.",
+    "Run a multifile AscendC project through build, correctness and measurement; retain compiler/runtime/profiler evidence.",
+    "Run identical upstream task directly and via the full method harness, including correct/wrong/boundary/composite outputs, build/run failures and multiple kernels.",
+    "Compare case coverage, verdicts, scores and timing within the predeclared tolerance; retain both original reports and profiler captures.",
+    "Exercise NPU timeout, cancellation, worker loss and retry cleanup; verify no old attempt publishes evidence."
+  ],
+  "not_performed": [
+    "Remote push",
+    "Public release",
+    "Production deployment",
+    "Historical-data deletion",
+    "Real NPU or full CANNBench acceptance"
+  ],
+  "guides": {
+    "api_and_cli": "docs/usage/custom-methods.md",
+    "plugin": "plugins/custom-method-eval/README.md",
+    "test_instance_driver": "scripts/custom_methods_acceptance.py"
+  }
+}
