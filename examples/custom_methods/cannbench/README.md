@@ -99,7 +99,7 @@ online leaderboard equivalence.
 | Repeated/multiple kernel aggregation | CPU verified against actual pinned strategy; known fixture gives 200 us rather than 101 us |
 | Conditional launch example | CPU verified in the generic external method; full upstream capture topology remains device-unverified |
 | Hashes, archive path rejection, private pip installation | CPU verified |
-| Method upload/submit/report/artifact flow | Public integration gate supplied; records actual execution on the selected instance |
+| Method upload/submit/report/artifact flow | CPU verified through real HTTP handlers, durable queue, CPU subprocess worker and recovery for pinned checker false/pass and CSV aggregation; frozen materials and raw reports recovered |
 | Full source/task archive and upstream CLI bridge | Implemented; actual frozen checkout packaging/NPU execution still needs server validation |
 | CANN native compilation, stream synchronization and profiler capture | Not locally verified |
 | Full AccuracyEvaluator proto contracts, all generator/hooks, guards, HAP | Delegated unchanged to full harness; not covered by the numeric-only component |
