@@ -11,7 +11,6 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from ..evaluators.base import LeaseLostError, _directory_descriptor, remaining_seconds, run_script
 from ..methods.contracts import (
     MAX_BLOB_BYTES,
     MethodArtifact,
@@ -36,6 +35,8 @@ def _reject_nonfinite(value):
 
 
 def _write_file(root, relative, content):
+    from ..evaluators.base import _directory_descriptor
+
     path = root / relative
     with _directory_descriptor(path.parent, create=True) as parent:
         fd = os.open(
@@ -47,6 +48,8 @@ def _write_file(root, relative, content):
 
 
 def stage_execution(execution, root, deadline_at):
+    from ..evaluators.base import remaining_seconds
+
     package_dir, output_dir = root / "package", root / "outputs"
     scratch = root / "scratch"
     for directory in (package_dir, output_dir, scratch):
@@ -126,7 +129,13 @@ def _read_regular(parent_fd, name, maximum):
 
 
 def collect_outputs(directory, limits, *, read=True):
-    """Walk by descriptors; inspect limits before reading or sorting whole trees."""
+    """Walk bounded outputs; live probes tolerate vanished atomic-write entries.
+
+    Only ENOENT is transient while the method is running. Final collection is
+    strict, and links, special files, invalid sizes and other errors always fail.
+    """
+    from ..evaluators.base import _directory_descriptor
+
     output = {}
     count = nodes = total = 0
 
@@ -142,10 +151,20 @@ def collect_outputs(directory, limits, *, read=True):
                     raise OutputProtocolError("method output directory count exceeded")
                 names.append(entry.name)
         for name in sorted(names):
-            info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            try:
+                info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            except FileNotFoundError:
+                if read:
+                    raise
+                continue
             relative = prefix + name
             if stat.S_ISDIR(info.st_mode):
-                child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                try:
+                    child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                except FileNotFoundError:
+                    if read:
+                        raise
+                    continue
                 try:
                     visit(child, relative + "/", depth + 1)
                 finally:
@@ -173,12 +192,21 @@ def collect_outputs(directory, limits, *, read=True):
             else:
                 raise OutputProtocolError("method outputs must be regular files or directories")
 
-    with _directory_descriptor(directory) as fd:
-        visit(fd)
+    try:
+        with _directory_descriptor(directory) as fd:
+            visit(fd)
+    except FileNotFoundError:
+        if read:
+            raise
+        # A producer can atomically replace a whole output directory as well.
+        # Nothing is published from this live budget probe; final collection
+        # must still inspect every declared output after execution stops.
     return output
 
 
 def read_protocol(root):
+    from ..evaluators.base import _directory_descriptor
+
     try:
         with _directory_descriptor(root) as fd:
             payload = json.loads(_read_regular(fd, "result.json", MAX_PROTOCOL_BYTES))
@@ -250,6 +278,8 @@ def execute_method(
     isolation="host",
 ) -> MethodResult:
     """Execute a frozen method; returned reports remain caller-method claims."""
+    from ..evaluators.base import LeaseLostError, remaining_seconds, run_script
+
     execution = MethodExecution.model_validate(execution.model_dump(mode="json"))
     identity = {
         name: getattr(execution, name)

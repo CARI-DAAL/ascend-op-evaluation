@@ -10,8 +10,10 @@ from fastapi.responses import Response
 from ..methods.contracts import (
     ArtifactUpload,
     MethodAlias,
+    MethodAliasResponse,
     MethodExecution,
     MethodPackage,
+    MethodRuntimesResponse,
     MethodSubmission,
     Name,
     RegisteredMethod,
@@ -88,7 +90,11 @@ def get_method(method_ref: str, caller: ReadCaller, instance: Instance):
         raise _registry_error(error) from None
 
 
-@router.put("/method-aliases/{alias}", responses=errors.error_responses(401, 403, 404, 422))
+@router.put(
+    "/method-aliases/{alias}",
+    response_model=MethodAliasResponse,
+    responses=errors.error_responses(401, 403, 404, 422),
+)
 def put_alias(alias: Name, binding: MethodAlias, caller: WriteCaller, instance: Instance):
     try:
         return instance.methods.alias(caller, alias, binding.method_ref)
@@ -121,7 +127,11 @@ def get_artifact(artifact_ref: str, caller: ReadCaller, instance: Instance):
         raise _registry_error(error) from None
 
 
-@router.get("/method-runtimes", responses=errors.error_responses(401, 403))
+@router.get(
+    "/method-runtimes",
+    response_model=MethodRuntimesResponse,
+    responses=errors.error_responses(401, 403),
+)
 def method_runtimes(caller: ReadCaller, instance: Instance):
     return instance.methods.runtimes()
 

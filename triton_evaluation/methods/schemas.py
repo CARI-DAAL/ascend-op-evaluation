@@ -100,17 +100,40 @@ def validate_value(schema, value, *, label="parameters"):
 
 
 def effective_parameters(schema, requested):
+    # Bound before copying/expansion: an additionalProperties default can repeat
+    # across many dynamic members, even when the schema itself is small.
+    size = len(canonical_json_bytes(requested))
+    if size > 65536:
+        raise ValueError("method parameters exceed 64 KiB")
     result = deepcopy(requested)
 
     def defaults(node, value):
+        nonlocal size
         if isinstance(value, dict):
             for name, subschema in node.get("properties", {}).items():
                 if not isinstance(subschema, dict):
                     continue
                 if name not in value and "default" in subschema:
+                    size += (
+                        len(canonical_json_bytes(name))
+                        + 1
+                        + len(canonical_json_bytes(subschema["default"]))
+                        + int(bool(value))
+                    )
+                    if size > 65536:
+                        raise ValueError("effective method parameters exceed 64 KiB")
                     value[name] = deepcopy(subschema["default"])
                 if name in value:
                     defaults(subschema, value[name])
+            additional = node.get("additionalProperties")
+            if isinstance(additional, dict):
+                declared = node.get("properties", {})
+                # Recurse only through existing dynamic members. A default
+                # cannot invent an unnamed additional property, and declared
+                # properties retain their own schema even when it is boolean.
+                for name, member in value.items():
+                    if name not in declared:
+                        defaults(additional, member)
         elif isinstance(value, list) and isinstance(node.get("items"), dict):
             for item in value:
                 defaults(node["items"], item)

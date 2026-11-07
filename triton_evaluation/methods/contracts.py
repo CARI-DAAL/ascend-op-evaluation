@@ -7,7 +7,8 @@ import re
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from typing_extensions import TypeAliasType
 
 CONTRACT = "custom-method-v1"
 MAX_BLOB_BYTES = 1024 * 1024
@@ -17,6 +18,14 @@ Hash = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 Ref = Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
 Name = Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")]
 Kind = Literal["checker", "measurement", "harness"]
+
+# Pydantic's JsonValue produces an empty OpenAPI component on the supported
+# dependency version. A named recursive union exposes the actual JSON types;
+# strict/finite validation still comes from MethodModel's config.
+JsonValue = TypeAliasType(
+    "MethodJsonValue",
+    dict[str, "JsonValue"] | list["JsonValue"] | str | int | float | bool | None,
+)
 
 
 class MethodModel(BaseModel):
@@ -154,6 +163,28 @@ class StoredArtifact(ArtifactUpload):
 class MethodAlias(MethodModel):
     contract_version: Literal["custom-method-v1"] = CONTRACT
     method_ref: Ref
+
+
+class MethodAliasResponse(MethodAlias):
+    alias: Name
+
+
+class MethodRuntimeDescription(MethodModel):
+    runtime_id: Name
+    capabilities: list[str]
+    identity_source: str
+
+
+class MethodRegistryLimits(MethodModel):
+    max_records_per_caller: int = Field(ge=1)
+    max_payload_bytes_per_caller: int = Field(ge=1)
+    retention_seconds: int = Field(ge=1)
+
+
+class MethodRuntimesResponse(MethodModel):
+    contract_version: Literal["custom-method-v1"] = CONTRACT
+    registry_limits: MethodRegistryLimits
+    runtimes: list[MethodRuntimeDescription]
 
 
 class MethodLimits(MethodModel):
