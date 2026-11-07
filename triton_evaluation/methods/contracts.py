@@ -57,6 +57,7 @@ class MethodDescriptor(MethodModel):
     parameters_schema: dict[str, JsonValue]
     inputs: dict[Name, MethodInput] = Field(default_factory=dict, max_length=16)
     output_schema: dict[str, JsonValue] = Field(default_factory=lambda: {"type": "object"})
+    output_artifacts: dict[str, MethodInput] = Field(default_factory=dict, max_length=128)
     requirements: MethodRequirements = Field(default_factory=MethodRequirements)
     dependencies: dict[Name, Ref] = Field(default_factory=dict, max_length=8)
 
@@ -68,6 +69,8 @@ class MethodDescriptor(MethodModel):
             raise ValueError("method entrypoint must be module:function")
         validate_schema(self.parameters_schema, parameters=True)
         validate_schema(self.output_schema)
+        for name in self.output_artifacts:
+            safe_path(name)
         return self
 
 
@@ -159,6 +162,13 @@ class RegisteredMethod(MethodModel):
     dependency_digests: dict[str, Hash] = Field(default_factory=dict)
     package: MethodPackage
 
+    @model_validator(mode="after")
+    def valid_identity(self):
+        identity = package_identity(self.package)
+        if any(getattr(self, key) != value for key, value in identity.items()):
+            raise ValueError("method package digest mismatch")
+        return self
+
 
 class MethodExecution(RegisteredMethod):
     requested_parameters: dict[str, JsonValue]
@@ -174,6 +184,17 @@ class MethodExecution(RegisteredMethod):
     @property
     def device(self):
         return self.package.descriptor.requirements.device
+
+    @model_validator(mode="after")
+    def frozen_dependencies_match(self):
+        expected = self.package.descriptor.dependencies
+        if set(self.dependencies) != set(expected) or any(
+            self.dependencies[name].artifact_ref != ref for name, ref in expected.items()
+        ):
+            raise ValueError("frozen method dependency identity mismatch")
+        if self.runtime_id != self.package.descriptor.requirements.runtime:
+            raise ValueError("frozen runtime identity mismatch")
+        return self
 
 
 class MethodArtifact(MethodModel):
@@ -202,6 +223,8 @@ class MethodResult(MethodModel):
         "environment_unavailable", "timed_out",
     ]
     authority: Literal["caller_method"] = "caller_method"
+    isolation: Literal["host", "sandbox"] = "host"
+    runtime_observation: dict[str, JsonValue] = Field(default_factory=dict)
     requested_parameters: dict[str, JsonValue]
     effective_parameters: dict[str, JsonValue]
     report: dict[str, JsonValue] | None = None
@@ -211,3 +234,16 @@ class MethodResult(MethodModel):
     exit_code: int | None = None
     artifacts: list[MethodArtifact] = Field(default_factory=list, max_length=128)
     error: str | None = Field(default=None, max_length=4096)
+
+
+def package_identity(package: MethodPackage) -> dict:
+    """Canonical identity shared by registration and the frozen worker payload."""
+    from ..serialization import canonical_json_bytes, sha256_hex
+
+    descriptor = sha256_hex(canonical_json_bytes(package.descriptor.model_dump(mode="json")))
+    implementation = sha256_hex(canonical_json_bytes(package.files))
+    dependencies = {name: ref.removeprefix("sha256:")
+                    for name, ref in package.descriptor.dependencies.items()}
+    fields = {"descriptor_sha256": descriptor, "implementation_sha256": implementation,
+              "dependency_digests": dependencies}
+    return {"method_ref": "sha256:" + sha256_hex(canonical_json_bytes(fields)), **fields}
