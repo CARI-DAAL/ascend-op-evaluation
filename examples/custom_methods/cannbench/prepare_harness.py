@@ -14,6 +14,26 @@ from pathlib import Path, PurePosixPath
 
 REVISION = "f0488d95b4d44a6a0da1b8cd99e91fbd06181962"
 CHUNK_BYTES = 512 * 1024
+REQUIRED_RUNTIME_PACKAGES = {
+    "torch",
+    "torch-npu",
+    "numpy",
+    "PyYAML",
+    "scipy",
+    "pandas",
+    "decorator",
+    "attrs",
+    "cloudpickle",
+    "ml-dtypes",
+    "psutil",
+    "tornado",
+    "expecttest",
+    "protobuf",
+    "ruamel.yaml",
+    "build",
+    "setuptools",
+    "wheel",
+}
 
 
 def task_archive(upstream, task_path):
@@ -102,9 +122,24 @@ def main():
         help="JSON list of relative files to include; never executes build.sh",
     )
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--torch-version", required=True)
-    parser.add_argument("--torch-npu-version", required=True)
+    parser.add_argument(
+        "--runtime-packages",
+        type=Path,
+        required=True,
+        help="JSON map of exact distributions in the chosen worker runtime",
+    )
+    parser.add_argument(
+        "--npu-arch", choices=("ascend910b", "ascend910_93", "ascend950"), required=True
+    )
     args = parser.parse_args()
+    packages = json.loads(args.runtime_packages.read_text())
+    if (
+        not isinstance(packages, dict)
+        or not REQUIRED_RUNTIME_PACKAGES <= packages.keys()
+        or len(packages) > 32
+        or any(not isinstance(version, str) or not version for version in packages.values())
+    ):
+        raise ValueError("runtime package lock must name all upstream/build prerequisites exactly")
     archive = task_archive(args.upstream, args.task_path)
     candidate = candidate_archive(args.candidate, json.loads(args.candidate_files.read_text()))
     args.output.mkdir(parents=True, exist_ok=False)
@@ -117,6 +152,7 @@ def main():
     frozen = {
         "revision": REVISION,
         "task_path": args.task_path,
+        "npu_arch": args.npu_arch,
         "chunks": chunks,
         "archive_sha256": hashlib.sha256(archive).hexdigest(),
     }
@@ -125,10 +161,8 @@ def main():
     (args.output / "candidate.tar.gz").write_bytes(candidate)
     template = json.loads(Path(__file__).with_name("harness.method.json").read_text())
     template["descriptor"]["dependencies"] = {c["name"]: "sha256:" + c["sha256"] for c in chunks}
-    template["descriptor"]["requirements"]["packages"] = {
-        "torch": args.torch_version,
-        "torch-npu": args.torch_npu_version,
-    }
+    template["descriptor"]["requirements"]["packages"] = packages
+    template["descriptor"]["requirements"]["capabilities"].append("soc-" + args.npu_arch)
     (args.output / "method.json").write_text(json.dumps(template, indent=2) + "\n")
     print(
         json.dumps(

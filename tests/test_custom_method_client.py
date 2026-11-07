@@ -300,6 +300,14 @@ def test_materials_exports_frozen_inputs_privately(tmp_path):
     assert output.stat().st_mode & 0o777 == 0o600
 
 
+def test_runtime_discovery_is_a_read_only_operation(tmp_path):
+    value = {"contract_version": "custom-method-v1", "runtime_id": "worker-python-v1"}
+    with server(lambda _: (200, value, {})) as (url, calls):
+        result, output = invoke(tmp_path, url, "runtimes")
+    assert result.returncode == 0 and output == value
+    assert [(c[0], c[1]) for c in calls] == [("GET", "/method-runtimes")]
+
+
 def test_redirect_is_not_followed_and_error_body_does_not_leak_token(tmp_path):
     with server(lambda _: (302, TOKEN.encode(), {"Location": "https://untrusted.invalid"})) as (
         url,

@@ -293,6 +293,7 @@ def arguments(argv):
         "recover",
         "output",
         "materials",
+        "runtimes",
     ]:
         sub = commands.add_parser(name)
         sub.add_argument("--url", default=os.environ.get("EVALUATION_URL"))
@@ -329,7 +330,7 @@ def arguments(argv):
             sub.add_argument("--save-handle", type=Path, required=True)
         elif name == "recover":
             sub.add_argument("--handle", type=Path, required=True)
-        else:
+        elif name != "runtimes":
             sub.add_argument("evaluation_id")
             if name == "output":
                 sub.add_argument("name")
@@ -353,6 +354,8 @@ def execute(args):
             raise ClientError("OWNER_MISMATCH", "recover against the original instance")
         args.url = owner
     client = Client(args.url, args.capability_file, args.timeout)
+    if args.command == "runtimes":
+        return client.request("GET", "/method-runtimes")[1]
     if args.command == "materials":
         identifier = evaluation_id(args.evaluation_id)
         materials = client.request("GET", "/evaluations/" + identifier + "/method-materials")[1]

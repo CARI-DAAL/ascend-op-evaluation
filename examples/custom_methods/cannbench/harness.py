@@ -160,13 +160,38 @@ def run(request):
     if not (candidate / "build.sh").is_file():
         raise ValueError("candidate archive requires build.sh")
     python = private_python(work / "python-env")
-    env = dict(os.environ)
+    # An operator's ambient pip configuration must not redirect an upstream
+    # --force-reinstall outside this invocation's private interpreter.
+    env = {key: value for key, value in os.environ.items() if not key.startswith("PIP_")}
+    env["PIP_CONFIG_FILE"] = os.devnull
+    env["PIP_NO_INDEX"] = "1"
+    env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
     env["PATH"] = str(python.parent) + os.pathsep + env.get("PATH", "")
     env["PYTHONPATH"] = str(upstream / "src")
     # This pinned upstream explicitly supports a private .run install target.
     # Do not change ASCEND_OPP_PATH, which still provides runtime headers/ops.
     env["MC2_OPP_INSTALL_ROOT"] = str(work / "private-opp")
+    env["NPU_ARCH"] = manifest["npu_arch"]
     env["CANN_BENCH_BUILD_TIMEOUT_SEC"] = str(request["parameters"]["build_timeout_seconds"])
+    support = upstream / "src/cann_bench_utils"
+    if not (support / "setup.py").is_file():
+        raise ValueError("frozen archive lacks the upstream native warmup/cache helper")
+    subprocess.run(
+        [
+            str(python),
+            "-m",
+            "pip",
+            "install",
+            "--no-index",
+            "--no-deps",
+            "--no-build-isolation",
+            "--force-reinstall",
+            str(support),
+        ],
+        cwd=upstream,
+        env=env,
+        check=True,
+    )
     report_dir = Path(request["output_dir"]) / "reports"
     report_dir.mkdir()
     command = build_command(
