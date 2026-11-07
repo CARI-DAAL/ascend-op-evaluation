@@ -18,16 +18,16 @@ from pathlib import Path
 
 CONTEXT_ENV = "TRITON_EVAL_PROCESS_CONTEXT"
 _CONTEXT = ContextVar("evaluation_process_context", default=None)
-_PREFIX = {"ascendc": "AscC", "triton": "Trit", "torch": "PyT", "eval": "Eval"}
+_PREFIX = {"ascendc": "AscC", "triton": "Trit", "torch": "PyT", "method": "Meth", "eval": "Eval"}
 _PHASE = {
     "build": "Build", "load": "Load", "verify": "Vfy", "benchmark": "Bench",
     "profile": "Prof", "reference": "Ref", "inputs": "Input", "compare": "Cmp",
-    "job": "Job", "idle": "Idle", "health": "Probe",
+    "job": "Job", "idle": "Idle", "health": "Probe", "method": "Run",
 }
 _CASES = {"verify": "V", "benchmark": "B", "profile": "P", "reference": "R",
           "inputs": "I", "compare": "C"}
 _WORKER_PHASE = {"build": "WBld", "load": "WLoad", "verify": "WVfy",
-                 "benchmark": "WBch", "profile": "WProf", "job": "Job"}
+                 "benchmark": "WBch", "profile": "WProf", "job": "Job", "method": "WRun"}
 
 
 @dataclass(frozen=True)
@@ -197,6 +197,7 @@ def identify_request(request):
     if _CONTEXT.get() is None:
         return
     backend = (
+        "method" if getattr(request, "method_execution", None) is not None else
         "ascendc" if request.native_candidate is not None else
         "torch" if request.implementation == "torch" else "triton"
     )
@@ -211,7 +212,7 @@ def identify_request(request):
 def task_stage(check):
     if _CONTEXT.get() is not None:
         set_stage({"compile": "load", "correctness": "verify",
-                   "performance": "benchmark", "profile": "profile"}[check])
+                   "performance": "benchmark", "profile": "profile", "method": "method"}[check])
 
 
 @contextmanager

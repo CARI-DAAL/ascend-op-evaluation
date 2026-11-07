@@ -15,7 +15,7 @@ import stat
 import subprocess
 import tempfile
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -63,8 +63,11 @@ class ScriptOutcome:
     stdout: str
     stderr: str
     timed_out: bool
-    outcome: Literal["exited", "budget", "resource_deadline", "fenced"] = "exited"
+    outcome: Literal[
+        "exited", "budget", "resource_deadline", "fenced", "output_limit", "resource_limit"
+    ] = "exited"
     logs_truncated: bool = False
+    resource_error: str | None = None
 
 
 def engine_failure(
@@ -226,6 +229,8 @@ def run_script(
     budget_seconds: float | None = None,
     environment: Mapping[str, str] | None = None,
     output_limit_bytes: int | None = None,
+    max_log_bytes: int | None = None,
+    resource_guard: Callable[[], None] | None = None,
 ) -> ScriptOutcome:
     """Run one engine invocation with bounded polling.
 
@@ -260,6 +265,20 @@ def run_script(
         try:
             started = time.monotonic()
             while True:
+                if max_log_bytes is not None and (
+                    os.fstat(out_file.fileno()).st_size + os.fstat(err_file.fileno()).st_size
+                    > max_log_bytes
+                ):
+                    _kill_group(proc)
+                    return _collected(proc, out_file, err_file, "output_limit", output_limit_bytes,
+                                      resource_error="method log budget exceeded")
+                if resource_guard is not None:
+                    try:
+                        resource_guard()
+                    except (OSError, ValueError) as error:
+                        _kill_group(proc)
+                        return _collected(proc, out_file, err_file, "resource_limit",
+                                          output_limit_bytes, resource_error=str(error)[:400])
                 if proc.poll() is not None:
                     break
                 if deadline_at is not None and remaining_seconds(deadline_at) <= 0:
@@ -294,7 +313,8 @@ def _kill_group(proc: subprocess.Popen) -> None:
     proc.wait()
 
 
-def _collected(proc, out_file, err_file, outcome: str, limit: int | None = None) -> ScriptOutcome:
+def _collected(proc, out_file, err_file, outcome: str, limit: int | None = None,
+               *, resource_error: str | None = None) -> ScriptOutcome:
     proc.wait()
     def read(stream):
         if limit is None:
@@ -310,9 +330,10 @@ def _collected(proc, out_file, err_file, outcome: str, limit: int | None = None)
         exit_code=proc.returncode,
         stdout=stdout,
         stderr=stderr,
-        timed_out=outcome != "exited",
+        timed_out=outcome in {"budget", "resource_deadline", "fenced"},
         outcome=outcome,
         logs_truncated=out_truncated or err_truncated,
+        resource_error=resource_error,
     )
 
 

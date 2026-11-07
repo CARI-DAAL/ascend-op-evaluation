@@ -60,6 +60,7 @@ from triton_evaluation.api.contract import (
     dump_contract,
 )
 from triton_evaluation.config import Settings
+from triton_evaluation.methods.contracts import MethodExecution, MethodIdentity, StoredArtifact
 from triton_evaluation.runtime.correctness_evidence import (
     CorrectnessEvidence,
     CorrectnessEvidenceError,
@@ -98,7 +99,7 @@ MAX_ATTEMPTS = 3
 
 logger = logging.getLogger(__name__)
 _CLAIM_SCAN_BATCH = 10
-_TERMINAL_STATES = ("completed", "failed", "timed_out")
+_TERMINAL_STATES = ("completed", "failed", "timed_out", "cancelled")
 
 
 def _no_op_failpoint(evaluation_id: str) -> None:
@@ -290,6 +291,10 @@ class EvaluationStore:
         deadline_ms = accepted_ms + deadline_seconds * 1000
         accepted_at = datetime.fromtimestamp(accepted_ms / 1000, tz=timezone.utc)
         resource = EvaluationResource(
+            method_identity=(
+                MethodIdentity.from_execution(MethodExecution.model_validate(payload["method_execution"]))
+                if payload.get("method_execution") is not None else None
+            ),
             schema_version=payload["schema_version"],
             evaluation_id=command.evaluation_id,
             revision=1,
@@ -500,7 +505,7 @@ class EvaluationStore:
             attempt = stored.get(b"completed_attempt_id", b"").decode("utf-8") or attempt
             outcomes = {
                 check: getattr(resource.result, check)
-                for check in ("correctness", "performance", "profile", "compile")
+                for check in ("correctness", "performance", "profile", "compile", "method")
             }
             active = None
         elif attempt is None or stored.get(b"replacement_pending") == b"1":
@@ -755,6 +760,7 @@ class EvaluationStore:
                 "active_check": "",
                 "check_outcomes": canonical_json_bytes({}),
                 "native_build": "",
+                "method_artifacts": "{}",
                 # Empty means this attempt has no published card provenance.
                 "attempt_card": "",
             },
@@ -821,6 +827,7 @@ class EvaluationStore:
         resource = EvaluationResource.model_validate_json(stored[b"resource"])
         return (
             resource.state == "running"
+            and stored.get(b"cancel_requested") != b"1"
             and resource.revision == lease.expected_revision
             and stored.get(b"attempt_id", b"").decode("utf-8") == lease.attempt_id
             and int(stored[b"fencing_token"]) == lease.fencing_token
@@ -846,6 +853,147 @@ class EvaluationStore:
                 pipeline.execute()
                 _commit_post_exec(lease.evaluation_id)
                 return True
+            except redis.WatchError:
+                continue
+            finally:
+                pipeline.reset()
+
+    def request_visible(
+        self, evaluation_id: str, caller: Caller, session_id: str | None = None,
+    ) -> EvaluationRequest | None:
+        stored = self._r.hgetall(self._key(f"resource:{evaluation_id}"))
+        if (not stored or stored[b"owner"].decode() != caller.caller_id
+                or not ({"trial:submit", "trial:read"} & caller.scopes)):
+            return None
+        if session_id is not None and stored[b"session_digest"].decode() != _scoped_digest(
+            caller.caller_id, session_id
+        ):
+            return None
+        return EvaluationRequest.model_validate_json(stored[b"canonical_request"])
+
+    def save_method_artifacts(self, lease: AttemptLease, artifacts: dict) -> bool:
+        """Seal output bytes under the active attempt fence before result publication."""
+        validated = {
+            name: StoredArtifact.model_validate(value) for name, value in artifacts.items()
+        }
+        from triton_evaluation.methods.contracts import safe_path
+
+        for name in validated:
+            safe_path(name)
+        resource_key = self._key(f"resource:{lease.evaluation_id}")
+
+        def mutate(pipeline, stored, now_ms):
+            request = EvaluationRequest.model_validate_json(stored[b"canonical_request"])
+            execution = request.method_execution
+            if execution is None:
+                raise ValueError("method artifacts require a custom method request")
+            if (len(validated) > execution.limits.artifact_count
+                    or sum(a.size_bytes for a in validated.values())
+                    > execution.limits.artifact_bytes):
+                raise ValueError("method artifact limits exceeded")
+            pipeline.hset(resource_key, "method_artifacts", canonical_json_bytes({
+                "attempt_id": lease.attempt_id,
+                "artifacts": {
+                    name: value.model_dump(mode="json") for name, value in validated.items()
+                },
+            }))
+
+        return self._fenced_write(lease, mutate)
+
+    def method_artifact_visible(self, evaluation_id: str, caller: Caller, name: str):
+        stored = self._r.hgetall(self._key(f"resource:{evaluation_id}"))
+        if not stored or not self._visible_to(stored, caller):
+            return None
+        try:
+            payload = json.loads(stored.get(b"method_artifacts", b"{}"))
+            resource = EvaluationResource.model_validate_json(stored[b"resource"])
+            attempt = stored.get(
+                b"completed_attempt_id" if resource.state in _TERMINAL_STATES else b"attempt_id",
+                b"",
+            ).decode()
+            if (not attempt or payload.get("attempt_id") != attempt
+                    or stored.get(b"replacement_pending") == b"1"):
+                return None
+            return StoredArtifact.model_validate(payload["artifacts"][name])
+        except (ValueError, KeyError, TypeError):
+            return None
+
+    def is_cancel_requested(self, lease: AttemptLease) -> bool:
+        stored = self._r.hgetall(self._key(f"resource:{lease.evaluation_id}"))
+        return bool(stored and stored.get(b"cancel_requested") == b"1"
+                    and stored.get(b"attempt_id", b"").decode() == lease.attempt_id
+                    and int(stored.get(b"fencing_token", b"-1")) == lease.fencing_token)
+
+    def finish_cancelled(self, lease: AttemptLease) -> bool:
+        """Acknowledge cleanup, allowing only the cancellation's current attempt."""
+        key = self._key(f"resource:{lease.evaluation_id}")
+        while True:
+            pipeline = self._r.pipeline()
+            try:
+                pipeline.watch(key)
+                stored = pipeline.hgetall(key)
+                if not stored:
+                    return False
+                resource = EvaluationResource.model_validate_json(stored[b"resource"])
+                if (resource.state != "running" or stored.get(b"cancel_requested") != b"1"
+                        or stored.get(b"attempt_id", b"").decode() != lease.attempt_id
+                        or int(stored[b"fencing_token"]) != lease.fencing_token):
+                    return False
+                self._commit_terminal_locked(
+                    pipeline, stored=stored, resource=resource, state="cancelled",
+                    result=self._failure_result(stored, "cancelled", "evaluation was cancelled"),
+                    now_ms=self._clock(), bump_fence=True,
+                )
+                return True
+            except redis.WatchError:
+                continue
+            finally:
+                pipeline.reset()
+
+    def cancel_visible(self, evaluation_id: str, caller: Caller):
+        """Record intent; running work remains occupied until worker cleanup/recovery."""
+        key = self._key(f"resource:{evaluation_id}")
+        while True:
+            pipeline = self._r.pipeline()
+            try:
+                pipeline.watch(key)
+                stored = pipeline.hgetall(key)
+                if (not stored or stored[b"owner"].decode() != caller.caller_id
+                        or "trial:submit" not in caller.scopes):
+                    return None
+                resource = EvaluationResource.model_validate_json(stored[b"resource"])
+                if resource.state in _TERMINAL_STATES or resource.cancel_requested:
+                    return resource
+                now_ms = self._clock()
+                if now_ms >= int(stored[b"deadline_ms"]):
+                    self._commit_terminal_locked(
+                        pipeline, stored=stored, resource=resource, state="timed_out",
+                        result=self._failure_result(
+                            stored, "deadline", "resource deadline expired",
+                        ),
+                        now_ms=now_ms, bump_fence=True,
+                    )
+                elif resource.state == "queued" or stored.get(b"replacement_pending") == b"1":
+                    resource = resource.model_copy(update={"cancel_requested": True})
+                    self._commit_terminal_locked(
+                        pipeline, stored=stored, resource=resource, state="cancelled",
+                        result=self._failure_result(
+                            stored, "cancelled", "evaluation was cancelled",
+                        ),
+                        now_ms=now_ms, bump_fence=True,
+                    )
+                else:
+                    resource = resource.model_copy(update={
+                        "cancel_requested": True, "revision": resource.revision + 1,
+                        "updated_at": datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc),
+                    })
+                    pipeline.multi()
+                    pipeline.hset(key, mapping={"resource": dump_contract(resource),
+                                               "cancel_requested": "1",
+                                               "updated_at_ms": str(now_ms)})
+                    pipeline.hincrby(key, "progress_revision", 1)
+                    pipeline.execute()
+                return EvaluationResource.model_validate_json(self._r.hget(key, "resource"))
             except redis.WatchError:
                 continue
             finally:
@@ -1161,6 +1309,15 @@ class EvaluationStore:
                     or lease_deadline_ms > now_ms
                 ):
                     return None  # committed, renewed, or already replaced
+                if stored.get(b"cancel_requested") == b"1":
+                    self._commit_terminal_locked(
+                        pipeline, stored=stored, resource=resource, state="cancelled",
+                        result=self._failure_result(
+                            stored, "cancelled", "evaluation was cancelled",
+                        ),
+                        now_ms=now_ms, bump_fence=True,
+                    )
+                    return "failed"
                 if now_ms >= int(stored[b"deadline_ms"]):
                     return None  # the deadline watchdog owns this resource
                 # Suspicious deaths are counted only when card provenance exists:
@@ -1259,12 +1416,16 @@ class EvaluationStore:
                     if int(stored[b"attempt_count"]) == 0
                     else "resource deadline expired"
                 )
-                result = self._failure_result(stored, "deadline", message)
+                cancelled = stored.get(b"cancel_requested") == b"1"
+                result = self._failure_result(
+                    stored, "cancelled" if cancelled else "deadline",
+                    "evaluation was cancelled" if cancelled else message,
+                )
                 self._commit_terminal_locked(
                     pipeline,
                     stored=stored,
                     resource=resource,
-                    state="timed_out",
+                    state="cancelled" if cancelled else "timed_out",
                     result=result,
                     now_ms=now_ms,
                     bump_fence=True,
@@ -1319,6 +1480,11 @@ class EvaluationStore:
         if failure == "deadline":
             ending = CheckTimedOut(status="timeout", error=ErrorInfo(
                 code="DEADLINE_EXCEEDED", phase="deadline", check=None,
+                retryable=False, message=message,
+            ))
+        elif failure == "cancelled":
+            ending = CheckFailed(status="failed", error=ErrorInfo(
+                code="CANCELLED", phase="execution", check=None,
                 retryable=False, message=message,
             ))
         else:

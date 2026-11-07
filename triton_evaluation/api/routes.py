@@ -40,7 +40,7 @@ from .schemas import IdempotencyKey, Liveness, Readiness, SessionId
 
 router = APIRouter()
 
-TERMINAL_STATES = ("completed", "failed", "timed_out")
+TERMINAL_STATES = ("completed", "failed", "timed_out", "cancelled")
 
 
 async def wait_until_terminal(
