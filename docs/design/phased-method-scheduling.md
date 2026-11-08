@@ -73,8 +73,20 @@ caller ──submit──▶ service admission (unchanged contract: submit → r
 - `MethodExecution` gains optional `stages` in the method descriptor
   (default: single stage = current behavior). A staged method declares
   `[{device: cpu, entry: build}, {device: npu, entry: run}]`.
-- Stage handoff via the existing artifact registry (wheel digest recorded
-  in the execution record; phase B requests it as a dependency).
+- Stage handoff storage — NOT the method artifact registry (its 1MB
+  per-artifact cap and 64MB/caller quota are for method *code*; built
+  wheels are data, AscendC `_C.so` wheels run tens of MB):
+  - Primary (single-container deployments, like ours): a content-addressed
+    spool on the shared engine filesystem,
+    `$ENGINE_DIR/stage-spool/<sha256>/cann_bench.whl`. Phase A writes it
+    and records the digest in the execution record; phase B's sandbox adds
+    the spool path as a read-only mount and verifies the digest before
+    install. Spool limits: ≤256MB per wheel, retention = evaluation life
+    + 24h, deleted when phase B completes.
+  - Fallback (multi-host): chunked upload into the existing registry,
+    mirroring the method bundle's `upstreamNN.bin` 512KB-chunk pattern
+    (sha-verified reassembly); costs caller quota, documented as the
+    cross-host path only.
 - Lease/scheduling: phase A admits to CPU workers (already exist via
   `--cpu`); phase B enters the NPU queue only when the artifact is ready.
   One evaluation = one lease per stage, not one card lease for the whole
