@@ -127,6 +127,8 @@ class AttemptLease:
     request_digest: str
     requested_checks: tuple[Check, ...]
     pinned: PinnedProvenance
+    # Completed earlier stages of a staged custom method (JSON records).
+    method_stage_records: tuple[dict, ...] = ()
 
 
 @dataclass(frozen=True)

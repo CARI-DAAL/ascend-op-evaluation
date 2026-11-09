@@ -2,28 +2,37 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import mimetypes
 import os
 import stat
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
 from ascend_op_eval.execution.process_title import process_phase
 from ascend_op_eval.methods.contracts import (
     MAX_BLOB_BYTES,
+    HandoffFile,
     MethodArtifact,
     MethodExecution,
     MethodResult,
+    MethodStageRecord,
     StoredArtifact,
+    safe_path,
 )
 from ascend_op_eval.methods.schemas import validate_value
 
 MAX_PROTOCOL_BYTES = 128 * 1024
 MAX_OUTPUT_NODES = 1024
 PUBLICATION_RESERVE_SECONDS = 1.0
+# Stage handoff carries built data (wheels), not method code: it bypasses the
+# 1 MiB artifact store and goes through the worker-shared stage spool.
+MAX_HANDOFF_BYTES = 256 * 1024 * 1024
+MAX_HANDOFF_FILES = 32
 
 
 class OutputProtocolError(ValueError):
@@ -47,7 +56,7 @@ def _write_file(root, relative, content):
     return str(path)
 
 
-def stage_execution(execution, root, deadline_at):
+def stage_execution(execution, root, deadline_at, stage_index=0, handoff=None):
     from ascend_op_eval.evaluators.base import remaining_seconds
 
     package_dir, output_dir = root / "package", root / "outputs"
@@ -78,11 +87,13 @@ def stage_execution(execution, root, deadline_at):
                 "media_type": artifact.media_type,
             }
     descriptor = execution.package.descriptor
+    plan = descriptor.stage_plan
+    stage = plan[stage_index]
     request = {
         "contract_version": execution.contract_version,
         "method_ref": execution.method_ref,
         "package_dir": str(package_dir),
-        "entrypoint": descriptor.entrypoint,
+        "entrypoint": stage.entrypoint,
         "parameters": execution.effective_parameters,
         "requested_parameters": execution.requested_parameters,
         "inputs": inputs,
@@ -90,10 +101,16 @@ def stage_execution(execution, root, deadline_at):
         "requirements": descriptor.requirements.model_dump(mode="json"),
         "output_dir": str(output_dir),
         "scratch_dir": str(scratch),
-        "device": "npu:0" if execution.device == "npu" else "cpu",
+        "device": "npu:0" if stage.device == "npu" else "cpu",
         "deadline_at": deadline_at.isoformat(),
         "budget_seconds": max(0, remaining_seconds(deadline_at) - PUBLICATION_RESERVE_SECONDS),
     }
+    if descriptor.stages is not None:
+        request["stage"] = {"index": stage_index, "count": len(plan)}
+        request["handoff"] = handoff or {}
+        if stage_index < len(plan) - 1:
+            (root / "handoff").mkdir(mode=0o700)
+            request["handoff_dir"] = str(root / "handoff")
     request_path = Path(
         _write_file(root, "request.json", json.dumps(request, allow_nan=False).encode())
     )
@@ -266,6 +283,64 @@ def _logs(stdout, stderr, budget):
     )
 
 
+def _copy_into(source: Path, target: Path, limit: int) -> tuple[str, int]:
+    """Stream one no-follow regular file into a new target; return digest and size."""
+    digest, size = hashlib.sha256(), 0
+    with os.fdopen(os.open(source, os.O_RDONLY | os.O_NOFOLLOW), "rb") as reader:
+        if not stat.S_ISREG(os.fstat(reader.fileno()).st_mode):
+            raise OutputProtocolError("stage handoff entry is not a regular file")
+        with target.open("xb") as writer:
+            while chunk := reader.read(1 << 20):
+                size += len(chunk)
+                if size > limit:
+                    raise OutputProtocolError("stage handoff byte budget exceeded")
+                digest.update(chunk)
+                writer.write(chunk)
+    return digest.hexdigest(), size
+
+
+def spool_handoff(directory: Path, spool_dir: Path) -> dict[str, HandoffFile]:
+    """Content-address every file a stage left in its handoff directory."""
+    spool_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    handoff, total = {}, 0
+    for root, directories, names in os.walk(directory):
+        for name in directories + names:
+            mode = os.lstat(os.path.join(root, name)).st_mode
+            if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+                raise OutputProtocolError(
+                    "stage handoff must hold only regular files and directories"
+                )
+        for name in sorted(names):
+            relative = safe_path(Path(root, name).relative_to(directory).as_posix())
+            if len(handoff) >= MAX_HANDOFF_FILES:
+                raise OutputProtocolError("stage handoff file count exceeded")
+            partial = spool_dir / f".{os.getpid()}.{time.monotonic_ns()}.partial"
+            try:
+                digest, size = _copy_into(
+                    Path(root, name), partial, MAX_HANDOFF_BYTES - total
+                )
+                os.replace(partial, spool_dir / digest)
+            finally:
+                partial.unlink(missing_ok=True)
+            total += size
+            handoff[relative] = HandoffFile(sha256=digest, size_bytes=size)
+    return handoff
+
+
+def restore_handoff(handoff: dict, spool_dir: Path, destination: Path) -> dict:
+    """Copy the previous stage's spooled files in, verifying recorded digests."""
+    staged = {}
+    for name, item in handoff.items():
+        target = destination / name
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        digest, size = _copy_into(spool_dir / item.sha256, target, item.size_bytes)
+        if (digest, size) != (item.sha256, item.size_bytes):
+            raise OutputProtocolError("stage handoff differs from its recorded digest")
+        target.chmod(0o400)
+        staged[name] = {"path": str(target), "sha256": digest, "size_bytes": size}
+    return staged
+
+
 def execute_method(
     execution: MethodExecution,
     work_dir: Path,
@@ -276,8 +351,55 @@ def execute_method(
     runner=None,
     artifact_sink=None,
     isolation="host",
+    stage_records=(),
+    spool_dir: Path | None = None,
 ) -> MethodResult:
-    """Execute a frozen method; returned reports remain caller-method claims."""
+    """Execute a frozen method's next stage; reports remain caller-method claims.
+
+    ``stage_records`` are the already completed stages of a staged method.
+    A non-final stage that leaves handoff files returns ``completed`` with a
+    nonempty ``handoff`` record, telling the worker to queue the next stage.
+    """
+    stage_index = len(stage_records)
+    handoff: dict[str, HandoffFile] = {}
+    started = time.monotonic()
+    result = _execute_stage(
+        execution, work_dir, device_id=device_id, deadline_at=deadline_at,
+        lease_valid=lease_valid, runner=runner, artifact_sink=artifact_sink,
+        isolation=isolation, stage_index=stage_index,
+        handoff_in=stage_records[-1].handoff if stage_records else {},
+        spool_dir=spool_dir, handoff_out=handoff,
+    )
+    stages = execution.package.descriptor.stages
+    if stages is None:
+        return result
+    record = MethodStageRecord(
+        index=stage_index,
+        device=stages[stage_index].device,
+        entrypoint=stages[stage_index].entrypoint,
+        outcome=result.outcome,
+        duration_ms=int((time.monotonic() - started) * 1000),
+        handoff=handoff,
+        error=result.error,
+    )
+    return result.model_copy(update={"stages": [*stage_records, record]})
+
+
+def _execute_stage(
+    execution: MethodExecution,
+    work_dir: Path,
+    *,
+    device_id,
+    deadline_at: datetime,
+    lease_valid,
+    runner,
+    artifact_sink,
+    isolation,
+    stage_index,
+    handoff_in,
+    spool_dir,
+    handoff_out,
+) -> MethodResult:
     from ascend_op_eval.evaluators.base import LeaseLostError, remaining_seconds, run_script
 
     execution = MethodExecution.model_validate(execution.model_dump(mode="json"))
@@ -298,9 +420,17 @@ def execute_method(
     if not lease_valid():
         raise LeaseLostError("method lost lease before staging")
     required = execution.package.descriptor.requirements
-    if required.device == "npu" and device_id is None:
+    stages = execution.package.descriptor.stage_plan
+    final = stage_index == len(stages) - 1
+    if stages[stage_index].device == "npu" and device_id is None:
         return MethodResult(
             **identity, outcome="environment_unavailable", error="method requires an assigned NPU"
+        )
+    if execution.package.descriptor.stages is not None and spool_dir is None:
+        return MethodResult(
+            **identity,
+            outcome="environment_unavailable",
+            error="staged method requires a configured stage spool",
         )
     if "process-isolation" in required.capabilities and isolation != "sandbox":
         return MethodResult(
@@ -309,7 +439,17 @@ def execute_method(
             error="method requires configured process isolation",
         )
     try:
-        request_path, output_dir = stage_execution(execution, work_dir, deadline_at)
+        handoff = restore_handoff(handoff_in, spool_dir, work_dir / "handoff_in")
+    except (OSError, ValueError):
+        return MethodResult(
+            **identity,
+            outcome="environment_unavailable",
+            error="stage handoff is missing or corrupt in the stage spool",
+        )
+    try:
+        request_path, output_dir = stage_execution(
+            execution, work_dir, deadline_at, stage_index, handoff
+        )
     except (OSError, ValueError) as error:
         return MethodResult(**identity, outcome="protocol_error", error=str(error)[:512])
     result_path = work_dir / "result.json"
@@ -398,6 +538,27 @@ def execute_method(
             return MethodResult(
                 **common, outcome=outcome, error=str(payload.get("error") or outcome)[:512]
             )
+        if not final:
+            # Empty handoff ends the evaluation here (for example, a failed
+            # build); its report is then validated as the final report below.
+            try:
+                files = spool_handoff(work_dir / "handoff", spool_dir)
+            except OSError as error:
+                return MethodResult(
+                    **common,
+                    outcome="environment_unavailable",
+                    error=f"stage spool write failed: {type(error).__name__}",
+                )
+            if files:
+                if not isinstance(payload.get("report"), dict):
+                    raise OutputProtocolError("method report must be an object")
+                handoff_out.update(files)
+                return MethodResult(
+                    **common,
+                    outcome="completed",
+                    report=payload["report"],
+                    runtime_observation=payload.get("runtime_observation", {}),
+                )
         for name, specification in execution.package.descriptor.output_artifacts.items():
             if specification.required and name not in artifacts:
                 raise OutputProtocolError(f"missing declared method artifact: {name}")

@@ -27,6 +27,8 @@ class MethodEvaluator:
         *,
         settings=None,
         on_artifacts=None,
+        stage_records=(),
+        spool_dir=None,
     ):
         from ascend_op_eval.methods.registry import runtime_fingerprint
 
@@ -72,5 +74,7 @@ class MethodEvaluator:
                 runner=runner,
                 artifact_sink=on_artifacts,
                 isolation=isolation,
+                stage_records=stage_records,
+                spool_dir=spool_dir,
             )
         return CheckSucceeded[MethodResult](status="succeeded", data=data)

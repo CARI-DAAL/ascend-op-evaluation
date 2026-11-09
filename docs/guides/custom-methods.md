@@ -141,6 +141,49 @@ later method input, download it and register those bytes with artifact-upload;
 the service verifies the same content digest. An output ref is not automatically
 a global input-registry entry.
 
+## Staged methods
+
+A descriptor may split one evaluation into separately leased stages, for
+example a CPU build followed by an NPU run, so a long build does not hold a card:
+
+```json
+"entrypoint": "stages:run",
+"requirements": {"device": "npu"},
+"stages": [
+  {"device": "cpu", "entrypoint": "stages:build"},
+  {"device": "npu", "entrypoint": "stages:run"}
+]
+```
+
+There are two to four stages. The last one must equal `entrypoint` and
+`requirements.device`. Without `stages`, a method is one stage and its identity
+is unchanged. Callers still submit once and read one evaluation resource. It
+stays `running` between stages.
+
+Each stage request carries `stage` (`index`, `count`) and `handoff`, the previous
+stage's files as `{path, sha256, size_bytes}`. A non-final stage also receives
+`handoff_dir`. If it completes with files there (at most 32 regular files,
+256 MiB in total), the worker copies them into the stage spool by content digest
+and queues the next stage on its device class. The next stage receives
+digest-verified copies. A non-final stage that leaves no handoff files ends the
+evaluation: its report must satisfy `output_schema`, which is how a failed build
+returns its report without entering the NPU queue. Continuing stages' reports
+are recorded but not validated as final reports. Only the stage that ends the
+evaluation publishes output artifacts.
+
+`deadline_seconds` applies to each stage, starting when the stage is queued.
+Each stage has its own lease-recovery retry budget. A missing or corrupt
+spooled handoff is `environment_unavailable`. `result.method.data.stages`
+lists every executed stage with its device, outcome, `duration_ms` and handoff
+digests. The `method_stage_duration_seconds` metric splits CPU and NPU time.
+
+Set `ASCEND_OP_EVAL_STAGE_SPOOL_DIR` to an absolute directory shared by every
+CPU and NPU worker, and set it on the API as well. Admission rejects staged
+methods while it is unset. The final stage's worker removes an evaluation's spool directory
+when it commits the result. Workers also remove spool directories older than 25
+hours. Handoff files are build data, not registry artifacts. They are neither
+charged to the caller's registry quota nor downloadable.
+
 ## Runtime and trust
 
 Runtime IDs/capabilities are deployment configuration, not rights granted by a

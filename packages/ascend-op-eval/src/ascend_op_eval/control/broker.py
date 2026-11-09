@@ -781,6 +781,7 @@ class EvaluationStore:
             request_digest=stored[b"request_digest"].decode("utf-8"),
             requested_checks=tuple(json.loads(stored[b"requested_checks"])),
             pinned=self._stored_pinned(stored),
+            method_stage_records=tuple(json.loads(stored.get(b"method_stage_records", b"[]"))),
         )
 
     def _record_attempt_card(self, lease: AttemptLease, card: int) -> None:
@@ -1106,12 +1107,64 @@ class EvaluationStore:
             finally:
                 pipeline.reset()
 
+    def advance_method_stage(self, lease: AttemptLease, records: list[dict]) -> bool:
+        """Queue a staged method's next stage under the current attempt fence.
+
+        The same evaluation re-enters the next stage's execution-class queue as
+        replacement work: it stays publicly running, gets a fresh per-stage
+        deadline and a fresh ``MAX_ATTEMPTS`` budget, and its next claim carries
+        ``records``. ``False`` means fenced out; the reaper owns recovery.
+        """
+        resource_key = self._key(f"resource:{lease.evaluation_id}")
+        while True:
+            now_ms = self._clock()
+            pipeline = self._r.pipeline()
+            try:
+                pipeline.watch(resource_key)
+                stored = pipeline.hgetall(resource_key)
+                if not stored or not self._fence_conditions_met(stored, lease, now_ms):
+                    self.note_fenced_write()
+                    return False
+                request = EvaluationRequest.model_validate_json(stored[b"canonical_request"])
+                plan = request.method_execution.package.descriptor.stage_plan
+                if not 0 < len(records) < len(plan) or not records[-1]["handoff"]:
+                    raise ValueError("method stage records do not lead to a next stage")
+                execution_class = plan[len(records)].device
+                deadline_ms = now_ms + request.deadline_seconds * 1000
+                now = datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc)
+                resource = EvaluationResource.model_validate_json(stored[b"resource"])
+                updated = EvaluationResource.model_validate({
+                    **resource.model_dump(exclude_none=False),
+                    "revision": resource.revision + 1,
+                    "updated_at": now,
+                    "deadline_at": datetime.fromtimestamp(deadline_ms / 1000, tz=timezone.utc),
+                })
+                self._queue_replacement(
+                    pipeline, lease.evaluation_id, stored,
+                    {
+                        "execution_class": execution_class,
+                        "attempt_count": "0",
+                        "method_stage_records": canonical_json_bytes(records),
+                        "resource": dump_contract(updated),
+                        "updated_at_ms": str(now_ms),
+                        "deadline_ms": str(deadline_ms),
+                    },
+                    deadline_ms=deadline_ms,
+                )
+                return True
+            except redis.WatchError:
+                continue
+            finally:
+                pipeline.reset()
+
     def _queue_replacement(
         self, pipeline, evaluation_id: str, stored: dict, metadata: dict,
+        *, deadline_ms: int | None = None,
     ) -> None:
         """Commit replacement work while the caller WATCHes the resource."""
         ready_key = self._ready_key(
-            self._stored_traffic_class(stored), stored[b"execution_class"].decode("utf-8"),
+            self._stored_traffic_class(stored),
+            metadata.get("execution_class") or stored[b"execution_class"].decode("utf-8"),
         )
         sequence_key = self._key("queue-sequence")
         pipeline.watch(ready_key, sequence_key)
@@ -1132,6 +1185,9 @@ class EvaluationStore:
         pipeline.hincrby(self._key(f"resource:{evaluation_id}"), "progress_revision", 1)
         pipeline.zrem(self._key("running-leases"), evaluation_id)
         pipeline.zadd(ready_key, {evaluation_id: successor})
+        if deadline_ms is not None:
+            pipeline.zadd(self._key("deadlines"), {evaluation_id: deadline_ms})
+            pipeline.zadd(self._key("state:running"), {evaluation_id: deadline_ms})
         pipeline.execute()
 
     def commit_terminal(

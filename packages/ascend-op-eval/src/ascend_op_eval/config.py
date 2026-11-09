@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     method_capabilities: list[str] = Field(default_factory=lambda: ["python"], max_length=64)
     method_registry_max_bytes: int = Field(default=64 * 1024 * 1024, ge=1, le=1024 * 1024 * 1024)
     method_registry_max_records: int = Field(default=256, ge=1, le=4096)
+    # Staged methods hand files to their next stage here; CPU and NPU workers
+    # must share this filesystem. Unset rejects staged methods at admission.
+    stage_spool_dir: Path | None = None
     reference_device_policy: Literal["cpu-first", "npu-strict"] = "cpu-first"
     reference_diagnostics_dir: Path | None = None
     # Optional reference-cache settings are pinned as one deployment group.
@@ -232,6 +235,10 @@ class Settings(BaseSettings):
             or ".." in self.engine_runtime_overlay_config.parts
         ):
             raise ValueError("engine runtime overlay config must be absolute without traversal")
+        if self.stage_spool_dir is not None and (
+            not self.stage_spool_dir.is_absolute() or ".." in self.stage_spool_dir.parts
+        ):
+            raise ValueError("stage spool dir must be absolute without traversal")
         profiler_values = (self.profiler_runtime_manifest, self.profiler_runtime_sha256)
         if any(value is not None for value in profiler_values) and not all(
             value is not None for value in profiler_values

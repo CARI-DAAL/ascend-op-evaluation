@@ -201,6 +201,10 @@ class MethodRegistry:
             raise MethodRegistryError(
                 "ENVIRONMENT_UNAVAILABLE", "method requires a configured process sandbox"
             )
+        if descriptor.stages is not None and self.settings.stage_spool_dir is None:
+            raise MethodRegistryError(
+                "ENVIRONMENT_UNAVAILABLE", "staged method requires a configured stage spool"
+            )
         try:
             effective = effective_parameters(descriptor.parameters_schema, submission.parameters)
         except ValueError as error:

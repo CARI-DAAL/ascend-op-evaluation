@@ -67,6 +67,13 @@ class MethodInput(MethodModel):
     media_type: str | None = Field(default=None, max_length=128)
 
 
+class MethodStage(MethodModel):
+    """One separately leased step; its handoff files feed the next stage."""
+
+    device: Literal["cpu", "npu"]
+    entrypoint: Annotated[str, Field(min_length=3, max_length=256)]
+
+
 class MethodDescriptor(MethodModel):
     name: Name
     version: Annotated[str, Field(min_length=1, max_length=64)]
@@ -78,13 +85,29 @@ class MethodDescriptor(MethodModel):
     output_artifacts: dict[str, MethodInput] = Field(default_factory=dict, max_length=128)
     requirements: MethodRequirements = Field(default_factory=MethodRequirements)
     dependencies: dict[Name, Ref] = Field(default_factory=dict, max_length=8)
+    # Omitted when absent so single-stage descriptor digests stay unchanged.
+    stages: list[MethodStage] | None = Field(
+        default=None, min_length=2, max_length=4, exclude_if=lambda value: value is None,
+    )
+
+    @property
+    def stage_plan(self) -> list[MethodStage]:
+        return self.stages or [
+            MethodStage(device=self.requirements.device, entrypoint=self.entrypoint)
+        ]
 
     @model_validator(mode="after")
     def valid_descriptor(self):
         from ascend_op_eval.methods.schemas import validate_schema
 
-        if not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*", self.entrypoint):
-            raise ValueError("method entrypoint must be module:function")
+        for stage in self.stage_plan:
+            if not re.fullmatch(
+                r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*", stage.entrypoint
+            ):
+                raise ValueError("method entrypoint must be module:function")
+        final = self.stage_plan[-1]
+        if (final.entrypoint, final.device) != (self.entrypoint, self.requirements.device):
+            raise ValueError("final method stage must match entrypoint and requirements.device")
         validate_schema(self.parameters_schema, parameters=True)
         validate_schema(self.output_schema)
         for name in self.output_artifacts:
@@ -105,9 +128,10 @@ class MethodPackage(MethodModel):
             safe_path(name)
             if any(str(p) in self.files for p in PurePosixPath(name).parents):
                 raise ValueError("method file overlaps a directory")
-        module = self.descriptor.entrypoint.split(":")[0].replace(".", "/")
-        if module + ".py" not in self.files and module + "/__init__.py" not in self.files:
-            raise ValueError("method entrypoint source must be in package")
+        for stage in self.descriptor.stage_plan:
+            module = stage.entrypoint.split(":")[0].replace(".", "/")
+            if module + ".py" not in self.files and module + "/__init__.py" not in self.files:
+                raise ValueError("method entrypoint source must be in package")
         return self
 
 
@@ -231,7 +255,8 @@ class MethodExecution(RegisteredMethod):
 
     @property
     def device(self):
-        return self.package.descriptor.requirements.device
+        """Admission placement: the first stage's execution class."""
+        return self.package.descriptor.stage_plan[0].device
 
     @model_validator(mode="after")
     def frozen_dependencies_match(self):
@@ -293,6 +318,40 @@ class MethodIdentity(MethodModel):
         )
 
 
+MethodOutcome = Literal[
+    "passed",
+    "failed",
+    "completed",
+    "method_error",
+    "protocol_error",
+    "environment_unavailable",
+    "timed_out",
+]
+
+
+class HandoffFile(MethodModel):
+    sha256: Hash
+    size_bytes: int = Field(ge=0)
+
+
+class MethodStageRecord(MethodModel):
+    """Per-stage observation; a nonempty handoff means the next stage was queued."""
+
+    index: int = Field(ge=0, le=3)
+    device: Literal["cpu", "npu"]
+    entrypoint: str = Field(max_length=256)
+    outcome: MethodOutcome
+    duration_ms: int = Field(ge=0)
+    handoff: dict[str, HandoffFile] = Field(default_factory=dict, max_length=32)
+    error: str | None = Field(default=None, max_length=4096)
+
+    @model_validator(mode="after")
+    def valid_handoff_names(self):
+        for name in self.handoff:
+            safe_path(name)
+        return self
+
+
 class MethodResult(MethodModel):
     contract_version: Literal["custom-method-v1"] = CONTRACT
     method_ref: Ref
@@ -301,15 +360,7 @@ class MethodResult(MethodModel):
     dependency_digests: dict[str, Hash] = Field(default_factory=dict)
     runtime_fingerprint: Hash
     kind: Kind
-    outcome: Literal[
-        "passed",
-        "failed",
-        "completed",
-        "method_error",
-        "protocol_error",
-        "environment_unavailable",
-        "timed_out",
-    ]
+    outcome: MethodOutcome
     authority: Literal["caller_method"] = "caller_method"
     isolation: Literal["host", "sandbox"] = "host"
     runtime_observation: dict[str, JsonValue] = Field(default_factory=dict)
@@ -322,6 +373,10 @@ class MethodResult(MethodModel):
     exit_code: int | None = None
     artifacts: list[MethodArtifact] = Field(default_factory=list, max_length=128)
     error: str | None = Field(default=None, max_length=4096)
+    # Staged methods only: every executed stage, in order, ending with this one.
+    stages: list[MethodStageRecord] | None = Field(
+        default=None, max_length=4, exclude_if=lambda value: value is None,
+    )
 
 
 def package_identity(package: MethodPackage) -> dict:

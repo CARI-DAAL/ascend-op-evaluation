@@ -48,6 +48,7 @@ LABEL_VALUES = {
     "decoy": ("true", "false"),
     "step": ("cleanup", "reset", "restart"),
     "card": tuple(str(i) for i in range(16)),
+    "execution_class": ("cpu", "npu"),
 }
 
 ALLOWED_METRICS = {
@@ -78,6 +79,8 @@ ALLOWED_METRICS = {
     "terminal_commit_cas_total": ("outcome",),
     "reaped_leases_total": ("outcome",),
     "worker_compatibility_total": ("outcome",),
+    # Staged custom methods: CPU build vs NPU run time, observed per stage.
+    "method_stage_duration_seconds": ("execution_class",),
     # Shaping
     "shaping_failures_total": ("check",),
     # Card health (spec §10)
@@ -88,6 +91,7 @@ ALLOWED_METRICS = {
 
 _HISTOGRAMS = {
     "resource_terminal_duration_seconds": DURATION_BUCKETS,
+    "method_stage_duration_seconds": DURATION_BUCKETS,
     "performance_coverage": COVERAGE_BUCKETS,
 }
 _GAUGE_NAMES = ("resource_state_gauge", "card_health_state")

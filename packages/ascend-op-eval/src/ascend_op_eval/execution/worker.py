@@ -32,7 +32,7 @@ from ascend_op_eval.api.contract import (
 )
 from ascend_op_eval.config import Settings
 from ascend_op_eval.control.broker import EvaluationStore
-from ascend_op_eval.control.metrics import increment
+from ascend_op_eval.control.metrics import increment, observe
 from ascend_op_eval.control.models import (
     AlgorithmVersions,
     AttemptLease,
@@ -47,6 +47,7 @@ from ascend_op_eval.execution.correctness_evidence import write_handoff
 from ascend_op_eval.execution.precheck import run_precheck
 from ascend_op_eval.execution.process_title import evaluation_process, identify_request, task_stage
 from ascend_op_eval.execution.verdict_cache import VerdictCache
+from ascend_op_eval.methods.contracts import MethodStageRecord
 from ascend_op_eval.resources import health
 from ascend_op_eval.runtimes.execution_environment import build_execution_environment
 from ascend_op_eval.serialization import canonical_json_bytes, sha256_hex
@@ -55,6 +56,9 @@ logger = logging.getLogger(__name__)
 
 _BACKOFF_CAP_SECONDS = 30
 _MAINTENANCE_BATCH = 100
+# Every stage finishes within its own deadline (at most 3600 s) after handoff;
+# a day of slack keeps handoff files available for diagnosis.
+_STAGE_SPOOL_RETENTION_SECONDS = 3600 + 24 * 3600
 
 
 def _algorithms(settings: Settings) -> AlgorithmVersions:
@@ -284,6 +288,24 @@ class Worker:
         self.store.expire_due_resources(limit=_MAINTENANCE_BATCH)
         self.store.recover_expired_leases(limit=_MAINTENANCE_BATCH)
         self.store.purge_expired_terminal_indexes(limit=_MAINTENANCE_BATCH)
+        self._purge_stage_spool()
+
+    def _purge_stage_spool(self) -> None:
+        """Drop handoffs whose evaluation ended without a worker-side cleanup."""
+        root = self.settings.stage_spool_dir
+        if root is None or not root.is_dir():
+            return
+        cutoff = time.time() - _STAGE_SPOOL_RETENTION_SECONDS
+        for entry in root.iterdir():
+            try:
+                if entry.lstat().st_mtime < cutoff:
+                    shutil.rmtree(entry, ignore_errors=True)
+            except OSError:
+                continue
+
+    def _stage_spool(self, lease: AttemptLease) -> Path | None:
+        root = self.settings.stage_spool_dir
+        return None if root is None else root / lease.evaluation_id
 
     def _run_attempt(self, lease: AttemptLease, do_sleep) -> None:
         work_dir: str | None = None
@@ -340,6 +362,11 @@ class Worker:
                                 raise LeaseLostError("method artifact publication was fenced out")
                         reuse_kwargs["on_method_artifacts"] = publish_method_artifacts
                         reuse_kwargs["method_settings"] = self.settings
+                        reuse_kwargs["method_stage_records"] = [
+                            MethodStageRecord.model_validate(record)
+                            for record in lease.method_stage_records
+                        ]
+                        reuse_kwargs["method_spool_dir"] = self._stage_spool(lease)
                     if request.native_candidate is not None:
                         reuse_kwargs["on_native_build"] = record_native_build
                     if request.correctness_from is not None:
@@ -446,8 +473,27 @@ class Worker:
                     lease.attempt_id, self.device_id,
                 )
                 return
+            stages = (
+                validated.method.data.stages
+                if validated.method is not None and validated.method.status == "succeeded"
+                else None
+            )
+            if stages:
+                observe(
+                    self.metrics, "method_stage_duration_seconds",
+                    stages[-1].duration_ms / 1000, execution_class=stages[-1].device,
+                )
+                if stages[-1].handoff:
+                    # False means fenced out; the reaper owns recovery.
+                    self.store.advance_method_stage(
+                        lease, [stage.model_dump(mode="json") for stage in stages]
+                    )
+                    return
             # False means another winner already terminalized the resource.
-            self.store.commit_terminal(lease, "completed", validated)
+            committed = self.store.commit_terminal(lease, "completed", validated)
+            spool = self._stage_spool(lease)
+            if committed and stages and spool is not None:
+                shutil.rmtree(spool, ignore_errors=True)
         finally:
             if work_dir is not None:
                 if self.settings.reference_diagnostics_dir is not None:

@@ -196,6 +196,8 @@ class EvaluationEvaluator:
         on_native_build: Callable | None = None,
         on_method_artifacts: Callable | None = None,
         method_settings=None,
+        method_stage_records=(),
+        method_spool_dir=None,
     ) -> EvaluationResult:
         """Run correctness, conditional performance, then independent profile."""
         requested = list(request.checks)
@@ -204,7 +206,9 @@ class EvaluationEvaluator:
             outcome = self._slot(
                 "method",
                 lambda: method.run(request, work_dir, device_id, deadline_at, lease_valid,
-                                   settings=method_settings, on_artifacts=on_method_artifacts),
+                                   settings=method_settings, on_artifacts=on_method_artifacts,
+                                   stage_records=method_stage_records,
+                                   spool_dir=method_spool_dir),
                 lease_valid, progress,
             )
             return complete_evaluation(
