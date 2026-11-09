@@ -17,7 +17,7 @@ set -euo pipefail
 
 REPO=/home/n84449292/canada_group_dir/projects/ascend-op-eval
 IMAGE=ascend-op-eval:a3-2.0-ascendc
-IMAGE_DIGEST=sha256:54d57d6889163742e5efa2566ec160d1bc942b48c53e8950d9b910b3e173fd83
+IMAGE_DIGEST=sha256:133cc8d4e42498c57e9751aa3dc9b67e496a91545edec59aba1c26c78141d3db
 
 docker rm -f triton-eval >/dev/null 2>&1 || true
 
@@ -34,6 +34,8 @@ docker run -d --name triton-eval \
   -e ASCEND_OP_EVAL_CARDS=0,1,3,4 \
   -e ASCEND_OP_EVAL_CPU_WORKERS=1 \
   -e ASCEND_OP_EVAL_DEVICE_HOLD_MB=64 \
+  -e ASCEND_OP_EVAL_TRIAL_MAX_INFLIGHT=12 \
+  -e ASCEND_OP_EVAL_SESSION_MAX_INFLIGHT=12 \
   -e ASCEND_OP_EVAL_IMAGE="ascend-op-eval@${IMAGE_DIGEST}" \
   -e ASCEND_OP_EVAL_EVALUATOR_BUILD="${IMAGE_DIGEST}" \
   -e ASCEND_OP_EVAL_RELEASE_MODE=release \
@@ -44,6 +46,7 @@ docker run -d --name triton-eval \
   -e ASCEND_OP_EVAL_METHOD_CAPABILITIES='["python","npu","process-isolation","soc-ascend910_93"]' \
   -e ASCEND_OP_EVAL_ENGINE_SANDBOX_CONFIG=/opt/ascend-op-eval/engine-sandbox.json \
   -e ASCEND_OP_EVAL_ENGINE_SANDBOX_SHA256="$(sha256sum "${REPO}/deploy-a3/engine-sandbox-a3.json" | cut -d' ' -f1)" \
+  -e ASCEND_OP_EVAL_STAGE_SPOOL_DIR=/opt/ascend-op-eval/stage-spool \
   -e ASCEND_OP_EVAL_WORKER_HARDWARE_MODEL=Ascend910B1 \
   -e ASCEND_OP_EVAL_WORKER_DRIVER_VERSION=26.1.1 \
   -e ASCEND_OP_EVAL_WORKER_RUNTIME_VERSION=CANN-9.2.0 \
