@@ -883,3 +883,30 @@ def test_restore_engine_recursion_limit_is_idempotent():
         assert sys.getrecursionlimit() == original
     finally:
         sys.setrecursionlimit(original)
+
+
+def test_official_judge_loads_from_the_packaged_engine():
+    torch = pytest.importorskip("torch")
+    golden = torch.tensor([1.0, 2.0, 3.0])
+
+    assert verify._official_judge_ok(golden, golden.clone(), torch.float32)[0] is True
+    assert verify._official_judge_ok(golden, golden * 2, torch.float32)[0] is False
+
+
+def test_official_judge_failure_overrides_a_legacy_float_pass(monkeypatch):
+    monkeypatch.setattr(verify, "_official_judge_ok", lambda *args: (False, {"mere": 1.0}))
+
+    with pytest.raises(verify.AccuracyError, match="官方判定未通过"):
+        verify._compare_with_official(None, None, "float32", lambda *args: None)
+
+
+def test_equal_integers_pass_when_the_official_judge_is_unavailable(monkeypatch):
+    torch = pytest.importorskip("torch")
+    monkeypatch.setattr(verify, "_official_judge_ok", lambda *args: (None, {}))
+    values = torch.tensor([1, 2, 3], dtype=torch.int32)
+    ctx = SimpleNamespace(
+        input_dtype=torch.int32, input_type="integer", data_type=torch.int32,
+        finite_count=3, size=3,
+    )
+
+    verify._compare_integer_compute(values, values.clone(), ctx)

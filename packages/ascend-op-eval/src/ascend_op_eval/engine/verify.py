@@ -738,8 +738,10 @@ def _compare_integer_compute(fw_finite, impl_finite, ctx):
         f"输入 dtype={ctx.input_dtype}（{ctx.input_type}），输出 dtype={ctx.data_type}；"
         f"误差要求=|actual - golden| == 0（严格相等，finite={ctx.finite_count}/{ctx.size}）"
     )
+    # Exact equality passes unless the official judge explicitly fails; an
+    # unavailable judge (None) keeps the legacy exact-equality verdict.
     _ok, _m = _official_judge_ok(fw_finite, impl_finite, ctx.data_type)
-    if _ok is True and torch.equal(fw_finite, impl_finite):
+    if _ok is not False and torch.equal(fw_finite, impl_finite):
         return
     diff = (fw_finite.to(torch.int64) - impl_finite.to(torch.int64)).abs()
     violation_count = int((diff > 0).sum().item())
