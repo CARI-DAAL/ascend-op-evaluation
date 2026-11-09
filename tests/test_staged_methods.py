@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from ascend_op_eval.api.contract import EvaluationResource
 from ascend_op_eval.config import Settings
 from ascend_op_eval.evaluators.base import run_script
 from ascend_op_eval.evaluators.evaluation import EvaluationEvaluator
@@ -134,8 +135,8 @@ async def test_build_stage_on_cpu_hands_wheel_to_separately_leased_npu_stage(
         between = await read(client, location)
         assert between["state"] == "running" and between["result"] is None
         # Each stage gets its own deadline, starting when it is queued.
-        moved = datetime.fromisoformat(between["deadline_at"]) - datetime.fromisoformat(
-            submitted["deadline_at"]
+        moved = EvaluationResource.model_validate_json(json.dumps(between)).deadline_at - (
+            EvaluationResource.model_validate_json(json.dumps(submitted)).deadline_at
         )
         assert moved == timedelta(seconds=50)
         spooled = app.settings.stage_spool_dir / evaluation_id
