@@ -90,3 +90,42 @@ async def test_native_request_is_described_by_live_openapi(tmp_path, release_cat
         document = (await client.get("/openapi.json")).json()
     validate(document, body_schema(document["paths"]["/evaluations"]["post"]),
              native_payload("print('build')\n"))
+
+
+async def test_native_build_progress_is_scoped_to_its_attempt(tmp_path, release_catalog_files):
+    from ascend_op_eval.api.contract import NativeBuildEvidence
+
+    app = app_with_precheck(tmp_path, release_catalog_files)
+    worker = cpu_worker(app)
+    async with app.http as client:
+        submitted = await post(client, native_payload("print('build')"))
+        path = submitted.headers["Location"] + "/progress"
+        lease = app.store.claim_next(worker.identity)
+        before = (await client.get(path, headers=trial_headers())).json()
+        assert "native_build" not in before
+        evidence = NativeBuildEvidence(outcome="compiled", duration_ms=2, exit_code=0)
+        assert app.store.save_native_build(lease, evidence)
+        ready = (await client.get(path, headers=trial_headers())).json()
+        assert ready["native_build"] == evidence.model_dump(mode="json")
+        assert ready["progress_revision"] > before["progress_revision"]
+        assert ready["completed_checks"]["compile"] is None
+        app.clock.advance_ms(app.settings.lease_seconds * 1000 + 1)
+        assert app.store.recover_expired_leases().requeued == 1
+        assert "native_build" not in (await client.get(path, headers=trial_headers())).json()
+        assert app.store.claim_next(worker.identity).attempt_id != lease.attempt_id
+        assert "native_build" not in (await client.get(path, headers=trial_headers())).json()
+
+
+async def test_source_only_preflight_runs_native_build(tmp_path, release_catalog_files):
+    app = app_with_precheck(tmp_path, release_catalog_files)
+    worker = cpu_worker(app)
+    project = native_payload("print('CPU build')")["candidate"]
+    async with app.http as client:
+        submitted = await client.post("/preflight", json={"candidate": project},
+                                      headers=trial_headers())
+        assert submitted.status_code == 202, submitted.text
+        assert worker.run_once()
+        result = (await client.get(submitted.headers["Location"], headers=trial_headers())).json()
+        build = result["result"]["native_build"]
+        assert build["outcome"] == "compiled" and build["artifact_sha256"]
+        assert result["result"]["correctness"] is None

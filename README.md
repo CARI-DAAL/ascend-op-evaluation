@@ -20,7 +20,16 @@ export ASCEND_OP_EVAL_CLIENT_URL=http://YOUR_ASCEND_INSTANCE:11907
 export ASCEND_OP_EVAL_CLIENT_CAPABILITY_FILE=/path/to/caller-capability
 ```
 
-Prepare a definition, workloads and a candidate exporting `run(*args)`:
+For CPU compiler feedback during candidate iteration, submit the source directly:
+
+```bash
+ascend-op-eval preflight --triton candidate.py
+```
+
+This checks Python bytecode compilation. Use `--native-project project/native.json`
+to run a native project's build command on a CPU worker with the target toolchain.
+
+For device verification, prepare a definition, workloads and a candidate exporting `run(*args)`:
 
 ```bash
 ascend-op-eval verify --definition definition.json --workloads workloads.jsonl \

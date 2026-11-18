@@ -1,6 +1,6 @@
 ---
 name: ascend-op-eval
-description: Measure or profile PyTorch, Triton or native AscendC operators, compare candidates against a reference for correctness and speedup, or recover a deployed evaluation.
+description: Get CPU compiler feedback for a Triton or AscendC candidate, verify Ascend operator correctness, measure speedup, profile a bottleneck, or recover a deployed evaluation.
 ---
 
 # Ascend Op Eval
@@ -11,6 +11,28 @@ and the caller capability-file path from the user's existing configuration:
 `ASCEND_OP_EVAL_CLIENT_URL` and `ASCEND_OP_EVAL_CLIENT_CAPABILITY_FILE`, or the equivalent `--url` and
 `--capability-file` flags. Resolve the script relative to this `SKILL.md`, then
 invoke its absolute path from the directory containing the user's inputs.
+
+## Choose the next evaluation
+
+Use the least expensive check that answers the current question. Preflight takes just the
+source. With `ASCEND_OP_EVAL_CLI` pointing to the bundled client, run:
+
+```bash
+python3 "$ASCEND_OP_EVAL_CLI" preflight --triton candidate.py
+```
+
+| Question | Command | Evidence to use |
+| --- | --- | --- |
+| Can Python compile the edited Triton module? | `preflight --triton candidate.py` | Read `result.compile.data`. In `python_bytecode` mode a frontend error includes the compiler diagnostic in `error_excerpt`. A pass establishes bytecode compilation only. |
+| Does the native build command succeed on the target toolchain? | `preflight --native-project project/native.json` | Read `result.native_build` for the exit code, log and artifact digest. An independent device submission builds again. |
+| Does the candidate produce the reference outputs? | `verify` with both sources | Require complete correctness across the supplied workloads. |
+| Is a correct candidate faster? | Two-source `benchmark` | One request checks correctness then measures speed. Read correctness, timing method, coverage and per-case timings together. |
+| What explains a measured bottleneck? | `profile` | Select the suspect workload and the trace or counters needed to test the hypothesis. |
+
+For a terminal preflight, exit 0 means the requested compile check passed. Exit 1
+returns candidate feedback. Exit 2 calls for inspecting the service or client error.
+If the edit depends on device execution, go directly to the device check.
+Persist the evaluation ID with the candidate revision.
 
 ## Submit an operator
 
@@ -72,9 +94,8 @@ counters come from the benchmark capture without an extra `profile` request;
 they do not establish op/deep profiling coverage. Event and older results omit
 the field. Candidate counters remain fresh when Torch baseline timing is cached.
 
-The client normally
-polls for up to 960 seconds with a 1-second interval; `--timeout`,
-`--poll-interval` and `--no-wait` control that client behavior. An elapsed client
+Use `--timeout` to bound the client wait, `--poll-interval` to adjust polling,
+and `--no-wait` to return the admitted resource. An elapsed client
 wait does not cancel accepted work.
 
 ## Native AscendC candidates
@@ -91,8 +112,8 @@ no-follow file APIs.
 The worker needs the declared CANN/AscendC toolchain and ABI dependencies;
 builds happen in the private leased attempt. Use `evaluate --checks compile`
 for native build-only evidence, or `verify` / `benchmark` for device checks.
-Build diagnostics appear in `result.native_build`; compilation success is not
-correctness evidence.
+During a native run, `progress EVALUATION_ID` exposes the current attempt’s
+`native_build` as soon as it is published. The final build log is in `result.native_build`.
 
 Native timing defaults to profiler. `native_profiler_kernel_sum_v1` manually
 warms up, captures each measured call separately, sums all its kernel launches,

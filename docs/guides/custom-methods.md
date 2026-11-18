@@ -175,7 +175,10 @@ evaluation publishes output artifacts.
 Each stage has its own lease-recovery retry budget. A missing or corrupt
 spooled handoff is `environment_unavailable`. `result.method.data.stages`
 lists every executed stage with its device, outcome, `duration_ms` and handoff
-digests. The `method_stage_duration_seconds` metric splits CPU and NPU time.
+digests. While the next stage is queued or running, `GET /evaluations/{id}/progress`
+returns the committed stages in `method_stages`. Agents can observe a successful
+CPU handoff before the NPU stage starts. `completed_checks.method` is available
+when the method itself finishes. The `method_stage_duration_seconds` metric splits CPU and NPU time.
 
 Set `ASCEND_OP_EVAL_STAGE_SPOOL_DIR` to an absolute directory shared by every
 CPU and NPU worker, and set it on the API as well. Admission rejects staged

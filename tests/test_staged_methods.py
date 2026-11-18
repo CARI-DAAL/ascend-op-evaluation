@@ -134,6 +134,11 @@ async def test_build_stage_on_cpu_hands_wheel_to_separately_leased_npu_stage(
         assert cpu.run_once()
         between = await read(client, location)
         assert between["state"] == "running" and between["result"] is None
+        progress = await read(client, location + "/progress")
+        [built] = progress["method_stages"]
+        assert built["device"] == "cpu"
+        assert built["handoff"][WHEEL]["size_bytes"] == len(WHEEL_BYTES)
+        assert progress["completed_checks"].get("method") is None
         # Each stage gets its own deadline, starting when it is queued.
         moved = EvaluationResource.model_validate_json(json.dumps(between)).deadline_at - (
             EvaluationResource.model_validate_json(json.dumps(submitted)).deadline_at

@@ -28,7 +28,12 @@ from pydantic import (
     model_validator,
 )
 
-from ascend_op_eval.methods.contracts import MethodExecution, MethodIdentity, MethodResult
+from ascend_op_eval.methods.contracts import (
+    MethodExecution,
+    MethodIdentity,
+    MethodResult,
+    MethodStageRecord,
+)
 
 SchemaVersion = Literal["2.1"]
 Purpose = Literal["trial", "grade", "rollout"]
@@ -268,6 +273,9 @@ class EvaluationRequest(StrictModel):
     triton_impl_name: str = Field(
         default="triton_ascend_impl", min_length=1, max_length=128
     )
+    compile_mode: Literal["python_bytecode"] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
     checks: list[Check] = Field(min_length=1, max_length=4)
     non_compute: bool = False
     deadline_seconds: int = Field(default=3600, ge=10, le=3600)
@@ -286,6 +294,11 @@ class EvaluationRequest(StrictModel):
 
     @model_validator(mode="after")
     def _normalize_and_couple(self):
+        if self.compile_mode is not None and (
+            self.checks != ["compile"] or self.native_candidate is not None
+            or self.implementation not in {"comparison", "triton"}
+        ):
+            raise ValueError("python_bytecode requires a compile-only Python candidate request")
         if self.method_execution is not None:
             if (self.checks != ["method"] or self.implementation != "method"
                     or self.native_candidate is not None or self.reference_code or self.kernel_code
@@ -304,7 +317,7 @@ class EvaluationRequest(StrictModel):
                 raise ValueError("native candidate requires comparison or native implementation")
             if self.correctness_from is not None:
                 raise ValueError("native candidates cannot reuse correctness evidence")
-            if self.native_case_count is None:
+            if self.native_case_count is None and self.checks != ["compile"]:
                 raise ValueError("native candidates require declared native_case_count")
             if self.performance is not None:
                 if self.performance.use_baseline_cache:
@@ -651,9 +664,21 @@ class CompileOutcome(StrictModel):
     """Result of the v2.1 compile check (spec §6)."""
 
     outcome: Literal["compiled", "compile_error"]
+    compile_mode: Literal["python_bytecode"] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
     compiler_stage: Literal["frontend", "backend"] | None = None
     error_excerpt: Annotated[str, AfterValidator(utf8_len(400))] | None = None
     duration_ms: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_bytecode_evidence(self):
+        if self.compile_mode == "python_bytecode" and (
+            self.compiler_stage != "frontend"
+            or (self.outcome == "compile_error") != bool(self.error_excerpt)
+        ):
+            raise ValueError("bytecode evidence requires frontend scope and failure diagnostics")
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -1258,6 +1283,10 @@ class EvaluationProgress(StrictModel):
     attempt_id: str | None
     active_check: Check | None
     completed_checks: CheckEvidence
+    native_build: NativeBuildEvidence | None = Field(default=None, exclude_if=lambda v: v is None)
+    method_stages: list[MethodStageRecord] = Field(
+        default_factory=list, max_length=4, exclude_if=lambda v: not v,
+    )
 
 
 def dump_contract(model: StrictModel) -> bytes:

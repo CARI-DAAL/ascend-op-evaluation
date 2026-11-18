@@ -379,6 +379,31 @@ def normalize_workloads(request: "OperatorRequest") -> list[dict[str, Any]]:
     return cases
 
 
+class PreflightRequest(StrictModel):
+    """Source-only CPU compilation request."""
+
+    triton_code: SourceCode | None = None
+    candidate: NativeCandidate | None = None
+    deadline_seconds: int = Field(default=3600, ge=10, le=3600)
+
+    @model_validator(mode="after")
+    def one_source(self):
+        if (self.triton_code is None) == (self.candidate is None):
+            raise ValueError("preflight requires exactly one candidate")
+        if self.triton_code is not None and not self.triton_code.strip():
+            raise ValueError("candidate source must not be empty")
+        return self
+
+    def evaluation_request(self):
+        return EvaluationRequest(
+            schema_version="2.1", op_name="operator",
+            implementation="native" if self.candidate else "triton",
+            checks=["compile"], reference_code="", kernel_code=self.triton_code or "",
+            native_candidate=self.candidate, deadline_seconds=self.deadline_seconds,
+            compile_mode="python_bytecode" if self.triton_code is not None else None,
+        )
+
+
 class OperatorRequest(StrictModel):
     definition: Definition
     workloads: list[Workload] = Field(min_length=1, max_length=128)

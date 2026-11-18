@@ -40,7 +40,7 @@ from ascend_op_eval.control.instance import (
 )
 from ascend_op_eval.control.security import Caller
 from ascend_op_eval.execution.correctness_evidence import CorrectnessEvidenceError
-from ascend_op_eval.operator_input import OperatorRequest, to_evaluation_request
+from ascend_op_eval.operator_input import OperatorRequest, PreflightRequest, to_evaluation_request
 
 router = APIRouter()
 
@@ -119,6 +119,30 @@ async def submit_evaluation(
         internal_request = to_evaluation_request(evaluation_request, checks=checks)
     except ValueError as error:
         raise errors.invalid_request_schema(str(error)) from None
+    return await _submit(request, response, internal_request, caller, instance,
+                         session_id, idempotency_key, wait_seconds)
+
+
+@router.post("/preflight", response_model=EvaluationResource, responses=SUBMIT_RESPONSES)
+async def submit_preflight(
+    request: Request,
+    response: Response,
+    preflight: PreflightRequest,
+    caller: Annotated[Caller, Depends(require_submit_caller)],
+    instance: Annotated[EvaluationInstance, Depends(get_instance)],
+    session_id: Annotated[SessionId | None, Header(alias="X-Session-ID")] = None,
+    idempotency_key: Annotated[IdempotencyKey | None, Header(alias="Idempotency-Key")] = None,
+    wait_seconds: Annotated[int, Query(
+        ge=0, le=60,
+        description="Wait for a terminal result; expiry returns 202 without cancelling work.",
+    )] = 0,
+) -> EvaluationResource:
+    return await _submit(request, response, preflight.evaluation_request(), caller, instance,
+                         session_id, idempotency_key, wait_seconds)
+
+
+async def _submit(request, response, internal_request, caller, instance, session_id,
+                  idempotency_key, wait_seconds):
     session_id = session_id or ("default" if idempotency_key else uuid4().hex)
     idempotency_key = idempotency_key or uuid4().hex
     try:

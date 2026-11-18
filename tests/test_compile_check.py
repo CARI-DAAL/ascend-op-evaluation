@@ -374,3 +374,37 @@ async def test_definitive_precheck_failure_never_replaces_correctness_or_profile
     assert result["profile"]["status"] == "succeeded"
     assert profile.calls == 1
     assert verify.calls == 1
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("bad_source", [False, True])
+async def test_bytecode_preflight_cpu_evidence(tmp_path, release_catalog_files, bad_source):
+    app = app_with_precheck(tmp_path, release_catalog_files, verdict_cache_enabled=True)
+    worker = cpu_worker(app)
+    marker = tmp_path / "candidate-imported"
+    source = f"open({str(marker)!r}, 'w').close()\n"
+    source += "return 1" if bad_source else "import unavailable_only_on_cpu"
+    body = {"triton_code": source}
+    async with app.http as client:
+        submitted = await client.post("/preflight", json=body, headers=trial_headers())
+        assert submitted.status_code == 202, submitted.text
+        assert worker.run_once()
+        result = (await client.get(submitted.headers["Location"], headers=trial_headers())).json()
+        data = result["result"]["compile"]["data"]
+        assert data["compile_mode"] == "python_bytecode"
+        assert data["compiler_stage"] == "frontend"
+        if bad_source:
+            assert data["outcome"] == "compile_error"
+            assert "line 2" in data["error_excerpt"]
+            assert "outside function" in data["error_excerpt"]
+        else:
+            assert data["outcome"] == "compiled"
+        assert not marker.exists()
+        assert result["result"]["correctness"] is None
+        assert result["result"]["provenance"]["execution_environment"] is None
+        replay = await client.post("/preflight", json=body, headers=trial_headers())
+        assert replay.json() == result
+        mixed = await client.post(
+            "/preflight", json={**body, "checks": ["correctness"]}, headers=trial_headers(),
+        )
+        assert mixed.status_code == 422

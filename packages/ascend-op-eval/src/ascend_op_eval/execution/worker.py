@@ -397,6 +397,7 @@ class Worker:
                             request.triton_impl_name,
                             deadline_at=deadline_at, lease_valid=keeper.is_valid,
                             device_id=self.device_id, runner=self.script_runner,
+                            python_bytecode=request.compile_mode == "python_bytecode",
                         ),
                         **reuse_kwargs,
                     )

@@ -108,6 +108,8 @@ def run_cli(
     args = [sys.executable, "-I", "-S", str(script), action]
     if action in {"get", "progress"}:
         args += [EID]
+    elif action == "preflight":
+        args += ["--triton", str(triton)]
     else:
         args += ["--definition", str(torch), "--workloads", str(cases)]
         if "triton" in sources:
@@ -829,3 +831,16 @@ def test_native_explicit_event_declaration_reaches_service(inputs):
     payload = json.loads(calls[0][3])
     assert payload["candidate"]["event_timing"] is True
     assert payload["performance"]["method"] == "event"
+
+
+def test_preflight_requests_cpu_bytecode_and_returns_candidate_error(inputs):
+    failed = resource("completed", compile=check(
+        outcome="compile_error", compile_mode="python_bytecode", compiler_stage="frontend",
+        error_excerpt="SyntaxError (line 2, column 1): 'return' outside function",
+    ))
+    with server(lambda calls: (200, failed, {})) as (url, calls):
+        result, output = run_cli(inputs, url, action="preflight")
+    assert result.returncode == 1 and output == failed
+    assert calls[0][:2] == ("POST", "/preflight?wait_seconds=1")
+    body = json.loads(calls[0][3])
+    assert body == {"triton_code": inputs[2].read_text()}

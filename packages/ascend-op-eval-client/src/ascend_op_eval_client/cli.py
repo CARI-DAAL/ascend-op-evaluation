@@ -14,7 +14,7 @@ def main(argv=None) -> int:
     if not arguments or arguments[0] in {"-h", "--help"}:
         parser = argparse.ArgumentParser(description=__doc__)
         parser.add_argument("command", choices=(
-            "verify", "benchmark", "profile", "evaluate", "get", "progress", "version",
+            "preflight", "verify", "benchmark", "profile", "evaluate", "get", "progress", "version",
             "methods", "capabilities",
         ))
         parser.print_help()

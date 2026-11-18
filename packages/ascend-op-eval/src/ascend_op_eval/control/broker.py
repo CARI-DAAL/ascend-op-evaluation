@@ -501,7 +501,13 @@ class EvaluationStore:
         resource = EvaluationResource.model_validate_json(stored[b"resource"])
         attempt = stored.get(b"attempt_id", b"").decode("utf-8") or None
         active = stored.get(b"active_check", b"").decode("utf-8") or None
+        native_build = None
+        stages = json.loads(stored.get(b"method_stage_records", b"[]"))
         if resource.result is not None:
+            native_build = resource.result.native_build
+            method = resource.result.method
+            if method is not None and method.status == "succeeded" and method.data.stages:
+                stages = method.data.stages
             attempt = stored.get(b"completed_attempt_id", b"").decode("utf-8") or attempt
             outcomes = {
                 check: getattr(resource.result, check)
@@ -512,6 +518,8 @@ class EvaluationStore:
             # A lease replacement invalidates every observation of its predecessor.
             outcomes, active = {}, None
         else:
+            if stored.get(b"native_build"):
+                native_build = NativeBuildEvidence.model_validate_json(stored[b"native_build"])
             valid = persisted_check_outcomes(stored.get(b"check_outcomes", b"{}"))
             requested = json.loads(stored[b"requested_checks"])
             outcomes = {check: value for check, value in valid.items() if check in requested}
@@ -531,6 +539,7 @@ class EvaluationStore:
             attempt_id=attempt,
             active_check=active,
             completed_checks=CheckEvidence.model_validate(outcomes),
+            native_build=native_build, method_stages=stages,
         )
 
     def lookup_idempotent(
@@ -1023,6 +1032,7 @@ class EvaluationStore:
             pipeline.hset(resource_key, "native_build", canonical_json_bytes(
                 evidence.model_dump(mode="json")
             ))
+            pipeline.hincrby(resource_key, "progress_revision", 1)
 
         return self._fenced_write(lease, mutate)
 

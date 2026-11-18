@@ -81,7 +81,7 @@ def case_indices(value: str) -> list[int]:
 def arguments(argv):
     parser = Parser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for action in ("verify", "benchmark", "profile", "evaluate", "get", "progress"):
+    for action in ("preflight", "verify", "benchmark", "profile", "evaluate", "get", "progress"):
         command = commands.add_parser(action)
         command.add_argument("--url", default=client_setting("URL", "EVALUATION_URL"))
         command.add_argument(
@@ -101,17 +101,18 @@ def arguments(argv):
         if action in {"get", "progress"}:
             command.add_argument("evaluation_id")
         else:
-            command.add_argument("--definition", type=Path, required=True)
-            command.add_argument("--custom-inputs", type=Path)
-            command.add_argument("--seed", type=int, default=200)
-            command.add_argument("--triton-only", action="store_true")
-            command.add_argument("--candidate-only", action="store_true")
+            if action != "preflight":
+                command.add_argument("--definition", type=Path, required=True)
+                command.add_argument("--custom-inputs", type=Path)
+                command.add_argument("--seed", type=int, default=200)
+                command.add_argument("--triton-only", action="store_true")
+                command.add_argument("--candidate-only", action="store_true")
+                command.add_argument("--workloads", type=Path, required=True)
             candidate = command.add_mutually_exclusive_group()
             candidate.add_argument("--triton", type=Path)
             candidate.add_argument(
                 "--native-project", type=Path, help="JSON manifest with explicit project file paths"
             )
-            command.add_argument("--workloads", type=Path, required=True)
             command.add_argument("--idempotency-key")
             command.add_argument("--session-id")
             command.add_argument("--deadline-seconds", type=int)
@@ -185,15 +186,16 @@ def arguments(argv):
     args = parser.parse_args(argv)
     if args.command == "version":
         return args
-    if args.command not in {"get", "progress"} and args.triton_only and args.triton is None:
+    if getattr(args, "triton_only", False) and args.triton is None:
         raise ClientError("INVALID_ARGUMENT", "--triton-only requires --triton")
     if (
-        args.command not in {"get", "progress"}
-        and args.candidate_only
+        getattr(args, "candidate_only", False)
         and args.triton is None
         and args.native_project is None
     ):
         raise ClientError("INVALID_ARGUMENT", "--candidate-only requires a candidate")
+    if args.command == "preflight" and args.triton is None and args.native_project is None:
+        raise ClientError("INVALID_ARGUMENT", "preflight requires --triton or --native-project")
     if args.wait_for and (args.no_wait or args.command == "progress"):
         raise ClientError("INVALID_ARGUMENT", "--wait-for requires a waiting evaluation or get")
     return args
@@ -580,6 +582,27 @@ class Client:
             raise error
         return value
 
+    def submit(self, payload, expected_checks):
+        if self.args.wait_for is not None and self.args.wait_for not in expected_checks:
+            raise ClientError("INVALID_ARGUMENT", "--wait-for must name a requested check")
+        if self.key is None:
+            self.key = uuid.uuid4().hex
+        if not re.fullmatch(r"[!-~]{1,128}", self.key):
+            raise ClientError("INVALID_ARGUMENT", "idempotency key has an invalid format")
+        if self.args.session_id is not None and not re.fullmatch(
+            r"[A-Za-z0-9._:-]{1,128}", self.args.session_id
+        ):
+            raise ClientError("INVALID_ARGUMENT", "session ID has an invalid format")
+        self.progress("Idempotency-Key: " + self.key)
+        self.save_handle()
+        body = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        endpoint = self.args.command
+        if endpoint == "evaluate":
+            endpoint = "evaluations"
+        if self.args.command == "preflight" and not self.args.no_wait and self.remaining() > 2:
+            endpoint += "?wait_seconds=1"
+        return self.request("POST", "/" + endpoint, body)
+
     def run(self):
         if self.args.capability_file is None:
             raise ClientError("INVALID_INPUT", "a capability file is required")
@@ -600,6 +623,13 @@ class Client:
                     raise ClientError("INVALID_RESPONSE", "service changed the evaluation ID")
                 self.save_handle()
                 return resource, 0
+        elif self.args.command == "preflight":
+            if self.args.triton is not None:
+                payload = {"triton_code": read_text(self.args.triton, "triton source")}
+            else:
+                payload = {"candidate": read_native_project(self.args.native_project)}
+            apply_controls(payload, self.args)
+            resource = self.submit(payload, ["compile"])
         else:
             definition = json_value(read_text(self.args.definition, "definition file"))
             if not isinstance(definition, dict):
@@ -689,21 +719,7 @@ class Client:
                     else ["performance"]
                 ),
             )
-            if self.args.wait_for is not None and self.args.wait_for not in expected_checks:
-                raise ClientError("INVALID_ARGUMENT", "--wait-for must name a requested check")
-            if self.key is None:
-                self.key = uuid.uuid4().hex
-            if not re.fullmatch(r"[!-~]{1,128}", self.key):
-                raise ClientError("INVALID_ARGUMENT", "idempotency key has an invalid format")
-            if self.args.session_id is not None and not re.fullmatch(
-                r"[A-Za-z0-9._:-]{1,128}", self.args.session_id
-            ):
-                raise ClientError("INVALID_ARGUMENT", "session ID has an invalid format")
-            self.progress("Idempotency-Key: " + self.key)
-            self.save_handle()
-            body = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")
-            endpoint = "evaluations" if self.args.command == "evaluate" else self.args.command
-            resource = self.request("POST", "/" + endpoint, body)
+            resource = self.submit(payload, expected_checks)
         while True:
             if self.evaluation_id is not None and resource["evaluation_id"] != self.evaluation_id:
                 raise ClientError("INVALID_RESPONSE", "service changed the evaluation ID")
@@ -732,7 +748,7 @@ class Client:
                     return snapshot, status
             if resource["state"] in TERMINAL or self.args.no_wait:
                 status = exit_status(resource)
-                single_input = self.args.command != "get" and (
+                single_input = self.args.command not in {"get", "preflight"} and (
                     not reference or not candidate_present
                 )
                 result = resource.get("result") or {}

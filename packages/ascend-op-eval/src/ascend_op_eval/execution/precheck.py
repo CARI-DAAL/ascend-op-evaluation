@@ -14,6 +14,7 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
+from ascend_op_eval.api.contract import CompileOutcome
 from ascend_op_eval.config import Settings
 from ascend_op_eval.evaluators.base import (
     LeaseLostError,
@@ -30,9 +31,9 @@ def run_precheck(
     cache: verdict_cache.VerdictCache | None, settings: Settings, kernel_code: str, impl_name: str,
     *, deadline_at: datetime | None = None,
     lease_valid: Callable[[], bool] | None = None, device_id: int | None = None,
-    runner: Callable[..., ScriptOutcome] | None = None,
-) -> verdict_cache.Verdict | None:
-    """Return explicit syntax/import evidence; None means no definitive verdict.
+    runner: Callable[..., ScriptOutcome] | None = None, python_bytecode: bool = False,
+) -> verdict_cache.Verdict | CompileOutcome | None:
+    """Return bytecode or import evidence from the explicitly requested compiler mode.
 
     Every invocation belongs to an explicitly requested compile check. Cached
     passes establish only this same scoped precheck, never backend JIT
@@ -43,8 +44,9 @@ def run_precheck(
         raise LeaseLostError("lease lost before syntax/import precheck")
     if deadline_at is not None and remaining_seconds(deadline_at) <= 0:
         return None
-    digest = verdict_cache.digest_for(kernel_code, impl_name, settings.cann_fingerprint)
-    if cache is not None and settings.verdict_cache_enabled:
+    digest = None
+    if not python_bytecode and cache is not None and settings.verdict_cache_enabled:
+        digest = verdict_cache.digest_for(kernel_code, impl_name, settings.cann_fingerprint)
         cached = cache.get(digest)
         if cached is not None:
             return cached
@@ -53,8 +55,9 @@ def run_precheck(
             safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", impl_name)
             module_path = Path(work) / f"candidate_{safe_name}.py"
             module_path.write_text(kernel_code, encoding="utf-8")
+            script = "check_python_bytecode.py" if python_bytecode else "precheck_module.py"
             proc = (runner if runner is not None else run_script)(
-                [sys.executable, str(Path(settings.engine_dir) / "precheck_module.py"),
+                [sys.executable, str(Path(settings.engine_dir) / script),
                  str(module_path), impl_name],
                 cwd=work, device_id=device_id, deadline_at=deadline_at,
                 lease_valid=lease_valid, budget_seconds=settings.precheck_budget_seconds,
@@ -74,6 +77,12 @@ def run_precheck(
         verdict = json.loads(line[len("VERDICT "):])
     except json.JSONDecodeError:
         return None
+    if python_bytecode:
+        try:
+            evidence = CompileOutcome.model_validate(verdict)
+        except ValueError:
+            return None
+        return evidence if evidence.compile_mode == "python_bytecode" else None
     if (not isinstance(verdict, dict) or verdict.get("inconclusive")
             or "stage" not in verdict or verdict["stage"] not in (None, "syntax", "import")):
         return None

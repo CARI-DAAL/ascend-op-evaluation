@@ -45,6 +45,40 @@ each call submits new work. Poll `/evaluations/{evaluation_id}` to recover the
 resource after the HTTP wait ends. There is no task catalog, separate tool token,
 trial-turn budget or observation-text envelope on these endpoints.
 
+## CPU preflight during candidate iteration
+
+Use the deployed CPU worker to get compiler feedback before spending a card lease.
+The request contains only the candidate and an optional deadline.
+
+```bash
+ascend-op-eval preflight --triton candidate.py
+```
+
+For Triton, `POST /preflight` accepts `{"triton_code": "..."}`. The service returns
+`compile_mode="python_bytecode"`. The worker's Python interpreter compiles the supplied
+candidate module to bytecode without importing it, creating inputs, or running
+any workload. A syntax failure returns the Python diagnostic in
+`result.compile.data.error_excerpt`, including location when available.
+A pass establishes Python frontend compilation. Import resolution, Triton JIT,
+numerical correctness and latency each require separate evidence.
+The existing `evaluate --checks compile` includes import resolution.
+
+For native projects, replace `--triton candidate.py` with
+`--native-project project/native.json`. This runs the declared build on the CPU
+worker and returns the build log and artifact digest under `result.native_build`.
+Use a CPU worker with the target cross-toolchain. A later independent verify
+request builds again. For expensive builds, a staged method can hand the built
+artifact directly to its NPU stage. [Staged methods](custom-methods.md#staged-methods)
+
+For a terminal preflight response, CLI exit 0 indicates the requested compiler check passed. Exit 1 reports a
+candidate failure. Exit 2 reports missing evidence or a service/client failure.
+Inspect the returned outcome before changing the candidate. After a pass,
+submit the full workloads to `verify` or a two-source `benchmark` for device evidence.
+
+For an in-flight native evaluation, `GET /evaluations/{id}/progress` exposes
+`native_build` once the current attempt publishes it. A replacement attempt
+must publish its own build. The terminal result contains the final build evidence.
+
 ## PyTorch profiling scope
 
 PyTorch-only profiling observes the profiling process, including initialization;

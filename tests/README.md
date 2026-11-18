@@ -40,6 +40,23 @@ Test modules share helpers through `conftest.py` and narrowly scoped helper file
 The current flat test layout preserves those imports; module names identify the
 behavior under test.
 
+## Agent CLI smoke on Ascend hardware
+
+Deploy the branch under test to the test API and its CPU and NPU workers. From
+the same checkout, point `ASCEND_OP_EVAL_CLIENT_URL` and
+`ASCEND_OP_EVAL_CLIENT_CAPABILITY_FILE` at that instance, then run:
+
+```bash
+python -m pytest -q -s tests/test_preflight_npu.py
+```
+
+The test uses the shipped CLI. It submits invalid Python and a valid Triton add
+to CPU preflight, then verifies the same add source on both NPU workloads.
+Report the checkout SHA, printed service version/build, three evaluation IDs,
+wall times, and pytest outcome. Acceptance requires one passed test. A skip
+means the target connection was unconfigured. The times include queueing and
+client polling and provide a smoke observation only.
+
 ## Fixtures
 
 `fixtures/engine/` contains private engine observations.

@@ -176,6 +176,10 @@ class EvaluationEvaluator:
         outcome = produce()
         if not lease_valid():
             raise LeaseLostError(f"lease lost during {check} execution")
+        if (check == "method" and outcome.status == "succeeded" and outcome.data.stages
+                and outcome.data.stages[-1].handoff):
+            # advance_method_stage publishes the handoff and queues the next stage atomically.
+            return outcome
         if not progress.save(check, outcome):
             raise LeaseLostError(f"save({check}) was rejected by the fenced sink")
         return outcome
@@ -191,7 +195,7 @@ class EvaluationEvaluator:
         pinned: PinnedProvenance,
         progress: ProgressSink,
         *,
-        precheck: Callable[[], str | None] | None = None,
+        precheck: Callable[[], str | CompileOutcome | None] | None = None,
         reuse_correctness: Callable[[], CheckSucceeded[CorrectnessResult]] | None = None,
         on_native_build: Callable | None = None,
         on_method_artifacts: Callable | None = None,
@@ -263,7 +267,18 @@ class EvaluationEvaluator:
                 ))
             started = monotonic()
             verdict = precheck() if precheck is not None else None
-            return compile_outcome_from_precheck(verdict, (monotonic() - started) * 1000)
+            duration_ms = (monotonic() - started) * 1000
+            if isinstance(verdict, CompileOutcome):
+                return CheckSucceeded[CompileOutcome](
+                    status="succeeded",
+                    data=verdict.model_copy(update={"duration_ms": duration_ms}),
+                )
+            if request.compile_mode == "python_bytecode":
+                return CheckFailed(status="failed", error=ErrorInfo(
+                    code="COMPILE_PRECHECK_UNAVAILABLE", phase="execution", check="compile",
+                    retryable=True, message="Python bytecode compiler produced no verdict",
+                ))
+            return compile_outcome_from_precheck(verdict, duration_ms)
 
         def correctness_check():
             if request.correctness_from is not None:
