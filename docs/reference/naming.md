@@ -9,7 +9,7 @@ owner: maintainers
 
 | Surface | Canonical name |
 | --- | --- |
-| Product / planned repository slug | Ascend Op Eval / `ascend-op-eval` |
+| Product / GitHub repository | Ascend Op Eval / [CARI-DAAL/ascend-op-evaluation](https://github.com/CARI-DAAL/ascend-op-evaluation) |
 | Service distribution / namespace | `ascend-op-eval` / `ascend_op_eval` |
 | Client distribution / namespace | `ascend-op-eval-client` / `ascend_op_eval_client` |
 | Operator client adapter | `ascend-op-eval-adapter-default` / `ascend_op_eval_adapter_default` |
@@ -46,6 +46,4 @@ the same source as the new plugin. `triton_evaluation` is available only through
 the optional compatibility package, with documented old module aliases.
 
 Upstream source names, license headers, historical commit URLs and immutable
-fixtures keep their original spelling. The remote currently remains
-`CARI-Fields/triton-op-evaluation`; owner-side repository renaming and redirects
-are a separate operation from this branch.
+fixtures keep their original spelling.

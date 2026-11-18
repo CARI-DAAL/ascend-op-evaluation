@@ -1,7 +1,7 @@
 # Server-agent handoff: benchmark pipe utilization
 
 Task: pull `feat/benchmark-pipe-utilization` from
-`https://github.com/CARI-DAAL/triton-op-evaluation.git`, validate on the server,
+`https://github.com/CARI-DAAL/ascend-op-evaluation.git`, validate on the server,
 and return a compact result. The implementation is based on `312bbc7`.
 Keep raw requests, responses, profiler files and test logs on the server.
 

@@ -5,10 +5,10 @@ Submit work to a separately deployed Ascend instance and recover the same admitt
 request after a client disconnect. Correctness, timing, profiling and execution
 failures retain their distinct evidence.
 
-The project name is **ascend-op-eval** and the Python namespace is
-`ascend_op_eval`. The Git remote retains its existing URL until the repository
-owner performs the remote rename. [Upgrade instructions](docs/migration/rename-and-cutover.md)
-cover the former Triton names and existing durable state.
+The GitHub repository is [CARI-DAAL/ascend-op-evaluation](https://github.com/CARI-DAAL/ascend-op-evaluation).
+Install the `ascend-op-eval` service package and import it as `ascend_op_eval`.
+The [upgrade instructions](docs/migration/rename-and-cutover.md) cover existing
+checkouts, former Triton names and durable state.
 
 ## Quick start
 

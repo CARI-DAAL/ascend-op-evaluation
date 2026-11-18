@@ -110,9 +110,15 @@ proposed and require their original CPU/device/parity acceptance gates. See
 [package responsibilities](../development/package-layout.md) and the
 [support matrix](../reference/support-matrix.md).
 
-The remote repository is still `CARI-Fields/triton-op-evaluation`; remote
-renaming, plugin reinstallation, publication and production rollout have not
-been performed by a local source branch. Existing service `v*` release tags
+For an existing HTTPS checkout, point `origin` at the renamed GitHub repository:
+
+```bash
+git remote set-url origin https://github.com/CARI-DAAL/ascend-op-evaluation.git
+git remote -v
+```
+
+SSH users can use `git@github.com:CARI-DAAL/ascend-op-evaluation.git`.
+The checkout directory can retain its local name. Existing service `v*` release tags
 remain readable. Package-qualified independent publishing is separately tracked.
 
 ## Rollback and compatibility removal
