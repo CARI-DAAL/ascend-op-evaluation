@@ -332,7 +332,8 @@ deadline; increasing only `--timeout` cannot extend it. Existing deployments
 must update any explicit [engine budget overrides](../operations/deployment.md#evaluation-time-budgets).
 
 `wait_seconds=0..60` bounds the HTTP wait. HTTP 202 returns an admitted resource
-and `Location`; HTTP 200 returns a terminal resource when available. Disconnects
+and its recovery `Location`. If a worker started during the wait, the response
+carries the latest observed revision. HTTP 200 returns a terminal resource when available. Disconnects
 and wait expiry do not cancel accepted work.
 
 ```bash

@@ -1,5 +1,7 @@
 # Contributing to Ascend Op Eval
 
+Follow the [repository code style](CODE_STYLE.md) when writing and reviewing changes.
+
 Use Python 3.10+ and run repository checks from the checkout root. Package
 metadata belongs to each package; the root pyproject configures repository tools.
 

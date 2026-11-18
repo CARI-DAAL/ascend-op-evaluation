@@ -2,23 +2,18 @@
 
 import asyncio
 from typing import Annotated
-from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import Response
 
 from ascend_op_eval.api import errors
 from ascend_op_eval.api.auth import require_read_caller, require_submit_caller
 from ascend_op_eval.api.contract import ErrorInfo, EvaluationRequest, EvaluationResource
 from ascend_op_eval.api.dependencies import get_instance
-from ascend_op_eval.api.routes import TERMINAL_STATES, wait_until_terminal
-from ascend_op_eval.api.schemas import IdempotencyKey, SessionId
-from ascend_op_eval.control.admission import ForbiddenError
+from ascend_op_eval.api.submission import TERMINAL_STATES, HttpSubmission, Submission
 from ascend_op_eval.control.broker import StorageError
 from ascend_op_eval.control.instance import (
     EvaluationInstance,
-    InstanceNotReadyError,
-    QueueUnavailableError,
 )
 from ascend_op_eval.control.security import Caller
 from ascend_op_eval.methods.contracts import (
@@ -55,13 +50,26 @@ def _registry_error(error):
     )
 
 
-def _same_submission(stored, submission):
-    return (
-        stored is not None
-        and stored.method_execution is not None
-        and canonical_json_bytes(stored.method_execution.submission.model_dump(mode="json"))
-        == canonical_json_bytes(submission.model_dump(mode="json"))
-    )
+def recover_method_submission(
+    instance: EvaluationInstance, caller: Caller, options: HttpSubmission,
+    submission: MethodSubmission,
+) -> tuple[EvaluationResource, EvaluationRequest] | None:
+    """Recover the originally admitted package even if the submitted alias has moved."""
+    try:
+        resource = instance.store.lookup_idempotent(caller.caller_id, options.idempotency_key)
+    except StorageError:
+        raise errors.internal() from None
+    if resource is None:
+        return None
+    stored = instance.store.request_visible(resource.evaluation_id, caller, options.session_id)
+    if stored is None or stored.method_execution is None:
+        raise errors.idempotency_conflict()
+    original = stored.method_execution.submission
+    if canonical_json_bytes(original.model_dump(mode="json")) != canonical_json_bytes(
+        submission.model_dump(mode="json")
+    ):
+        raise errors.idempotency_conflict()
+    return resource, stored
 
 
 @router.post(
@@ -151,86 +159,35 @@ async def submit_method(
     response: Response,
     caller: WriteCaller,
     instance: Instance,
-    session_id: Annotated[SessionId | None, Header(alias="X-Session-ID")] = None,
-    idempotency_key: Annotated[IdempotencyKey | None, Header(alias="Idempotency-Key")] = None,
-    wait_seconds: Annotated[int, Query(ge=0, le=60)] = 0,
-):
-    key = idempotency_key or uuid4().hex
-    session = session_id or ("default" if idempotency_key else uuid4().hex)
-    try:
-        existing = await asyncio.to_thread(instance.store.lookup_idempotent, caller.caller_id, key)
-        internal = None
-        if existing is not None:
-            stored = await asyncio.to_thread(
-                instance.store.request_visible, existing.evaluation_id, caller, session
-            )
-            if not _same_submission(stored, submission):
-                raise errors.idempotency_conflict()
-            internal = stored
-        if internal is None:
+    options: Submission,
+) -> EvaluationResource:
+    existing = await asyncio.to_thread(
+        recover_method_submission, instance, caller, options, submission,
+    )
+    if existing is None:
+        try:
             execution = await asyncio.to_thread(instance.methods.freeze, caller, submission)
-            internal = EvaluationRequest(
-                schema_version="2.1",
-                purpose="trial",
-                implementation="method",
-                op_name="method",
-                reference_code="",
-                kernel_code="",
-                checks=["method"],
-                deadline_seconds=submission.deadline_seconds,
-                method_execution=execution,
-            )
-        outcome = await asyncio.to_thread(
-            instance.submit, internal, caller, session_id=session, idempotency_key=key
+        except MethodRegistryError as error:
+            raise _registry_error(error) from None
+        internal = EvaluationRequest(
+            schema_version="2.1", purpose="trial", implementation="method", op_name="method",
+            reference_code="", kernel_code="", checks=["method"],
+            deadline_seconds=submission.deadline_seconds, method_execution=execution,
         )
-    except MethodRegistryError as error:
-        raise _registry_error(error) from None
-    except ForbiddenError:
-        raise errors.forbidden() from None
-    except InstanceNotReadyError:
-        raise errors.not_ready() from None
-    except QueueUnavailableError:
-        raise errors.queue_unavailable() from None
-    except StorageError:
-        raise errors.internal() from None
+    else:
+        _, internal = existing
+    outcome = await options.admit(instance, caller, internal)
     resource = outcome.resource
     if outcome.decision == "conflict":
-        # Another same-key submission may have won admission after this caller
-        # resolved a moving alias. Recover by the original request, not a newly
-        # resolved package; never execute an accepted logical request twice.
-        resource = await asyncio.to_thread(instance.store.lookup_idempotent, caller.caller_id, key)
-        stored = (
-            None
-            if resource is None
-            else await asyncio.to_thread(
-                instance.store.request_visible,
-                resource.evaluation_id,
-                caller,
-                session,
-            )
+        # A concurrent submission can win while this caller resolves a moving alias.
+        winner = await asyncio.to_thread(
+            recover_method_submission, instance, caller, options, submission,
         )
-        if not _same_submission(stored, submission):
+        if winner is None:
             raise errors.idempotency_conflict()
-    if outcome.decision == "rate_limited":
-        raise errors.rate_limited()
-    if outcome.decision == "limit_exceeded":
-        raise errors.limit_exceeded("caller inflight limit exceeded")
-    if resource.state not in TERMINAL_STATES and wait_seconds:
-        resource = (
-            await wait_until_terminal(
-                instance,
-                caller,
-                resource.evaluation_id,
-                budget_seconds=wait_seconds,
-                poll_seconds=instance.settings.api_poll_interval_seconds,
-                is_disconnected=request.is_disconnected,
-            )
-            or resource
-        )
-    if resource.state not in TERMINAL_STATES:
-        response.status_code = 202
-        response.headers["Location"] = f"/evaluations/{resource.evaluation_id}"
-    return resource
+        resource, _ = winner
+    assert resource is not None
+    return await options.respond(request, response, instance, caller, resource)
 
 
 @router.post(

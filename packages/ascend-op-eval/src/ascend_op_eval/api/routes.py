@@ -6,11 +6,9 @@ exists, execution errors are persisted outcomes — never HTTP 5xx. Transport
 wait, headers, and session correlation never enter admission.
 """
 import asyncio
-import time
 from typing import Annotated
-from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 
 from ascend_op_eval import versioning
@@ -23,6 +21,7 @@ from ascend_op_eval.api.auth import (
 )
 from ascend_op_eval.api.contract import (
     EvaluationProgress,
+    EvaluationRequest,
     EvaluationResource,
     ReleaseVerification,
     StorageVersions,
@@ -30,50 +29,14 @@ from ascend_op_eval.api.contract import (
 )
 from ascend_op_eval.api.dependencies import AppContext, get_context, get_instance
 from ascend_op_eval.api.errors import error_responses
-from ascend_op_eval.api.schemas import IdempotencyKey, Liveness, Readiness, SessionId
-from ascend_op_eval.control.admission import ForbiddenError
-from ascend_op_eval.control.broker import StorageError
-from ascend_op_eval.control.instance import (
-    EvaluationInstance,
-    InstanceNotReadyError,
-    QueueUnavailableError,
-)
+from ascend_op_eval.api.schemas import Liveness, Readiness
+from ascend_op_eval.api.submission import TERMINAL_STATES, HttpSubmission, Submission
+from ascend_op_eval.api.submission import wait_until_terminal as wait_until_terminal
+from ascend_op_eval.control.instance import EvaluationInstance
 from ascend_op_eval.control.security import Caller
-from ascend_op_eval.execution.correctness_evidence import CorrectnessEvidenceError
 from ascend_op_eval.operator_input import OperatorRequest, PreflightRequest, to_evaluation_request
 
 router = APIRouter()
-
-TERMINAL_STATES = ("completed", "failed", "timed_out", "cancelled")
-
-
-async def wait_until_terminal(
-    instance, caller, evaluation_id, *, budget_seconds, poll_seconds, is_disconnected
-) -> EvaluationResource | None:
-    """Poll the durable resource until terminal, budget end, or disconnect.
-
-    Waiting never terminalizes and never cancels; the caller simply receives
-    the current nonterminal resource when its budget ends.
-    """
-    deadline = time.monotonic() + budget_seconds
-    resource = await asyncio.to_thread(instance.get, evaluation_id, caller)
-    while resource is not None and resource.state not in TERMINAL_STATES:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0 or await _maybe_await(is_disconnected):
-            break
-        await asyncio.sleep(min(poll_seconds, max(remaining, 0)))
-        resource = await asyncio.to_thread(instance.get, evaluation_id, caller)
-    return resource
-
-
-async def _maybe_await(value):
-    import inspect
-
-    result = value()
-    if inspect.isawaitable(result):
-        return await result
-    return result
-
 
 SUBMIT_RESPONSES = {
     **error_responses(400, 401, 403, 409, 413, 422, 429, 500, 503),
@@ -97,12 +60,7 @@ async def submit_evaluation(
     evaluation_request: OperatorRequest,
     caller: Annotated[Caller, Depends(require_submit_caller)],
     instance: Annotated[EvaluationInstance, Depends(get_instance)],
-    session_id: Annotated[SessionId | None, Header(alias="X-Session-ID")] = None,
-    idempotency_key: Annotated[IdempotencyKey | None, Header(alias="Idempotency-Key")] = None,
-    wait_seconds: Annotated[int, Query(
-        ge=0, le=60,
-        description="Wait for a terminal result; expiry returns 202 without cancelling work.",
-    )] = 0,
+    submission: Submission,
 ) -> EvaluationResource:
     checks = {
         "verify": ["correctness"],
@@ -119,8 +77,7 @@ async def submit_evaluation(
         internal_request = to_evaluation_request(evaluation_request, checks=checks)
     except ValueError as error:
         raise errors.invalid_request_schema(str(error)) from None
-    return await _submit(request, response, internal_request, caller, instance,
-                         session_id, idempotency_key, wait_seconds)
+    return await _submit(request, response, internal_request, caller, instance, submission)
 
 
 @router.post("/preflight", response_model=EvaluationResource, responses=SUBMIT_RESPONSES)
@@ -130,67 +87,22 @@ async def submit_preflight(
     preflight: PreflightRequest,
     caller: Annotated[Caller, Depends(require_submit_caller)],
     instance: Annotated[EvaluationInstance, Depends(get_instance)],
-    session_id: Annotated[SessionId | None, Header(alias="X-Session-ID")] = None,
-    idempotency_key: Annotated[IdempotencyKey | None, Header(alias="Idempotency-Key")] = None,
-    wait_seconds: Annotated[int, Query(
-        ge=0, le=60,
-        description="Wait for a terminal result; expiry returns 202 without cancelling work.",
-    )] = 0,
+    submission: Submission,
 ) -> EvaluationResource:
-    return await _submit(request, response, preflight.evaluation_request(), caller, instance,
-                         session_id, idempotency_key, wait_seconds)
+    return await _submit(
+        request, response, preflight.evaluation_request(), caller, instance, submission,
+    )
 
 
-async def _submit(request, response, internal_request, caller, instance, session_id,
-                  idempotency_key, wait_seconds):
-    session_id = session_id or ("default" if idempotency_key else uuid4().hex)
-    idempotency_key = idempotency_key or uuid4().hex
-    try:
-        outcome = await asyncio.to_thread(
-            instance.submit, internal_request, caller,
-            session_id=session_id, idempotency_key=idempotency_key,
-        )
-    except ForbiddenError:
-        raise errors.forbidden() from None
-    except CorrectnessEvidenceError as error:
-        raise errors.invalid_request_schema(str(error)) from None
-    except InstanceNotReadyError:
-        raise errors.not_ready() from None
-    except QueueUnavailableError:
-        raise errors.queue_unavailable() from None
-    except StorageError:
-        raise errors.internal() from None
-
+async def _submit(
+    request: Request, response: Response, internal_request: EvaluationRequest,
+    caller: Caller, instance: EvaluationInstance, submission: HttpSubmission,
+) -> EvaluationResource:
+    outcome = await submission.admit(instance, caller, internal_request)
     if outcome.decision == "conflict":
         raise errors.idempotency_conflict()
-    if outcome.decision == "rate_limited":
-        raise errors.rate_limited()
-    if outcome.decision == "limit_exceeded":
-        raise errors.limit_exceeded("caller inflight limit exceeded")
-    resource = outcome.resource
-    assert resource is not None
-
-    if resource.state in TERMINAL_STATES:
-        # A replayed terminal resource answers 200 immediately.
-        return resource
-
-    if wait_seconds > 0:
-        final = await wait_until_terminal(
-            instance,
-            caller,
-            resource.evaluation_id,
-            budget_seconds=wait_seconds,
-            poll_seconds=instance.settings.api_poll_interval_seconds,
-            is_disconnected=request.is_disconnected,
-        )
-        if final is not None and final.state in TERMINAL_STATES:
-            return final
-
-    response.status_code = 202
-    response.headers["Location"] = request.url_for(
-        "get_evaluation", evaluation_id=resource.evaluation_id
-    ).path
-    return resource
+    assert outcome.resource is not None
+    return await submission.respond(request, response, instance, caller, outcome.resource)
 
 
 @router.get(

@@ -351,6 +351,11 @@ class EvaluationStore:
             mapping["correctness_from"] = payload["correctness_from"]
         return resource, mapping, deadline_ms
 
+    def _resource_fields(self, evaluation_id: str, *fields: bytes) -> dict[bytes, bytes]:
+        """Read one atomic projection without transferring unrelated sources or artifacts."""
+        values = self._r.hmget(self._key(f"resource:{evaluation_id}"), fields)
+        return {key: value for key, value in zip(fields, values, strict=True) if value is not None}
+
     def get_visible(self, evaluation_id: str, caller: Caller) -> EvaluationResource | None:
         """Return the resource iff the caller may read it; hide everything else.
 
@@ -359,7 +364,9 @@ class EvaluationStore:
         Unknown and invisible records return the same ``None``. Sessions never
         authorize reads, and observer reads never change ownership.
         """
-        stored = self._r.hgetall(self._key(f"resource:{evaluation_id}"))
+        stored = self._resource_fields(
+            evaluation_id, b"owner", b"purpose", b"resource",
+        )
         if not stored:
             return None
         if not self._visible_to(stored, caller):
@@ -495,7 +502,11 @@ class EvaluationStore:
 
     def get_progress_visible(self, evaluation_id: str, caller: Caller) -> EvaluationProgress | None:
         """Read one atomic snapshot of fenced evidence without changing resource semantics."""
-        stored = self._r.hgetall(self._key(f"resource:{evaluation_id}"))
+        stored = self._resource_fields(
+            evaluation_id, b"owner", b"purpose", b"resource", b"attempt_id", b"active_check",
+            b"method_stage_records", b"completed_attempt_id", b"replacement_pending",
+            b"native_build", b"check_outcomes", b"requested_checks", b"progress_revision",
+        )
         if not stored or not self._visible_to(stored, caller):
             return None
         resource = EvaluationResource.model_validate_json(stored[b"resource"])
@@ -871,7 +882,9 @@ class EvaluationStore:
     def request_visible(
         self, evaluation_id: str, caller: Caller, session_id: str | None = None,
     ) -> EvaluationRequest | None:
-        stored = self._r.hgetall(self._key(f"resource:{evaluation_id}"))
+        stored = self._resource_fields(
+            evaluation_id, b"owner", b"session_digest", b"canonical_request",
+        )
         if (not stored or stored[b"owner"].decode() != caller.caller_id
                 or not ({"trial:submit", "trial:read"} & caller.scopes)):
             return None
@@ -911,7 +924,10 @@ class EvaluationStore:
         return self._fenced_write(lease, mutate)
 
     def method_artifact_visible(self, evaluation_id: str, caller: Caller, name: str):
-        stored = self._r.hgetall(self._key(f"resource:{evaluation_id}"))
+        stored = self._resource_fields(
+            evaluation_id, b"owner", b"purpose", b"resource", b"method_artifacts",
+            b"attempt_id", b"completed_attempt_id", b"replacement_pending",
+        )
         if not stored or not self._visible_to(stored, caller):
             return None
         try:
@@ -929,7 +945,9 @@ class EvaluationStore:
             return None
 
     def is_cancel_requested(self, lease: AttemptLease) -> bool:
-        stored = self._r.hgetall(self._key(f"resource:{lease.evaluation_id}"))
+        stored = self._resource_fields(
+            lease.evaluation_id, b"cancel_requested", b"attempt_id", b"fencing_token",
+        )
         return bool(stored and stored.get(b"cancel_requested") == b"1"
                     and stored.get(b"attempt_id", b"").decode() == lease.attempt_id
                     and int(stored.get(b"fencing_token", b"-1")) == lease.fencing_token)

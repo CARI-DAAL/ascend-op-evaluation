@@ -66,6 +66,26 @@ async def test_wait_expiry_returns_202_without_state_mutation(app):
     ).state == "queued"
 
 
+async def test_wait_expiry_returns_the_observed_running_revision(app, monkeypatch):
+    seed_worker(app)
+    instance = app.app.state.context.instance
+    get_resource = instance.get
+    worker = WorkerIdentity(new_worker_id(), app.settings.evaluator_build, algorithms(app.settings))
+
+    def claim_before_read(evaluation_id, caller):
+        app.store.claim_next(worker)
+        return get_resource(evaluation_id, caller)
+
+    monkeypatch.setattr(instance, "get", claim_before_read)
+    async with app.http as client:
+        response = await post(client, params={"wait_seconds": "1"})
+        assert response.status_code == 202
+        observed = response.json()
+        recovered = await client.get(response.headers["Location"], headers=trial_headers())
+    assert observed["state"] == "running"
+    assert observed == recovered.json()
+
+
 async def test_disconnect_budget_is_not_a_task_timeout(app, make_command):
     resource = app.store.create_or_replay(make_command(caller=_http_trial_caller())).resource
     final = await wait_until_terminal(

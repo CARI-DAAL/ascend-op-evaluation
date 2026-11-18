@@ -83,3 +83,36 @@ def test_terminal_progress_retains_its_evidence_attempt(store, make_command, mak
     assert terminal.progress_revision > before.progress_revision
     assert terminal.active_check is None
     assert terminal.completed_checks.correctness.data.outcome == "correct"
+
+
+def test_polling_transfer_is_independent_of_source_and_artifact_size(
+    store, redis_client, make_command, make_worker, settings, monkeypatch,
+):
+    command, lease = claimed(store, make_command, make_worker)
+    key = f"{settings.redis_prefix}:resource:{command.evaluation_id}"
+    execute = redis_client.execute_command
+    read_bytes = []
+
+    def measure_read(*args, **kwargs):
+        reply = execute(*args, **kwargs)
+        values = reply.values() if isinstance(reply, dict) else reply
+        read_bytes.append(sum(len(value) for value in values if value is not None))
+        return reply
+
+    def poll():
+        assert store.get_visible(command.evaluation_id, make_caller()).state == "running"
+        assert store.get_progress_visible(command.evaluation_id, make_caller()).state == "running"
+        assert not store.is_cancel_requested(lease)
+
+    with monkeypatch.context() as observed:
+        observed.setattr(redis_client, "execute_command", measure_read)
+        poll()
+    initial_sizes = read_bytes.copy()
+    redis_client.hset(key, mapping={
+        "canonical_request": b"x" * 1_000_000, "method_artifacts": b"y" * 1_000_000,
+    })
+    read_bytes.clear()
+    monkeypatch.setattr(redis_client, "execute_command", measure_read)
+    poll()
+    assert len(initial_sizes) == 3
+    assert read_bytes == initial_sizes
