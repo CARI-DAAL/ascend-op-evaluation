@@ -29,6 +29,7 @@ from ascend_op_eval.api.contract import (
     CheckOutcome,
     ErrorInfo,
     EvaluationRequest,
+    ProfileCheckpoint,
 )
 from ascend_op_eval.operator_input import INPUT_GENERATION_FAILURE_PREFIX
 from ascend_op_eval.runtimes.sandbox import isolate_command
@@ -54,7 +55,10 @@ class ProgressSink(Protocol):
 
     def begin(self, check: Check) -> bool: ...
 
-    def save(self, check: Check, outcome: CheckOutcome) -> bool: ...
+    def save(
+        self, check: Check | Literal["profile_checkpoint"],
+        outcome: CheckOutcome | ProfileCheckpoint,
+    ) -> bool: ...
 
 
 @dataclass

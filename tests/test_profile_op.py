@@ -145,6 +145,10 @@ def test_profile_op_case_builds_equals_joined_cli(tmp_path, monkeypatch):
         "--launch-count=3",
     ]
     assert "--kernel-name=first_kernel" in seen["cmd"]
+    assert result["capture_scope"] == {
+        "window": "application", "kernel_name_prefixes": ["first_kernel"],
+        "launch_limit": 3, "observed_kernel_records": 1, "case_launch_coverage": "unknown",
+    }
     assert result["status"] == "complete"
 
 

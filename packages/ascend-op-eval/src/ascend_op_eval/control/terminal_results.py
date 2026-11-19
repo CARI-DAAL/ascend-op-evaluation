@@ -26,6 +26,7 @@ from ascend_op_eval.api.contract import (
     MethodCheckOutcome,
     NativeBuildEvidence,
     PerformanceOutcome,
+    ProfileCheckpoint,
     ProfileOutcome,
     Provenance,
     SkipInfo,
@@ -70,6 +71,13 @@ def _valid_outcomes(outcomes: Mapping[str, object]) -> dict[str, object]:
         if outcome.error is not None and outcome.error.check != check:
             continue
         valid[check] = outcome
+    if outcomes.get("profile_checkpoint") is not None:
+        try:
+            valid["profile_checkpoint"] = ProfileCheckpoint.model_validate(
+                outcomes["profile_checkpoint"]
+            )
+        except ValueError:
+            pass
     return valid
 
 
@@ -142,6 +150,9 @@ def complete_evaluation(
                     ),
                 ),
             )
+    checkpoint = valid.get("profile_checkpoint")
+    if "profile" not in final or final["profile"].status != "timeout":
+        checkpoint = None
     custom_method = requested_set == {"method"}
     provenance = Provenance(
         schema_version="2.1",
@@ -169,7 +180,7 @@ def complete_evaluation(
     )
     return EvaluationResult.model_validate(
         {**{check: final.get(check) for check in _CHECK_ORDER}, "provenance": provenance,
-         "native_build": native_build},
+         "native_build": native_build, "profile_checkpoint": checkpoint},
         context={"requested_checks": requested},
     )
 

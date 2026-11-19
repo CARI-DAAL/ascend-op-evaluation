@@ -89,6 +89,32 @@ when interpreting results; neither mode promises complete operator coverage.
 For the underlying profiler's filtering and launch-count options, see
 [msprof op parameters](https://www.hiascend.com/document/detail/en/canncommercial/850/devaids/optool/atlasopdev_16_0082.html).
 
+## Recovering cases after a profiling timeout
+
+On services advertising `profile-case-checkpoints`, poll the evaluation's
+progress for `profile_checkpoint` during an op or deep check. Its `observed`
+contains validated case results and tallies for that subset. Its
+`pending_case_indices` identifies the remaining requested cases, and
+`total_cases` describes the full input inventory. Check the attempt ID when
+polling. A replacement starts with its own evidence.
+
+A timed-out resource can retain this last published checkpoint at
+`result.profile_checkpoint`. The profile check still reports `timeout`.
+For example, if cases 0 and 1 are present and the pending list is `[2]`,
+submit the same inputs and profiling options with `--case-indices 2` to the
+`profile` command. An absent checkpoint means no validated subset was retained.
+Case-level partial or failed outcomes in the observed subset retain their own status.
+
+## Interpreting an op profile
+
+Services advertising `op-profile-capture-scope` accept `profile.launch_limit`
+(1–100, op mode only). The default is one matching launch for named kernels and
+100 for the PyTorch application filter. Use `capture_scope` to inspect the
+effective limit, name prefixes and number of parsed kernel records before
+display truncation. Whole-case launch coverage is unknown. An op kernel's
+percentage uses the sum of the displayed durations. Historical results can
+omit scope. An execution failure before export can also leave scope unavailable.
+
 ## Interpreting a deep profile hotspot
 
 Deep mode groups matching tasks by full kernel name in the first requested metric
@@ -99,6 +125,7 @@ count, total and maximum duration, and total duration across all matching names
 in that pass. Durations are in microseconds. Overlapping tasks count separately,
 so this share describes captured device work and can differ from wall time.
 
+The optional `bound_rule` records the classifier rule associated with the ratios.
 Each metric pass contributes counters from its longest timed row for the selected
 name. When multiple passes contribute and that name repeats, a partial result
 flags the ambiguity in relating those counters to an individual launch.

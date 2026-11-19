@@ -42,6 +42,7 @@ from ascend_op_eval.api.contract import (
     EvaluationResult,
     ExecutionEnvironment,
     PerformanceResult,
+    ProfileCheckpoint,
     ProfileParams,
     ProfileResult,
     SinglePerformanceResult,
@@ -66,6 +67,7 @@ from ascend_op_eval.evaluators.shaping import (
     bounded_detail,
     shape_correctness,
     shape_performance,
+    shape_profile_checkpoint,
     shape_profile_runs,
     shape_single_performance,
 )
@@ -402,6 +404,30 @@ class EvaluationEvaluator:
                 })
             return result
 
+        latest_profile: ProfileCheckpoint | None = None
+
+        def publish_profile(raw):
+            nonlocal latest_profile
+            guard_native()
+            try:
+                checkpoint = shape_profile_checkpoint(raw, request.profile or ProfileParams())
+            except ShapingError:
+                return
+            if request.implementation != "comparison":
+                checkpoint.observed = checkpoint.observed.model_copy(update={
+                    "implementation": request.implementation, "correctness_verified": False,
+                })
+            if latest_profile is not None:
+                previous = latest_profile.observed.cases
+                if (checkpoint.total_cases != latest_profile.total_cases
+                        or not set(checkpoint.pending_case_indices)
+                        < set(latest_profile.pending_case_indices)
+                        or checkpoint.observed.cases[:len(previous)] != previous):
+                    return
+            if not lease_valid() or not progress.save("profile_checkpoint", checkpoint):
+                raise LeaseLostError("profile case checkpoint was fenced out")
+            latest_profile = checkpoint
+
         if "compile" in requested:
             outcomes["compile"] = slot(
                 "compile",
@@ -518,6 +544,7 @@ class EvaluationEvaluator:
                             device_id,
                             deadline_at,
                             lease_valid,
+                            on_checkpoint=publish_profile,
                         ),
                         profile_evidence,
                     ),
@@ -525,6 +552,8 @@ class EvaluationEvaluator:
                     progress,
                 )
             outcomes["profile"] = profile
+            if profile.status == "timeout" and latest_profile is not None:
+                outcomes["profile_checkpoint"] = latest_profile
 
         return complete_evaluation(
             requested_checks=requested,

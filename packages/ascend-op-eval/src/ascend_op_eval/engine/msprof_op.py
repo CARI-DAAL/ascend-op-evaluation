@@ -289,18 +289,17 @@ def profile_op_case(
 ) -> dict[str, Any]:
     msprof_bin = os.environ.get("MSPROF_BIN", "msprof")
     command = [msprof_bin, "op", f"--output={output_dir}"]
-    if launch_count is not None:
-        command.append(f"--launch-count={launch_count}")
+    limit = launch_count if launch_count is not None else (100 if kernel_names is None else 1)
+    command.append(f"--launch-count={limit}")
     if kernel_names is None:
         # msprof op supports prefix alternatives, not arbitrary regular expressions.
         # Omitting the filter would collect only the first scheduled operator.
-        command.append("--kernel-name=" + "|".join(string.ascii_letters + string.digits + "_"))
-        if launch_count is None:
-            command.append("--launch-count=100")
+        prefixes = list(string.ascii_letters + string.digits + "_")
+    elif kernel_names:
+        prefixes = kernel_names
     else:
-        if not kernel_names:
-            return _failed_result("no Triton kernel names were supplied")
-        command.append(f"--kernel-name={'|'.join(kernel_names)}")
+        return _failed_result("no Triton kernel names were supplied")
+    command.append("--kernel-name=" + "|".join(prefixes))
     command.extend(app_cmd)
     outcome = run_command(
         command,
@@ -318,10 +317,17 @@ def profile_op_case(
             f"stderr-tail={outcome.stderr[-1000:]}"
         )
     result = parse_op_output(output_dir, kernel_names)
+    result["capture_scope"] = {
+        "window": "application",
+        "kernel_name_prefixes": prefixes,
+        "launch_limit": limit,
+        "observed_kernel_records": len(result["kernels"]),
+        "case_launch_coverage": "unknown",
+    }
     if kernel_names is None and result["status"] != "failed":
         result["warnings"].append(
             "Native operator capture includes application setup and is limited to "
-            f"{launch_count or 100} launches; it is not full-program attribution."
+            f"{limit} launches; it is not full-program attribution."
         )
         result["status"] = "partial"
     return result

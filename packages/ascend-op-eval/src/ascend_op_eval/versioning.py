@@ -50,6 +50,8 @@ CAPABILITIES = (
     "evaluation-recovery",
     "evaluation-progress",
     "operator-metrics",
+    "op-profile-capture-scope",
+    "profile-case-checkpoints",
     "version-discovery",
     "custom-method-v1",
     "evaluation-cancellation",

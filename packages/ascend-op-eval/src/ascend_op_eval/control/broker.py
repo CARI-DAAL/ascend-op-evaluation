@@ -42,6 +42,7 @@ import logging
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 
 import redis
 
@@ -57,6 +58,7 @@ from ascend_op_eval.api.contract import (
     EvaluationResource,
     EvaluationResult,
     NativeBuildEvidence,
+    ProfileCheckpoint,
     dump_contract,
 )
 from ascend_op_eval.config import Settings
@@ -513,8 +515,10 @@ class EvaluationStore:
         attempt = stored.get(b"attempt_id", b"").decode("utf-8") or None
         active = stored.get(b"active_check", b"").decode("utf-8") or None
         native_build = None
+        checkpoint = None
         stages = json.loads(stored.get(b"method_stage_records", b"[]"))
         if resource.result is not None:
+            checkpoint = resource.result.profile_checkpoint
             native_build = resource.result.native_build
             method = resource.result.method
             if method is not None and method.status == "succeeded" and method.data.stages:
@@ -534,6 +538,8 @@ class EvaluationStore:
             valid = persisted_check_outcomes(stored.get(b"check_outcomes", b"{}"))
             requested = json.loads(stored[b"requested_checks"])
             outcomes = {check: value for check, value in valid.items() if check in requested}
+            if active == "profile" and "profile" not in outcomes:
+                checkpoint = valid.get("profile_checkpoint")
             unfinished_performance = (
                 active == "performance"
                 and outcomes.get(active, {}).get("status") == "succeeded"
@@ -550,6 +556,7 @@ class EvaluationStore:
             attempt_id=attempt,
             active_check=active,
             completed_checks=CheckEvidence.model_validate(outcomes),
+            profile_checkpoint=checkpoint,
             native_build=native_build, method_stages=stages,
         )
 
@@ -1065,12 +1072,18 @@ class EvaluationStore:
 
         return self._fenced_write(lease, mutate)
 
-    def save_check_outcome(self, lease: AttemptLease, check: Check, outcome: CheckOutcome) -> bool:
+    def save_check_outcome(
+        self, lease: AttemptLease, check: Check | Literal["profile_checkpoint"],
+        outcome: CheckOutcome | ProfileCheckpoint,
+    ) -> bool:
         """Persist fenced evidence for progress; the resource result stays terminal-only."""
         resource_key = self._key(f"resource:{lease.evaluation_id}")
 
         def mutate(pipeline, stored, now_ms):
-            if check not in lease.requested_checks:
+            if (check == "profile_checkpoint") != isinstance(outcome, ProfileCheckpoint):
+                raise ValueError("profile checkpoint requires its own progress slot")
+            requested = "profile" if check == "profile_checkpoint" else check
+            if requested not in lease.requested_checks:
                 raise ValueError("cannot publish evidence for an unrequested check")
             # Reload with the canonical number domain: digit-form doubles
             # (values beyond 2^53) would otherwise come back as ints and the
@@ -1585,9 +1598,12 @@ class EvaluationStore:
                 )
             except (ValueError, TypeError):
                 pass
+        outcomes = persisted_check_outcomes(stored[b"check_outcomes"])
+        if stored.get(b"replacement_pending") == b"1":
+            outcomes.pop("profile_checkpoint", None)
         return complete_evaluation(
             requested_checks=json.loads(stored[b"requested_checks"]),
-            outcomes=persisted_check_outcomes(stored[b"check_outcomes"]),
+            outcomes=outcomes,
             failure=ending,
             pinned=self._stored_pinned(stored), native_build=native_build,
             **({"correctness_algorithm_override": f"native_tensor_v1:{native_policy}",

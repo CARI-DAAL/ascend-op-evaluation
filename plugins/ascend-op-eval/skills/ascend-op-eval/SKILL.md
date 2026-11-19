@@ -145,7 +145,17 @@ is available; recover the later trace with `get` using the saved handle.
 Timing is published before later trace capture. `trace` supplies kernel durations;
 use `op` or `deep` for hardware counters. For a deep capture, select cases and
 `--metric-groups`, optionally `--no-per-core`, according to the evidence needed.
-`--max-kernels-per-case` limits returned groups, not capture work.
+In op mode, `--launch-limit` bounds capture work. Inspect `capture_scope` for
+the applied prefixes, launch limit and record count before display truncation.
+Percentages describe the returned records. If case-wide coverage is unknown,
+use a duration trace to assess the importance of a kernel across the case.
+Older results can omit capture scope. `--max-kernels-per-case` bounds output size.
+
+For deep mode, read the target kernel, `bound_rule`, ratios and warnings together.
+For example, a high MTE2 activity ratio suggests checking transfer behavior.
+If bandwidth saturation would change the proposed edit, collect Memory for the
+same case and compare the applicable bandwidth counters. Verify a candidate edit
+with correctness and the original timing protocol before accepting its speedup.
 
 `verify --case-indices 0,3 --stop-on first_failure` requests bounded correctness
 coverage. Read `coverage` and `outcome`: `incomplete` is a subset observation,
@@ -161,8 +171,11 @@ evidence cannot be chained or used for a grade.
 
 Use `progress EVALUATION_ID` to retrieve completed checks while other checks are
 running. Track `attempt_id` and `progress_revision`; an attempt replacement
-invalidates its predecessor's partial observations. A progress command is a
-snapshot and does not cancel or wait for the remaining work.
+invalidates its predecessor's partial observations. For op/deep profiling, read `profile_checkpoint.observed.cases` when available.
+After timeout, read `result.profile_checkpoint` and submit its pending case
+indices with the original inputs and capture options to collect the missing cases.
+Keep the original timeout and the new evaluation ID in the comparison.
+A progress command is a snapshot and does not cancel or wait for the remaining work.
 
 ## Identify the service and this client
 

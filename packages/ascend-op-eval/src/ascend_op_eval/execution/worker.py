@@ -15,6 +15,7 @@ import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 import redis
 
@@ -29,6 +30,7 @@ from ascend_op_eval.api.contract import (
     EvaluationRequest,
     EvaluationResult,
     NativeBuildEvidence,
+    ProfileCheckpoint,
 )
 from ascend_op_eval.config import Settings
 from ascend_op_eval.control.broker import EvaluationStore
@@ -156,7 +158,10 @@ class FencedProgress:
             task_stage(check)
         return accepted
 
-    def save(self, check: Check, outcome: CheckOutcome) -> bool:
+    def save(
+        self, check: Check | Literal["profile_checkpoint"],
+        outcome: CheckOutcome | ProfileCheckpoint,
+    ) -> bool:
         if not self._store.save_check_outcome(self._lease, check, outcome):
             return False
         self.saved[check] = outcome.model_dump(mode="json", exclude_none=False)
@@ -407,7 +412,8 @@ class Worker:
                     )
                     validated = complete_evaluation(
                         requested_checks=request.checks,
-                        outcomes={check: getattr(validated, check) for check in request.checks},
+                        outcomes={**{check: getattr(validated, check) for check in request.checks},
+                                  "profile_checkpoint": validated.profile_checkpoint},
                         native_build=validated.native_build,
                         pinned=pinned, execution_environment=environment,
                         **self._policy_provenance(request),
@@ -491,7 +497,11 @@ class Worker:
                     )
                     return
             # False means another winner already terminalized the resource.
-            committed = self.store.commit_terminal(lease, "completed", validated)
+            state = "completed"
+            if (request.profile is not None and request.profile.mode in {"op", "deep"}
+                    and validated.profile is not None and validated.profile.status == "timeout"):
+                state = "timed_out"
+            committed = self.store.commit_terminal(lease, state, validated)
             spool = self._stage_spool(lease)
             if committed and stages and spool is not None:
                 shutil.rmtree(spool, ignore_errors=True)

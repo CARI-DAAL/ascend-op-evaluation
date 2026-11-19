@@ -145,6 +145,7 @@ def arguments(argv):
                 ),
             )
             command.add_argument("--no-per-core", action="store_true")
+            command.add_argument("--launch-limit", type=int, help="Matching launches per op case")
             command.add_argument("--max-kernels-per-case", type=int)
         if action in {"benchmark", "evaluate"}:
             command.add_argument("--warmup", type=int)
@@ -221,6 +222,7 @@ def apply_controls(payload, args):
             "profile_cases": "case_indices",
             "profile_mode": "mode",
             "metric_groups": "metric_groups",
+            "launch_limit": "launch_limit",
             "max_kernels_per_case": "max_kernels_per_case",
         },
     }

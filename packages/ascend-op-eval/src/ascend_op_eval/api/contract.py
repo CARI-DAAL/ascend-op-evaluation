@@ -210,6 +210,10 @@ class ProfileParams(StrictModel):
         default=200, ge=1, le=1000,
         description="Maximum returned kernels per case; this is not a capture launch limit.",
     )
+    launch_limit: int | None = Field(
+        default=None, ge=1, le=100, exclude_if=lambda value: value is None,
+        description="Maximum matching launches to collect per op-mode case.",
+    )
     include_recommendations: bool = True
     metric_groups: list[ProfileMetricGroup] | None = Field(
         default=None, min_length=1, max_length=7, exclude_if=lambda value: value is None,
@@ -226,6 +230,8 @@ class ProfileParams(StrictModel):
             if len(set(self.case_indices)) != len(self.case_indices):
                 raise ValueError("case_indices must not contain duplicates")
             self.case_indices = sorted(self.case_indices)
+        if self.mode != "op" and self.launch_limit is not None:
+            raise ValueError("launch_limit applies only to op profiling")
         if self.mode != "deep" and (self.metric_groups is not None or not self.include_per_core):
             raise ValueError("metric_groups and include_per_core apply only to deep profiling")
         if (self.metric_groups is not None
@@ -989,7 +995,24 @@ class OpKernel(StrictModel):
     metrics: OpKernelMetrics = Field(default_factory=OpKernelMetrics)
 
 
+class OpCaptureScope(StrictModel):
+    window: Literal["application"]
+    kernel_name_prefixes: list[Annotated[str, Field(min_length=1)]] = Field(min_length=1)
+    launch_limit: int = Field(ge=1, le=100)
+    observed_kernel_records: int = Field(ge=0)
+    case_launch_coverage: Literal["unknown"]
+
+    @model_validator(mode="after")
+    def _records_within_launch_limit(self):
+        if self.observed_kernel_records > self.launch_limit:
+            raise ValueError("observed op records exceed the capture launch limit")
+        return self
+
+
 class OpProfileCase(StrictModel):
+    capture_scope: OpCaptureScope | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
     case_idx: Annotated[int, Field(ge=0)]
     status: ProfileCaseStatus
     kernels: list[OpKernel]
@@ -1028,6 +1051,7 @@ class DeepCaptureRequest(StrictModel):
 
 
 class DeepProfileCase(StrictModel):
+    bound_rule: str | None = Field(default=None, exclude_if=lambda value: value is None)
     case_idx: Annotated[int, Field(ge=0)]
     status: ProfileCaseStatus
     target_kernel: str | None
@@ -1104,6 +1128,22 @@ class DeepProfileResult(StrictModel):
         if (self.implementation is None) != (self.correctness_verified is None):
             raise ValueError("implementation and correctness_verified must appear together")
         _check_profile_tallies(self.counts, self.cases)
+        return self
+
+
+class ProfileCheckpoint(StrictModel):
+    """Validated case results from one attempt and the remaining requested cases."""
+
+    observed: OpProfileResult | DeepProfileResult = Field(discriminator="mode")
+    pending_case_indices: list[Annotated[int, Field(ge=0)]]
+    total_cases: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _inventory(self):
+        observed = [case.case_idx for case in self.observed.cases]
+        indices = observed + self.pending_case_indices
+        if not observed or len(set(indices)) != len(indices) or max(indices) >= self.total_cases:
+            raise ValueError("checkpoint cases must be distinct members of the case inventory")
         return self
 
 
@@ -1240,6 +1280,9 @@ class Provenance(StrictModel):
 
 
 class EvaluationResult(StrictModel):
+    profile_checkpoint: ProfileCheckpoint | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
     method: MethodCheckOutcome | None = Field(default=None, exclude_if=lambda value: value is None)
     native_build: NativeBuildEvidence | None = Field(
         default=None, exclude_if=lambda value: value is None,
@@ -1252,6 +1295,10 @@ class EvaluationResult(StrictModel):
 
     @model_validator(mode="after")
     def _requested_checks_filled(self, info: ValidationInfo):
+        if self.profile_checkpoint is not None and (
+            self.profile is None or self.profile.status != "timeout"
+        ):
+            raise ValueError("terminal profile checkpoints require a timed-out profile")
         context = info.context
         if isinstance(context, dict) and context.get("requested_checks") is not None:
             requested = context["requested_checks"]
@@ -1275,6 +1322,9 @@ class CheckEvidence(StrictModel):
 
 
 class EvaluationProgress(StrictModel):
+    profile_checkpoint: ProfileCheckpoint | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
     schema_version: SchemaVersion
     evaluation_id: str = Field(min_length=1)
     resource_revision: Annotated[int, Field(ge=1)]

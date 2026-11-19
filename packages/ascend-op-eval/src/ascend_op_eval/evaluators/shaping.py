@@ -35,6 +35,7 @@ from pydantic import (
     ConfigDict,
     Field,
     ValidationError,
+    ValidationInfo,
     model_validator,
 )
 
@@ -53,12 +54,14 @@ from ascend_op_eval.api.contract import (
     FiniteOrSentinel,
     InputShape,
     MeasurementMethod,
+    OpCaptureScope,
     OpKernel,
     OpKernelMetrics,
     OpProfileCase,
     OpProfileResult,
     PerformanceCase,
     PerformanceResult,
+    ProfileCheckpoint,
     ProfileCounts,
     ProfileMetricGroup,
     ProfileParams,
@@ -776,6 +779,7 @@ class _DeepBound(StrictModel):
 
 
 class _ProfileCase(StrictModel):
+    capture_scope: OpCaptureScope | None = None
     status: Literal["complete", "partial", "failed"]
     target_kernel: str | None
     target_selection_metric: str | None
@@ -809,14 +813,16 @@ class _ProfileEnvelope(StrictModel):
     per_case_results: list[_ProfileCase]
 
     @model_validator(mode="after")
-    def _counts_and_identity(self):
-        if self.timed_out:
+    def _counts_and_identity(self, info: ValidationInfo):
+        checkpoint = info.context == "profile_checkpoint"
+        if self.timed_out and not checkpoint:
             raise ValueError("engine timeouts are check outcomes, not profile data")
-        if self.remaining_case_indices:
+        if self.remaining_case_indices and not checkpoint:
             raise ValueError("a finished profile has no remaining cases")
-        if self.selected_cases != self.completed_cases + self.partial_cases + (self.failed_cases):
+        observed_count = self.selected_cases - len(self.remaining_case_indices)
+        if observed_count != self.completed_cases + self.partial_cases + self.failed_cases:
             raise ValueError("selected count must equal the status sum")
-        if self.selected_cases != len(self.per_case_results):
+        if observed_count != len(self.per_case_results):
             raise ValueError("selected count must equal the number of case results")
         tallies = {"complete": 0, "partial": 0, "failed": 0}
         for case in self.per_case_results:
@@ -827,10 +833,10 @@ class _ProfileEnvelope(StrictModel):
             or tallies["failed"] != self.failed_cases
         ):
             raise ValueError("status counts contradict the case results")
-        indices = [case.case_idx for case in self.per_case_results]
+        indices = [case.case_idx for case in self.per_case_results] + self.remaining_case_indices
         if len(set(indices)) != len(indices):
             raise ValueError("duplicate case_idx")
-        if any(index >= self.total_cases for index in indices):
+        if any(not 0 <= index < self.total_cases for index in indices):
             raise ValueError("case_idx out of range")
         if self.requested_case_indices is not None:
             selected = self.requested_case_indices
@@ -926,10 +932,18 @@ def _op_kernels(case: _ProfileCase) -> list[OpKernel]:
 def _op_case(case: _ProfileCase) -> OpProfileCase:
     if case.bound is not None or case.per_core is not None:
         raise ShapingError("op profile case carries deep-only diagnostics")
+    scope = case.capture_scope
+    if scope is not None:
+        if scope.observed_kernel_records != len(case.kernels):
+            raise ShapingError("op capture count differs from the parsed kernel records")
+        if any(not kernel.name.startswith(tuple(scope.kernel_name_prefixes))
+               for kernel in case.kernels):
+            raise ShapingError("op kernel name differs from the capture filter")
     if case.status == "failed":
         if case.error is None:
             raise ShapingError("failed profile case must explain the failure")
         return OpProfileCase(
+            capture_scope=case.capture_scope,
             case_idx=case.case_idx,
             status="failed",
             kernels=[],
@@ -939,12 +953,14 @@ def _op_case(case: _ProfileCase) -> OpProfileCase:
     if case.status == "partial":
         detail = case.error or "; ".join([*case.warnings, *case.missing_metrics])
         return OpProfileCase(
-            case_idx=case.case_idx,
+            capture_scope=case.capture_scope, case_idx=case.case_idx,
             status="partial",
             kernels=kernels,
             error=_case_error("PROFILE_CASE_PARTIAL", detail),
         )
-    return OpProfileCase(case_idx=case.case_idx, status="complete", kernels=kernels, error=None)
+    return OpProfileCase(
+        capture_scope=scope, case_idx=case.case_idx, status="complete", kernels=kernels,
+    )
 
 
 def _spread_ratio(per_core: dict[str, object]) -> float:
@@ -960,8 +976,8 @@ def _spread_ratio(per_core: dict[str, object]) -> float:
 
 
 def _deep_case(case: _ProfileCase) -> DeepProfileCase:
-    if case.kernels:
-        raise ShapingError("deep profile case carries op-only kernel timings")
+    if case.kernels or case.capture_scope is not None:
+        raise ShapingError("deep profile case carries op-only evidence")
     bound = None
     ratios = DeepRatios()
     if case.bound is not None:
@@ -1010,6 +1026,7 @@ def _deep_case(case: _ProfileCase) -> DeepProfileCase:
         status=case.status,
         target_kernel=case.target_kernel,
         bound=bound,
+        bound_rule=case.bound.rule if case.bound is not None else None,
         ratios=ratios,
         per_core_spread_ratio=spread,
         recommendations=[item.recommendation for item in case.recommendations],
@@ -1071,10 +1088,40 @@ def shape_profile_runs(raw: dict[str, object], params: ProfileParams) -> Profile
                 case.case_idx for case in envelope.per_case_results
             ] != [index]:
                 raise ShapingError("profile evidence differs from the requested case")
+    return _project_profile_runs(envelopes, params)
+
+
+def shape_profile_checkpoint(raw: dict, params: ProfileParams) -> ProfileCheckpoint:
+    try:
+        envelope = _ProfileEnvelope.model_validate(raw, context="profile_checkpoint")
+    except ValueError as exc:
+        raise ShapingError("invalid profile checkpoint") from exc
+    if (envelope.requested_case_idx is not None
+            or envelope.requested_case_indices != params.case_indices
+            or (params.case_indices is None and envelope.selected_cases != envelope.total_cases)):
+        raise ShapingError("checkpoint selection differs from the request")
+    observed = _project_profile_runs([envelope], params)
+    return _checked(lambda: ProfileCheckpoint(
+        observed=observed, pending_case_indices=envelope.remaining_case_indices,
+        total_cases=envelope.total_cases,
+    ), "profile checkpoint")
+
+
+def _project_profile_runs(
+    envelopes: list[_ProfileEnvelope], params: ProfileParams,
+) -> OpProfileResult | DeepProfileResult:
     if any(envelope.profile_mode != params.mode for envelope in envelopes):
         raise ShapingError("profile evidence differs from the requested mode")
     if len({envelope.total_cases for envelope in envelopes}) != 1:
         raise ShapingError("profile invocations disagree on reference case count")
+    if params.launch_limit is not None:
+        for envelope in envelopes:
+            for case in envelope.per_case_results:
+                scope = case.capture_scope
+                if scope is None and case.status == "failed":
+                    continue
+                if scope is None or scope.launch_limit != params.launch_limit:
+                    raise ShapingError("op launch limit differs from requested capture")
     if params.mode == "deep":
         expected_groups = set(params.metric_groups or get_args(ProfileMetricGroup))
         for envelope in envelopes:
@@ -1123,7 +1170,7 @@ def shape_profile_runs(raw: dict[str, object], params: ProfileParams) -> Profile
 def _shape_profile_envelopes(envelopes: list[_ProfileEnvelope]) -> ProfileResult:
     """Project validated observations directly, without synthesizing engine JSON."""
     counts = ProfileCounts(
-        selected=sum(envelope.selected_cases for envelope in envelopes),
+        selected=sum(len(envelope.per_case_results) for envelope in envelopes),
         complete=sum(envelope.completed_cases for envelope in envelopes),
         partial=sum(envelope.partial_cases for envelope in envelopes),
         failed=sum(envelope.failed_cases for envelope in envelopes),

@@ -183,3 +183,13 @@ def test_wait_for_unrequested_check_is_rejected_before_submission(inputs):
     result, output = run_cli(inputs, "http://127.0.0.1:1", "--wait-for", "profile")
     assert result.returncode == 2
     assert output["error"]["code"] == "INVALID_ARGUMENT"
+
+
+def test_op_capture_limit_and_display_limit_reach_service(inputs):
+    with server(lambda _calls: (202, resource(), {})) as (url, calls):
+        result, _ = run_cli(inputs, url, "--no-wait", "--launch-limit", "4",
+                            "--max-kernels-per-case", "1", action="profile")
+    assert result.returncode == 0
+    profile = json.loads(calls[0][3])["profile"]
+    assert profile["launch_limit"] == 4
+    assert profile["max_kernels_per_case"] == 1
