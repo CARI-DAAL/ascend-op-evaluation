@@ -79,6 +79,13 @@ def test_deep_backend_with_fake_executable(tmp_path, monkeypatch):
     calls = log.read_text().splitlines()
     assert len(calls) == 8
     assert result["target_kernel"] == "add_kernel_hash"
+    assert result["raw_metrics"]["target_selection"] == {
+        "metric_group": "PipeUtilization",
+        "timed_rows": 1,
+        "total_duration_us": 6,
+        "max_duration_us": 6,
+        "matched_duration_us": 6,
+    }
     assert result["bound"]["name"] == "MTE2 BOUND"
     assert result["per_core"]["core_ids"] == [0, 1]
 

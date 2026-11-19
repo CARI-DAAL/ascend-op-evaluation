@@ -760,6 +760,14 @@ class _BoundRatios(StrictModel):
     SCALARLDST: float | None = Field(default=None, ge=0, le=1)
 
 
+class _TargetSelection(StrictModel):
+    metric_group: ProfileMetricGroup
+    timed_rows: int = Field(gt=0)
+    total_duration_us: float = Field(gt=0)
+    max_duration_us: float = Field(gt=0)
+    matched_duration_us: float = Field(gt=0)
+
+
 class _DeepBound(StrictModel):
     name: str
     ratios: _BoundRatios
@@ -981,6 +989,22 @@ def _deep_case(case: _ProfileCase) -> DeepProfileCase:
         if case.error is not None:
             raise ShapingError("complete profile case must not carry an error")
         error = None
+    capture = case.raw_metrics.get("_capture_requested")
+    if "target_selection" in case.raw_metrics:
+        selection = _parse(_TargetSelection, case.raw_metrics["target_selection"], "profile")
+        scope = _parse(DeepCaptureRequest, capture, "profile")
+        if (
+            not case.target_kernel
+            or selection.metric_group != case.target_selection_metric
+            or selection.metric_group not in scope.metric_groups
+            or selection.max_duration_us > selection.total_duration_us
+            or selection.total_duration_us > selection.matched_duration_us
+            or (
+                selection.timed_rows == 1
+                and selection.max_duration_us != selection.total_duration_us
+            )
+        ):
+            raise ShapingError("deep target selection has inconsistent identity or durations")
     return DeepProfileCase(
         case_idx=case.case_idx,
         status=case.status,
@@ -992,7 +1016,7 @@ def _deep_case(case: _ProfileCase) -> DeepProfileCase:
         missing_metrics=list(case.missing_metrics),
         warnings=list(case.warnings),
         error=error,
-        capture_requested=case.raw_metrics.get("_capture_requested"),
+        capture_requested=capture,
         raw_metrics=(
             {key: value for key, value in case.raw_metrics.items() if not key.startswith("_")}
             if "_capture_requested" in case.raw_metrics else None

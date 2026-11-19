@@ -394,3 +394,64 @@ def test_per_core_unknown_schema_is_none(tmp_path):
         )
         is None
     )
+
+
+def test_deep_selects_kernel_by_total_captured_duration(tmp_path: Path) -> None:
+    pipe = tmp_path / "PipeUtilization"
+    _summary(
+        pipe / "op_summary.csv",
+        [
+            {"Op Name": "once", "Task Duration(us)": 20},
+            *[{"Op Name": "repeated", "Task Duration(us)": 8} for _ in range(10)],
+            {"Op Name": "unrelated", "Task Duration(us)": 1000},
+        ],
+    )
+
+    merged = msprof_deep.select_and_merge_metrics(
+        {"PipeUtilization": str(pipe)}, ["once", "repeated"], ["PipeUtilization"],
+    )
+
+    assert merged["target_kernel"] == "repeated"
+    assert merged["target_selection"]["matched_duration_us"] == 100
+    evidence = merged["evidence"]["PipeUtilization"]
+    assert evidence["timed_rows"] == 10
+    assert evidence["total_duration_us"] == 80
+    assert evidence["selected_duration_us"] == 8
+
+
+@pytest.mark.parametrize("values", [(0, 0), (1e308, 1e308)])
+@pytest.mark.parametrize("names", [("A", "A"), ("A", "B")])
+def test_unusable_selection_pass_falls_back(
+    tmp_path: Path, values: tuple[float, float], names: tuple[str, str],
+) -> None:
+    pipe = tmp_path / "PipeUtilization"
+    memory = tmp_path / "Memory"
+    _summary(pipe / "op_summary.csv", [
+        {"Op Name": name, "Task Duration(us)": duration}
+        for name, duration in zip(names, values, strict=True)
+    ])
+    _summary(memory / "op_summary.csv", [{"Op Name": "B", "Task Duration(us)": 5}])
+
+    result = msprof_deep.select_and_merge_metrics(
+        {"PipeUtilization": str(pipe), "Memory": str(memory)}, ["A", "B"],
+        ["PipeUtilization", "Memory"],
+    )
+
+    assert result["target_kernel"] == "B"
+    assert result["target_selection"]["metric_group"] == "Memory"
+    assert result["missing_metrics"] == ["PipeUtilization"]
+
+
+def test_repeated_launches_warn_about_cross_pass_attribution(tmp_path: Path) -> None:
+    directories = {}
+    for metric in ("Memory", "L2Cache"):
+        directory = tmp_path / metric
+        _summary(directory / "op_summary.csv", [
+            {"Op Name": "A", "Task Duration(us)": 4},
+            {"Op Name": "A", "Task Duration(us)": 5},
+        ])
+        directories[metric] = str(directory)
+
+    result = msprof_deep.select_and_merge_metrics(directories, ["A"], list(directories))
+
+    assert any("launch identity" in warning for warning in result["warnings"])

@@ -84,11 +84,24 @@ must publish its own build. The terminal result contains the final build evidenc
 PyTorch-only profiling observes the profiling process, including initialization;
 it cannot isolate every reported launch to the supplied `run` function. The
 service limits op mode to 100 launches using supported native-name prefixes, so its case
-reports are partial and carry coverage warnings. Deep mode selects the longest
-observed kernel across the process and is also partial. Preserve these warnings
+reports are partial and carry coverage warnings. Deep mode also observes the whole process and reports partial coverage. Preserve these warnings
 when interpreting results; neither mode promises complete operator coverage.
 For the underlying profiler's filtering and launch-count options, see
 [msprof op parameters](https://www.hiascend.com/document/detail/en/canncommercial/850/devaids/optool/atlasopdev_16_0082.html).
+
+## Interpreting a deep profile hotspot
+
+Deep mode groups matching tasks by full kernel name in the first requested metric
+pass with usable durations, following backend metric order. It selects the name
+with the greatest cumulative task duration. The case's
+`raw_metrics.target_selection` reports the metric group, the winner's timed row
+count, total and maximum duration, and total duration across all matching names
+in that pass. Durations are in microseconds. Overlapping tasks count separately,
+so this share describes captured device work and can differ from wall time.
+
+Each metric pass contributes counters from its longest timed row for the selected
+name. When multiple passes contribute and that name repeats, a partial result
+flags the ambiguity in relating those counters to an individual launch.
 
 ## Bundled client
 

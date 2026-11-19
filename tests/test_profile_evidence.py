@@ -270,3 +270,28 @@ def test_deep_capture_controls_reach_single_engine_invocation(tmp_path):
     assert calls[0][-6:] == [
         "0", "2", "--metric-groups", "Memory", "L2Cache", "--no-per-core",
     ]
+
+
+@pytest.mark.parametrize("overrides", [
+    {}, {"matched_duration_us": 7}, {"timed_rows": 0}, {"metric_group": "L2Cache"},
+])
+def test_deep_target_selection_evidence(overrides: dict[str, object]) -> None:
+    raw = batch_envelope((0,), mode="deep")
+    case = raw["per_case_results"][0]
+    selection = {
+        "metric_group": "Memory", "timed_rows": 10, "total_duration_us": 80.0,
+        "max_duration_us": 8.0, "matched_duration_us": 100.0, **overrides,
+    }
+    case["target_selection_metric"] = "Memory"
+    case["raw_metrics"].update({
+        "_capture_requested": {"metric_groups": ["Memory"], "include_per_core": False},
+        "target_selection": selection,
+    })
+    params = ProfileParams(mode="deep", metric_groups=["Memory"], include_per_core=False,
+                           case_indices=[0])
+    if overrides:
+        with pytest.raises(ShapingError):
+            shape_profile_runs(raw, params)
+    else:
+        result = shape_profile_runs(raw, params)
+        assert result.cases[0].raw_metrics["target_selection"] == selection

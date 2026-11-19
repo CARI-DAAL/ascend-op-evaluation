@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import csv
 import glob
+import math
 import os
 import sqlite3
 import statistics
@@ -122,55 +123,92 @@ def _custom_name(name: str, kernel_names: list[str] | None) -> bool:
     )
 
 
-def _pick_longest(rows: list[dict[str, str]]) -> dict[str, str] | None:
-    timed = [
-        (duration, row)
-        for row in rows
-        if (duration := _float(row.get("Task Duration(us)"))) is not None
-    ]
-    if not timed:
-        return None
-    return max(timed, key=lambda item: item[0])[1]
-
-
 def select_and_merge_metrics(
     metric_dirs: dict[str, str],
     kernel_names: list[str] | None,
     metric_groups: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     requested = selected_metric_groups(metric_groups)
-    rows_by_metric: dict[str, list[dict[str, str]]] = {}
-    missing = [metric for metric in requested if metric not in metric_dirs]
+    missing: list[str] = []
     parse_warnings: list[str] = []
-    for metric, directory in metric_dirs.items():
-        if metric not in requested:
-            continue
-        summary = _summary_file(directory)
+    target_metric = None
+    target_name = None
+    selection: dict[str, str | float | int] = {}
+    evidence: dict[str, dict[str, Any]] = {}
+    merged: dict[str, str] = {}
+    for metric in requested:
+        directory = metric_dirs.get(metric)
+        summary = _summary_file(directory) if directory else None
         if summary is None:
             missing.append(metric)
             continue
         try:
-            rows_by_metric[metric] = _read_rows(summary)
+            rows = _read_rows(summary)
         except (OSError, UnicodeError, csv.Error) as exc:
             missing.append(metric)
             parse_warnings.append(
                 f"{metric}: cannot parse {summary}: {type(exc).__name__}: {exc}"
             )
+            continue
 
-    target_metric = None
-    target_row = None
-    for metric in requested:
-        candidates = [
-            row
-            for row in rows_by_metric.get(metric, [])
-            if _custom_name((row.get("Op Name") or "").strip(), kernel_names)
-        ]
-        chosen = _pick_longest(candidates)
-        if chosen is not None:
+        totals: dict[str, float] = {}
+        counts: dict[str, int] = {}
+        longest: dict[str, tuple[float, dict[str, str]]] = {}
+        invalid_rows = 0
+        for row in rows:
+            name = (row.get("Op Name") or "").strip()
+            if target_name is not None and name != target_name:
+                continue
+            if not _custom_name(name, kernel_names):
+                continue
+            duration = _float(row.get("Task Duration(us)"))
+            if duration is None or not math.isfinite(duration) or duration < 0:
+                invalid_rows += 1
+                continue
+            totals[name] = totals.get(name, 0.0) + duration
+            counts[name] = counts.get(name, 0) + 1
+            if name not in longest or duration > longest[name][0]:
+                longest[name] = duration, row
+        if invalid_rows:
+            parse_warnings.append(f"{metric}: skipped {invalid_rows} invalid task durations")
+        if not totals:
+            missing.append(metric)
+            continue
+        matched_duration = sum(totals.values())
+        if not math.isfinite(matched_duration) or matched_duration <= 0:
+            missing.append(metric)
+            parse_warnings.append(f"{metric}: no finite positive total task duration")
+            continue
+        if target_name is None:
             target_metric = metric
-            target_row = chosen
-            break
-    if target_row is None:
+            target_name = max(totals, key=totals.__getitem__)
+            selection = {
+                "metric_group": metric,
+                "timed_rows": counts[target_name],
+                "total_duration_us": totals[target_name],
+                "max_duration_us": longest[target_name][0],
+                "matched_duration_us": matched_duration,
+            }
+        duration, chosen = longest[target_name]
+        evidence[metric] = {
+            "op_name": target_name,
+            "candidate_rows": sum(
+                (row.get("Op Name") or "").strip() == target_name
+                for row in rows
+            ),
+            "timed_rows": counts[target_name],
+            "total_duration_us": totals[target_name],
+            "selected_duration_us": duration,
+        }
+        for key, value in chosen.items():
+            if key and value not in {None, "", "NA", "N/A"} and key not in merged:
+                merged[key] = value
+    if len(evidence) > 1 and any(group["candidate_rows"] > 1 for group in evidence.values()):
+        parse_warnings.append(
+            f"{target_name}: repeated tasks have no cross-pass launch identity; "
+            "metrics describe the longest timed row in each pass"
+        )
+    if target_name is None:
         return {
             "target_kernel": None,
             "target_selection_metric": None,
@@ -181,31 +219,11 @@ def select_and_merge_metrics(
             "error": "no matching custom Triton kernel in deep op_summary",
         }
 
-    target_name = (target_row.get("Op Name") or "").strip()
-    merged: dict[str, str] = {}
-    evidence: dict[str, dict[str, Any]] = {}
-    for metric in requested:
-        rows = [
-            row
-            for row in rows_by_metric.get(metric, [])
-            if (row.get("Op Name") or "").strip() == target_name
-        ]
-        chosen = _pick_longest(rows)
-        if chosen is None:
-            missing.append(metric)
-            continue
-        evidence[metric] = {
-            "op_name": target_name,
-            "candidate_rows": len(rows),
-            "selected_duration_us": _float(chosen.get("Task Duration(us)")),
-        }
-        for key, value in chosen.items():
-            if key and value not in {None, "", "NA", "N/A"} and key not in merged:
-                merged[key] = value
     return {
         "target_kernel": target_name,
         "target_selection_metric": target_metric,
         "raw_metrics": merged,
+        "target_selection": selection,
         "missing_metrics": sorted(set(missing)),
         "evidence": evidence,
         "warnings": parse_warnings,
@@ -605,11 +623,13 @@ def profile_deep_case(
     if kernel_names is None:
         warnings.append(
             "Native profile captures the whole process, including initialization; "
-            "the longest captured kernel is not attributed exclusively to run()."
+            "the selected kernel is not attributed exclusively to run()."
         )
     failed = merged["target_kernel"] is None
     partial = bool(warnings or missing_metrics)
     raw_metrics = dict(merged["raw_metrics"])
+    if "target_selection" in merged:
+        raw_metrics["target_selection"] = merged["target_selection"]
     raw_metrics["_merge_evidence"] = merged["evidence"]
     raw_metrics["_capture_requested"] = {
         "metric_groups": list(requested), "include_per_core": include_per_core,
