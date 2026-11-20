@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import pytest
+import redis
 from ascend_op_eval.entrypoints import run_worker
 
 
@@ -38,7 +39,7 @@ def test_worker_assembles_independent_dependencies_and_shared_runner(monkeypatch
     )
     durable, advisory = fakeredis.FakeRedis(), fakeredis.FakeRedis()
     redis_factory = mock.Mock(side_effect=[durable, advisory])
-    monkeypatch.setattr(run_worker.redis.Redis, "from_url", redis_factory)
+    monkeypatch.setattr(redis.Redis, "from_url", redis_factory)
     monkeypatch.setenv("TRITON_EVAL_REFERENCE_DEVICE_POLICY", "cpu-first")
     worker = run_worker.build_worker(3, settings)
     assert redis_factory.call_args_list[0] == mock.call(settings.redis_url, decode_responses=False)

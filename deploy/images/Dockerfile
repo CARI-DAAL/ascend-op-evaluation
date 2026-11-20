@@ -22,6 +22,6 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps ./packages/ascend-op-eval
 
 COPY --chmod=755 deploy/images/entrypoint.sh /usr/local/bin/entrypoint.sh
-COPY deploy/environment.sh /opt/ascend-op-eval/deploy/environment.sh
+COPY deploy/environment.sh deploy/cann.sh deploy/launch.sh ./deploy/
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["all"]

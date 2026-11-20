@@ -35,14 +35,14 @@ case "$action" in
     fi
     export ASCEND_OP_EVAL_API_HOST="$api_host"
     printf '%s\n' "$api_host"
-    exec docker compose --project-directory "$REPO_ROOT" --env-file "$env_file" -f "$compose_file" "$action" "$@"
     ;;
   down|stop|logs|ps|config|build|pull)
     # Read/control commands: no startup validation claimed.
-    exec docker compose --project-directory "$REPO_ROOT" --env-file "$env_file" -f "$compose_file" "$action" "$@"
     ;;
   *)
     echo "unknown compose action: $action" >&2
     exit 2
     ;;
 esac
+
+exec docker compose --project-directory "$REPO_ROOT" --env-file "$env_file" -f "$compose_file" "$action" "$@"

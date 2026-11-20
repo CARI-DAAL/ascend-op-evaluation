@@ -19,3 +19,7 @@ logs/
 /spike-cache/
 /spike-cold-cache/
 /spike-report/
+/deploy/a3/wheels/
+/deploy/a3/release-manifest*.json
+/wheels/
+/.secrets/

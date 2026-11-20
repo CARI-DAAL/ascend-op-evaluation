@@ -17,9 +17,10 @@ if [[ -r "${ENV_FILE}" ]]; then
   # shellcheck disable=SC1090
   source "${ENV_FILE}"
   set +a
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/environment.sh"
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/environment.sh"
 fi
-LOG_DIR="${LOG_DIR:-${ROOT_DIR}/logs}"
+LOG_DIR="${LOG_DIR:-logs}"
+[[ "${LOG_DIR}" = /* ]] || LOG_DIR="${ROOT_DIR}/${LOG_DIR}"
 PID_FILE="${LOG_DIR}/triton-eval.pids"
 
 # TERM the given pids, wait up to ~5s, then KILL any stragglers.
@@ -53,7 +54,7 @@ if [[ -f "${PID_FILE}" ]]; then
   rm -f "${PID_FILE}"
 else
   echo "No PID file at ${PID_FILE}; matching process names instead." >&2
-  pkill -TERM -f 'uvicorn (scripts[.]run_api|ascend_op_eval[.]entrypoints[.]run_api):app' 2>/dev/null || true
+  pkill -TERM -f '(uvicorn (scripts[.]run_api|ascend_op_eval[.]entrypoints[.]run_api):app| -m ascend_op_eval[.]entrypoints[.]run_api)([[:space:]]|$)' 2>/dev/null || true
   pkill -TERM -f '(scripts[.]run_worker|ascend_op_eval[.]entrypoints[.]run_worker) (--cpu|--card)([[:space:]]|$)' 2>/dev/null || true
 fi
 

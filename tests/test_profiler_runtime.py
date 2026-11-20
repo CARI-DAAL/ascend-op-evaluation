@@ -595,10 +595,9 @@ def test_msprof_export_permission_requires_path(monkeypatch):
 def test_msprof_export_permission_refuses_foreign_uid(tmp_path, monkeypatch):
     binary, _script = _vendor_msprof(tmp_path)
     foreign_uid = 65534 if os.getuid() != 65534 else 65533
-    try:
-        os.chown(binary, foreign_uid, -1)
-    except PermissionError:
-        pytest.skip("cannot assign a foreign uid to the controlled msprof")
+    file_status = SimpleNamespace(st_uid=foreign_uid)
+    observed_os = SimpleNamespace(getuid=os.getuid, stat=lambda _: file_status)
+    monkeypatch.setattr(runtime, "os", observed_os)
     monkeypatch.setattr(
         runtime.shutil, "which", lambda name: str(binary) if name == "msprof" else None
     )

@@ -1,19 +1,4 @@
-# ascend-op-eval:a3-2.0-ascendc — ascend-op-eval main (custom-method-v1 + native
-# AscendC) on the A3 t360 base stack (torch 2.10.0+cpu / torch_npu 2.10.0 /
-# triton-ascend 3.6.0 / python 3.12, host CANN 9.2.0 via /opt/cann mount).
-#
-# Same recipe as deploy-a3/Dockerfile.t360 (cannbench-a3-2.0 overlay, commit
-# 6d08fca) but overlays the renamed ascend-op-eval package layout instead of
-# the legacy triton_evaluation tree. Adds the real `build` dist so the
-# cannbench method's candidate build.sh (`python3 -m build --wheel
-# --no-isolation`) is not shadowed (same fix as evo-cannbench cb8e1a4 applied
-# to the trial image; the service worker runs the same build contract).
-#
-# Build from the repository root:
-#   docker build -f deploy-a3/Dockerfile.a3-ascendc -t ascend-op-eval:a3-2.0-ascendc \
-#     -f deploy-a3/Dockerfile.a3-ascendc.dockerignore is implicit via .dockerignore rules
-#   (use: docker build -f deploy-a3/Dockerfile.a3-ascendc -t ascend-op-eval:a3-2.0-ascendc .)
-
+# A3 offline overlay for the local Python 3.12 / Ascend stack.
 FROM triton-eval:local
 
 # --- purge the base's old checkout before overlaying ---
@@ -26,24 +11,18 @@ WORKDIR /opt/ascend-op-eval
 # --- service package + deployment materials (release manifest digests the
 #     installed site-packages copy, which is byte-identical to these sources) ---
 COPY packages/ascend-op-eval ./packages/ascend-op-eval
-COPY deploy ./deploy
-RUN chmod 755 deploy/images/entrypoint.sh \
- && cp deploy/images/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY deploy/images/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY deploy/environment.sh deploy/cann.sh deploy/launch.sh ./deploy/
 
-# --- register distribution metadata + align declared runtime pins ---
-# Base predates the manifest pins (fastapi 0.123.10 / uvicorn 0.49.0, no
-# redis/rfc8785); offline install from pre-downloaded pure-python wheels
-# (build containers cannot use the corporate proxy). --no-deps guards pip
-# from bumping pydantic off its pinned 2.13.4.
-COPY deploy-a3/wheels/pins /tmp/pins/
-# --no-build-isolation: no proxy in build container; setuptools already present.
-RUN pip3 install --no-deps --no-build-isolation ./packages/ascend-op-eval \
- && pip3 install --no-cache-dir --no-deps --no-index --find-links /tmp/pins \
-      fastapi==0.139.2 uvicorn==0.51.0 redis==8.0.1 rfc8785==0.1.4 \
- && rm -rf /tmp/pins
+# The offline base supplies transitive dependencies. Upgrade only the service's direct pins.
+COPY deploy/a3/wheels/pins /tmp/pins/
+RUN pip3 install --no-index --no-deps --no-build-isolation ./packages/ascend-op-eval \
+ && python3 -c "from importlib.metadata import requires; print('\n'.join(r for r in requires('ascend-op-eval') if ';' not in r))" > /tmp/service-pins.txt \
+ && pip3 install --no-cache-dir --no-deps --no-index --find-links /tmp/pins -r /tmp/service-pins.txt \
+ && rm -rf /tmp/pins /tmp/service-pins.txt
 
 # --- candidate wheel-build tooling (cannbench build.sh contract) ---
-COPY deploy-a3/wheels/pybuild /tmp/pybuild/
+COPY deploy/a3/wheels/pybuild /tmp/pybuild/
 RUN pip3 install --no-cache-dir --no-deps --no-index --find-links /tmp/pybuild \
       build==1.6.1 pyproject_hooks==1.3.3 \
  && rm -rf /tmp/pybuild
@@ -52,7 +31,7 @@ RUN pip3 install --no-cache-dir --no-deps --no-index --find-links /tmp/pybuild \
 # torch_npu 2.10.0.post4 is the official-runner pin (worker-packages.json must
 # declare exactly this); the remaining four are imported by the upstream
 # harness but absent from the vllm-derived base.
-COPY deploy-a3/wheels/npupost4 /tmp/npuwheels/
+COPY deploy/a3/wheels/npupost4 /tmp/npuwheels/
 RUN pip3 install --no-cache-dir --no-deps --no-index \
       /tmp/npuwheels/torch_npu-2.10.0.post4-cp312-cp312-manylinux_2_28_aarch64.whl \
  && pip3 install --no-cache-dir --no-deps --no-index \
@@ -69,8 +48,8 @@ RUN pip3 install --no-cache-dir --no-deps --no-index \
 # root-owned nodes so the capability-free user-namespace child can open them
 # (host Ascend nodes are 1000:1000 660; userns caps never reach init-ns
 # devtmpfs). The engine sandbox manifest sets executable=/usr/bin/bwrap-ascend.
-COPY deploy-a3/wheels/bwrap-bin /usr/bin/bwrap.real
-COPY deploy-a3/bwrap-ascend.py /usr/bin/bwrap-ascend
+COPY deploy/a3/wheels/bwrap-bin /usr/bin/bwrap.real
+COPY deploy/a3/bwrap-ascend.py /usr/bin/bwrap-ascend
 RUN chmod 755 /usr/bin/bwrap.real /usr/bin/bwrap-ascend && bwrap.real --version
 
 # --- named service identity (informational; service runs as root) ---
@@ -81,11 +60,11 @@ RUN getent group 1000 >/dev/null || groupadd -g 1000 HwHiAiUsers \
  && getent passwd 1006 >/dev/null || useradd -u 1006 -g 1000 -M -d /tmp -s /usr/sbin/nologin evalworker
 
 # --- triton-ascend 3.6.0 (official-runner alignment) ---
-COPY deploy-a3/wheels/triton_ascend-3.6.0-*.whl /tmp/t360/
+COPY deploy/a3/wheels/triton_ascend-3.6.0-*.whl /tmp/t360/
 RUN pip3 uninstall -y triton triton-ascend 2>/dev/null || true; \
     rm -rf /usr/local/lib/python3.12/site-packages/triton \
            /usr/local/lib/python3.12/site-packages/triton-*dist-info; \
     pip3 install --no-cache-dir --no-deps --force-reinstall \
       /tmp/t360/triton_ascend-3.6.0-*.whl \
  && rm -rf /tmp/t360 \
- && TORCH_DEVICE_BACKEND_AUTOLOAD=0 python3 -c "import importlib.metadata as md; v = md.version('triton-ascend'); assert v == '3.6.0', v; pins = {'fastapi': '0.139.2', 'uvicorn': '0.51.0', 'redis': '8.0.1', 'rfc8785': '0.1.4', 'pydantic': '2.13.4', 'pydantic-settings': '2.14.2', 'jsonschema': '4.26.0', 'build': '1.6.1'}; bad = {n: md.version(n) for n, w in pins.items() if md.version(n) != w}; assert not bad, bad; print('a3-ascendc overlay ok: triton-ascend', v)"
+ && TORCH_DEVICE_BACKEND_AUTOLOAD=0 python3 -c "import importlib.metadata as md; assert md.version('triton-ascend') == '3.6.0'"

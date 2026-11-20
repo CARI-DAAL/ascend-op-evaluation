@@ -1,58 +1,47 @@
 #!/usr/bin/env bash
-# Pre-download the pinned ML wheels with curl -C - (resumable), for networks that
-# drop transfers before pip can finish (IncompleteRead). Versions are read from
-# pyproject.toml [project.optional-dependencies].npu — the same declaration the
-# install paths use, so this file cannot drift.
-#
-# Resulting ./wheels can be fed to pip/docker builds on an offline host, e.g.:
-#   pip install --find-links wheels -e ".[npu]"
-set -u
-cd "$(dirname "$0")/.."
-mkdir -p wheels
-cd wheels
+# Prepare the host's CPython 3.11 / aarch64 wheels with resumable downloads.
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+wheel_dir="${WHEEL_DIR:-${root}/wheels}"
+mkdir -p "${wheel_dir}"
+cd "${wheel_dir}"
 
-# Resolve each [npu] pin (== or bare name) to its cp311 aarch64 (or py3-any)
-# wheel URL via the PyPI JSON API.
-URLS=$(
-  python3 - <<'PY'
-import json, urllib.request
-
+urls="$(python3 - "${root}/packages/ascend-op-eval/pyproject.toml" <<'PY'
+import json
+import sys
 import tomllib
+import urllib.request
 
-with open("../pyproject.toml", "rb") as f:
-    pins = tomllib.load(f)["project"]["optional-dependencies"]["npu"]
+with open(sys.argv[1], "rb") as package:
+    requirements = tomllib.load(package)["project"]["optional-dependencies"]["npu"]
 
-for pin in pins:
-    name, _, version = pin.partition("==")
-    if not version:  # unpinned (pandas, pyyaml): take the latest
-        meta = json.load(urllib.request.urlopen(f"https://pypi.org/pypi/{name}/json"))
-        files = meta["urls"]
+for requirement in requirements:
+    name, _, version = requirement.partition("==")
+    release = f"{name}/{version}" if version else name
+    with urllib.request.urlopen(f"https://pypi.org/pypi/{release}/json") as response:
+        files = json.load(response)["urls"]
+    for file in files:
+        filename = file["filename"]
+        if filename.endswith("-py3-none-any.whl") or (
+            "-cp311-" in filename and filename.endswith("aarch64.whl")
+            and "musllinux" not in filename
+        ):
+            print(file["url"])
+            break
     else:
-        meta = json.load(urllib.request.urlopen(f"https://pypi.org/pypi/{name}/{version}/json"))
-        files = meta["urls"]
-    wheel = next(
-        (f["url"] for f in files
-         if "cp311" in f["filename"]
-         and ("aarch64" in f["filename"] or f["filename"].endswith("any.whl"))),
-        None,
-    )
-    print(wheel if wheel else f"WARN no cp311/aarch64 wheel for {pin}")
+        sys.exit(f"No CPython 3.11/aarch64 wheel on PyPI for {requirement}")
 PY
-)
-
-for url in ${URLS}; do
-  [[ "$url" == WARN* ]] && { echo "$url"; continue; }
-  f=$(basename "$url")
-  echo "=== $f ==="
-  for i in $(seq 1 200); do
-    if curl -fsSL -C - --retry 10 --retry-delay 2 -m 600 -o "$f" "$url"; then
-      echo "OK $f ($(stat -c%s "$f") bytes)"
+)"
+while IFS= read -r url; do
+  filename="${url##*/}"
+  for ((attempt=1; attempt<=200; attempt++)); do
+    if curl -fsSL -C - --retry 10 --retry-delay 2 -m 600 -o "${filename}" "${url}"; then
       break
     fi
-    echo "  retry $i: $(stat -c%s "$f" 2>/dev/null || echo 0) bytes so far"
+    if ((attempt == 200)); then
+      echo "Download failed: ${filename}" >&2
+      exit 1
+    fi
     sleep 1
   done
-done
-
-echo "=== wheels/ contents ==="
-ls -l
+done <<< "${urls}"

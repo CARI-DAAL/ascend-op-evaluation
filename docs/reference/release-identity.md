@@ -70,9 +70,9 @@ Keep the bound manifest with the release. Compose mounts it read-only at
   verified sets `release` explicitly -- Compose always does, and preflight
   rejects a Compose deployment that does not.
 
-Both deployment paths verify through the same module: the API at
-`scripts/run_api.py` (the module uvicorn imports) and each worker at
-`scripts/run_worker.py`. Compose deployments additionally run
+The API and worker verify through the same version module at startup. The
+installed entrypoints are `ascend_op_eval.entrypoints.run_api` and
+`ascend_op_eval.entrypoints.run_worker`. Compose deployments additionally run
 `scripts/deployment_preflight.py`, which requires release mode, the read-only
 manifest mount and a manifest bound to the exact image being deployed.
 

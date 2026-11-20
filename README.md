@@ -69,8 +69,9 @@ ascend-op-eval-server worker --cpu
 
 The base service install does not install Torch or an Ascend toolchain. Device
 workers require a qualified NPU runtime; use the declared service `npu` extra
-and the [deployment guide](docs/operations/deployment.md). Compose and host
-entrypoints live in `deploy/compose/` and `deploy/host/`.
+and the [deployment guide](docs/operations/deployment.md). Choose `deploy/compose/` for
+managed Redis, `deploy/host/` for host processes, or `deploy/a3/` for the A3 offline image
+with its existing Redis instance.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for editable installs and CPU validation.
 CPU checks do not establish device correctness, timing or upstream task parity.
@@ -86,7 +87,7 @@ packages/ascend-op-eval-compat/   Optional deprecated Python import bridge
 adapters/default/                Definition/workload client adapter
 adapters/cannbench/              Fixed-public-snapshot external method packages
 plugins/                        Agent instructions and portable client artifacts
-deploy/                         Compose, host and image build configuration
+deploy/                         Launchers, image builds and A3 offline deployment
 scripts/                        Release, validation and diagnostic tools
 tests/                          Behavioral regressions and immutable fixtures
 docs/                           Guides, reference, explanations and plans

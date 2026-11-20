@@ -162,8 +162,8 @@ ASCEND_OP_EVAL_API_TLS_CERTFILE=/absolute/service-tls/server.crt
 ASCEND_OP_EVAL_API_TLS_KEYFILE=/absolute/service-tls/server.key
 ```
 
-Set a service unit's working directory to the checkout and its `ExecStart` to
-the configured interpreter followed by `-m scripts.run_api`. The
+Use the installed interpreter followed by `-m ascend_op_eval.entrypoints.run_api`
+for a service unit's `ExecStart`. The
 `uvicorn ascend_op_eval.entrypoints.run_api:app` CLI serves one listener and does not activate the
 paired-listener mode. Keep private keys outside the checkout with restricted
 permissions; clients must trust the certificate authority.

@@ -1,0 +1,10 @@
+**
+!packages/ascend-op-eval/pyproject.toml
+!packages/ascend-op-eval/src/ascend_op_eval/**
+**/__pycache__/
+!deploy/environment.sh
+!deploy/cann.sh
+!deploy/launch.sh
+!deploy/images/entrypoint.sh
+!deploy/a3/bwrap-ascend.py
+!deploy/a3/wheels/**

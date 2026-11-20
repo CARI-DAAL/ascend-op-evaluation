@@ -25,6 +25,21 @@ and profiler runtime policy, and `resources/` owns device health. `methods/`
 owns the implemented immutable method contract and registry. Installed process
 entrypoints live in `entrypoints/`; repository startup modules are wrappers.
 
+## How an evaluation reaches a device
+
+| Responsibility | Implementation | Contract with the next module |
+| --- | --- | --- |
+| Prepare a request | Client and evaluation adapter | Request, caller capability and instance-specific recovery handle |
+| Admit or recover it | HTTP routes and `control/instance.py` | Durable identity and deadline in the instance's Redis store |
+| Claim and complete an attempt | `execution/worker.py` and `control/broker.py` | Lease for the selected execution class, fenced publication |
+| Collect evidence | `evaluators/`, built-in engine or packaged method | Check outcomes and artifacts for the admitted request |
+
+The API and worker entrypoints share [Redis assembly](../../packages/ascend-op-eval/src/ascend_op_eval/entrypoints/storage.py).
+Each process has a durable connection for state transitions and a separate
+bounded connection for metrics and advisory caches. Deployment selects the
+interpreter, toolkit, cards and Redis instance. The deployment-specific inputs
+and launchers live together under [`deploy/`](../operations/deployment.md).
+
 ## Existing operator pipeline and planned extraction
 
 The built-in operator input translator, `evaluators/` and vendored `engine/`

@@ -2,7 +2,7 @@
 # Initialize the mounted host CANN/driver and run the image's declared Python stack.
 #
 #   entrypoint.sh all       -> API + CPU workers + one NPU worker per configured card
-#   entrypoint.sh api       -> uvicorn ascend_op_eval.entrypoints.run_api:app only
+#   entrypoint.sh api       -> configured API listeners only
 #   entrypoint.sh workers   -> workers only
 #   entrypoint.sh <cmd...>  -> exec cmd (escape hatch, e.g. `bash`)
 #
@@ -21,25 +21,12 @@ fi
 if [[ -n "${CANN_SET_ENV_PATH:-}" && -r "${CANN_SET_ENV_PATH}" ]]; then
   unset ASCEND_TOOLKIT_HOME ASCEND_HOME_PATH ASCEND_OPP_PATH \
         ASCEND_AICPU_PATH ASCEND_SLOG_PATH DAVINCIHOME 2>/dev/null || true
-  # shellcheck disable=SC1090
-  source "${CANN_SET_ENV_PATH}"
 else
   echo "WARN: CANN_SET_ENV_PATH ('${CANN_SET_ENV_PATH:-unset}') not readable; " \
        "torch_npu / the engine will likely fail to import." >&2
 fi
 
-# libhccl.so (loaded by torch_npu) lives under <toolkit>/aarch64-linux/lib64, which
-# set_env.sh does not add — without it `import torch` fails
-# ("libhccl.so: cannot open shared object file"). Add the arch lib dir if present.
-if [[ -n "${CANN_SET_ENV_PATH:-}" ]]; then
-  _cann_toolkit_dir="$(dirname "$(readlink -f "${CANN_SET_ENV_PATH}")")"
-  for _archlib in "${_cann_toolkit_dir}/aarch64-linux/lib64" "${_cann_toolkit_dir}/lib64"; do
-    if [[ -d "${_archlib}" && ":${LD_LIBRARY_PATH:-}:" != *":${_archlib}:"* ]]; then
-      export LD_LIBRARY_PATH="${_archlib}:${LD_LIBRARY_PATH:-}"
-    fi
-  done
-  unset _cann_toolkit_dir _archlib
-fi
+source /opt/ascend-op-eval/deploy/cann.sh
 
 cd /opt/ascend-op-eval
 source deploy/environment.sh
@@ -87,54 +74,7 @@ if [[ "${ASCEND_OP_EVAL_SKIP_READINESS:-}" != "1" ]]; then
   verify_readiness
 fi
 
-run_api() {
-  exec "${PYTHON_BIN}" -m uvicorn ascend_op_eval.entrypoints.run_api:app \
-    --host "${ASCEND_OP_EVAL_API_HOST:-127.0.0.1}" \
-    --port "${ASCEND_OP_EVAL_API_PORT:-11907}"
-}
-
-run_workers() {
-  local pids=("$@")   # any pre-existing pids to also wait on
-  local cpu_count="${ASCEND_OP_EVAL_CPU_WORKERS:-1}"
-  if [[ ! "${cpu_count}" =~ ^([0-9]|[12][0-9]|3[0-2])$ ]]; then
-    echo "ASCEND_OP_EVAL_CPU_WORKERS must be an integer from 0 to 32" >&2
-    exit 2
-  fi
-  for ((i=0; i<cpu_count; i++)); do
-    echo "Starting CPU worker ${i}" >&2
-    "${PYTHON_BIN}" -m ascend_op_eval.entrypoints.run_worker --cpu &
-    pids+=("$!")
-  done
-  IFS=',' read -ra cards <<< "${ASCEND_OP_EVAL_CARDS:-0}"
-  for c in "${cards[@]}"; do
-    c="${c//[[:space:]]/}"
-    [[ -z "${c}" ]] && continue
-    echo "Starting worker on NPU card ${c}" >&2
-    "${PYTHON_BIN}" -m ascend_op_eval.entrypoints.run_worker --card "${c}" &
-    pids+=("$!")
-  done
-  [[ ${#pids[@]} -eq 0 ]] && { echo "No workers configured" >&2; exit 2; }
-  # shellcheck disable=SC2317
-  stop() { kill "${pids[@]}" 2>/dev/null || true; }
-  trap stop TERM INT
-  wait
-}
-
 case "${1:-all}" in
-  api)
-    run_api
-    ;;
-  workers)
-    run_workers
-    ;;
-  all)
-    "${PYTHON_BIN}" -m uvicorn ascend_op_eval.entrypoints.run_api:app \
-      --host "${ASCEND_OP_EVAL_API_HOST:-127.0.0.1}" \
-      --port "${ASCEND_OP_EVAL_API_PORT:-11907}" &
-    api_pid=$!
-    run_workers "${api_pid}"
-    ;;
-  *)
-    exec "$@"
-    ;;
+  api|workers|all) exec bash deploy/launch.sh "${1:-all}" ;;
+  *) exec "$@" ;;
 esac

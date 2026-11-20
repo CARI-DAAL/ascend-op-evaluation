@@ -28,3 +28,7 @@ htmlcov
 deploy/compose/.env
 **/build
 **/*.egg-info
+deploy/a3/
+wheels/
+.secrets/
+.aws/

@@ -5,13 +5,8 @@ import os
 import signal
 from functools import partial
 
-import redis
-from redis.backoff import NoBackoff
-from redis.retry import Retry
-
 from ascend_op_eval.config import Settings, command_environment
-from ascend_op_eval.control.broker import EvaluationStore
-from ascend_op_eval.control.metrics import RedisMetrics
+from ascend_op_eval.entrypoints.storage import InstanceStorage
 from ascend_op_eval.evaluators.base import run_script
 from ascend_op_eval.evaluators.benchmark import BenchmarkEvaluator
 from ascend_op_eval.evaluators.evaluation import EvaluationEvaluator
@@ -41,17 +36,10 @@ def set_process_title() -> None:
 def build_worker(card: int | None, settings: Settings | None = None) -> Worker:
     settings = settings or Settings.from_env()
     os.environ["ASCEND_RT_VISIBLE_DEVICES"] = "" if card is None else str(card)
-    durable_client = redis.Redis.from_url(settings.redis_url, decode_responses=False)
-    cache_client = redis.Redis.from_url(
-        settings.redis_url, decode_responses=False,
-        socket_connect_timeout=0.25, socket_timeout=0.25,
-        retry=Retry(NoBackoff(), 0), retry_on_timeout=False, retry_on_error=[],
-    )
+    storage = InstanceStorage.connect(settings)
     baseline_cache = BaselineCache(
-        cache_client, prefix=settings.redis_prefix, namespace=settings.baseline_cache_namespace,
+        storage.advisory, prefix=settings.redis_prefix, namespace=settings.baseline_cache_namespace,
     )
-    metrics = RedisMetrics(cache_client, settings.redis_prefix)
-    store = EvaluationStore(durable_client, settings, metrics=metrics)
     runner = partial(run_script, environment=command_environment(settings))
     evaluator = EvaluationEvaluator(
         verify=VerifyEvaluator(
@@ -66,8 +54,8 @@ def build_worker(card: int | None, settings: Settings | None = None) -> Worker:
         method=MethodEvaluator(runner=runner, settings=settings),
     )
     return Worker(
-        store, evaluator, device_id=card, settings=settings, metrics=metrics,
-        verdict_cache=VerdictCache(cache_client, prefix=settings.redis_prefix),
+        storage.store, evaluator, device_id=card, settings=settings, metrics=storage.metrics,
+        verdict_cache=VerdictCache(storage.advisory, prefix=settings.redis_prefix),
         script_runner=runner,
     )
 

@@ -3,36 +3,26 @@
 import asyncio
 from pathlib import Path
 
-import redis
 import uvicorn
-from redis.backoff import NoBackoff
-from redis.retry import Retry
+from fastapi import FastAPI
 
 from ascend_op_eval.api import create_app
 from ascend_op_eval.api.dependencies import AppContext
 from ascend_op_eval.config import Settings
-from ascend_op_eval.control.broker import EvaluationStore
 from ascend_op_eval.control.instance import EvaluationInstance
-from ascend_op_eval.control.metrics import RedisMetrics
 from ascend_op_eval.control.security import CapabilityRegistry
+from ascend_op_eval.entrypoints.storage import InstanceStorage
 from ascend_op_eval.versioning import startup_identity
 
 
-def build_app() -> "FastAPI":  # noqa: F821 — FastAPI imported via api
+def build_app() -> FastAPI:
     settings = Settings.from_env()
     # uvicorn imports this module's `app`, so this is the API's formal startup
     # path: verify the release before any listener exists.
     release = startup_identity(settings)
-    client = redis.Redis.from_url(settings.redis_url, decode_responses=False)
-    metrics_client = redis.Redis.from_url(
-        settings.redis_url, decode_responses=False,
-        socket_connect_timeout=0.25, socket_timeout=0.25,
-        retry=Retry(NoBackoff(), 0), retry_on_timeout=False, retry_on_error=[],
-    )
-    metrics = RedisMetrics(metrics_client, settings.redis_prefix)
-    store = EvaluationStore(client, settings, metrics=metrics)
+    storage = InstanceStorage.connect(settings)
     registry = CapabilityRegistry.from_secret_file(Path(settings.capability_secret_path))
-    instance = EvaluationInstance(settings=settings, store=store, metrics=metrics)
+    instance = EvaluationInstance(settings=settings, store=storage.store, metrics=storage.metrics)
     context = AppContext(
         instance=instance,
         registry=registry,

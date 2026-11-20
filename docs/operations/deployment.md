@@ -7,8 +7,21 @@ owner: maintainers
 
 # Deploy an evaluation instance
 
-Run the setup commands below from the repository root. Docker-specific assets
-live in `deploy/`; the build context remains the repository root:
+Choose the launcher that owns this instance's processes and Redis.
+
+| Deployment | Launcher | Durable state |
+| --- | --- | --- |
+| Standard image with Compose | [Compose wrapper](../../deploy/compose/compose.sh) | Compose manages Redis and its named volume |
+| Host Python and CANN installation | [Host launcher](../../deploy/host/start.sh) | Operator supplies Redis |
+| A3 offline image with native AscendC | [A3 launcher](../../deploy/a3/run.sh) | Existing host Redis on port 6391, database 7 |
+
+Both images start the API and workers with the [image entrypoint](../../deploy/images/entrypoint.sh).
+Host and image launchers load the selected CANN toolkit through the [same initialization script](../../deploy/cann.sh)
+and use the [process launcher](../../deploy/launch.sh) to start CPU workers and one NPU worker per assigned card.
+
+## Standard Compose deployment
+
+Build the standard image from the repository root.
 
 ```bash
 docker build -f deploy/images/Dockerfile -t ascend-op-eval:local .
@@ -72,7 +85,9 @@ For a single-card smoke deployment, use this same Compose file with
 disables compile-only capacity unless separate
 `ascend-op-eval-server worker --cpu` processes join the same instance. CPU workers do not claim cards or run card recovery.
 
-For host execution without Docker, install `.[npu]` in an isolated environment
+## Host deployment
+
+For host execution without Docker, install `./packages/ascend-op-eval[npu]` in an isolated environment
 (with the Ascend wheel index if needed), configure [`.env.example`](../../deploy/host/.env.example)
 as `.env`, then use `bash deploy/host/start.sh` / `bash deploy/host/stop.sh`. Supply Redis
 with `--appendonly yes --appendfsync always`, as Compose does. The engine is
@@ -97,9 +112,49 @@ package mounts and the declared child `PYTHONPATH` must instead be correct insid
 the sandbox. A sandbox setting alone does not prove that package visibility.
 
 
+For resumable downloads of the declared CPython 3.11/aarch64 NPU wheels from PyPI,
+run `deploy/host/download-wheels.sh` with Python 3.11+ on PATH. Wheels land in
+`wheels/` at the repository root. Set `WHEEL_DIR` to select another directory.
+For artifacts supplied by an Ascend index, use that index when installing the NPU extra.
+
+## A3 deployment
+
+The [A3 Dockerfile](../../deploy/a3/Dockerfile) overlays the operator-supplied
+local base image `triton-eval:local`. Stage the original offline inputs under
+`deploy/a3/wheels/`, including `pins/`, `pybuild/`, `npupost4/`, `bwrap-bin` and
+the Triton Ascend 3.6.0 wheel. The standard host wheel downloader targets a
+different Python and runtime stack.
+
+Replace calls to `deploy-a3/run-ascend-op-eval-a3-ascendc.sh` with `deploy/a3/run.sh` in site automation.
+For an existing checkout, copy the untracked `deploy-a3/wheels/` to
+`deploy/a3/wheels/` before rebuilding. For an existing image, point
+`ASCEND_OP_EVAL_RELEASE_MANIFEST_HOST` at its original bound manifest. The
+launcher also accepts `ASCEND_OP_EVAL_CAPABILITY_SECRET_PATH` for the existing
+caller registry and `ASCEND_OP_EVAL_ENV_FILE` for an absolute Docker env-file path.
+
+For a fresh offline build, run these commands from the checkout used for the image.
+
+```bash
+DOCKER_BUILDKIT=1 docker build -f deploy/a3/Dockerfile -t ascend-op-eval:a3-2.0-ascendc .
+image_id="$(docker image inspect --format '{{.Id}}' ascend-op-eval:a3-2.0-ascendc)"
+python -m scripts.release_manifest generate --output deploy/a3/release-manifest.json
+python -m scripts.release_manifest bind --manifest deploy/a3/release-manifest.json \
+  --image "ascend-op-eval@${image_id}" --output deploy/a3/release-manifest-bound.json
+```
+
+Before the first launch from the new directory, copy `deploy/a3/.env.example` to
+`deploy/a3/.env` or select your existing env-file. Review the bind address, assigned
+cards, Redis URL and worker inventory. Docker reads this file literally, including the JSON quotes
+around method capabilities. The default caller registry is `.secrets/caller-token.json`.
+Drain active attempts before running `deploy/a3/run.sh`, which replaces the existing
+`triton-eval` container. It selects the local image from the bound manifest,
+mounts the registry at both supported paths and leaves Redis under host management.
+
+## API and worker processes
+
 The API owns HTTP admission and recovery; workers execute leased attempts with
-separate CPU/NPU assignments and lifecycles. Their entrypoints remain separate
-under `scripts/`. For manual startup, use separate terminals from the repository
+separate CPU/NPU assignments and lifecycles. Their installed entrypoints live in
+`ascend_op_eval/entrypoints/`. For manual startup, use separate terminals from the repository
 root with the same exported instance configuration:
 
 ```bash
@@ -109,7 +164,9 @@ ascend-op-eval-server worker --card 0
 ```
 
 Run one NPU worker per configured physical card. The host launcher and Compose
-manage these processes together. For a single HTTP listener, the API can also
+manage these processes together. Their shared launcher uses the installed API module,
+which reads the bind address and optional TLS settings from the process environment.
+For a single HTTP listener, the API can also
 run as `uvicorn ascend_op_eval.entrypoints.run_api:app --host "$ASCEND_OP_EVAL_API_HOST" --port 11907`.
 Use `ascend-op-eval-server api` for the configured
 [native HTTP/TLS listeners](../guides/evaluate-an-operator.md#native-http-and-https).

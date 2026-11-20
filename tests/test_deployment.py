@@ -1,5 +1,6 @@
 """Durable deployment controls: pinned Redis, private instance bind, fail-closed wrapper."""
 
+import hashlib
 import json
 import os
 import shutil
@@ -558,8 +559,7 @@ def test_container_readiness_checks_the_image_digest_build(
         (
             "api",
             (
-                "args=-m uvicorn ascend_op_eval.entrypoints.run_api:app "
-                "--host 127.0.0.1 --port 12000",
+                "args=-m ascend_op_eval.entrypoints.run_api",
             ),
         ),
         (
@@ -572,8 +572,7 @@ def test_container_readiness_checks_the_image_digest_build(
         (
             "all",
             (
-                "args=-m uvicorn ascend_op_eval.entrypoints.run_api:app "
-                "--host 127.0.0.1 --port 12000",
+                "args=-m ascend_op_eval.entrypoints.run_api",
                 "args=-m ascend_op_eval.entrypoints.run_worker --cpu",
                 "args=-m ascend_op_eval.entrypoints.run_worker --card 3",
             ),
@@ -666,6 +665,7 @@ printf 'cwd=%s\\n' "$PWD"
     interpreter = (
         os.path.relpath(fake_python, PROJECT_ROOT) if relative_interpreter else fake_python
     )
+    log_setting = os.path.relpath(log_dir, PROJECT_ROOT) if relative_interpreter else log_dir
     env_file.write_text(
         "\n".join(
             [
@@ -675,7 +675,7 @@ printf 'cwd=%s\\n' "$PWD"
                 "ASCEND_OP_EVAL_API_PORT=11907",
                 "ASCEND_OP_EVAL_CARDS=8",
                 f"ASCEND_OP_EVAL_CPU_WORKERS={cpu_workers}",
-                f"LOG_DIR={log_dir}",
+                f"LOG_DIR={log_setting}",
                 "",
             ]
         )
@@ -696,10 +696,7 @@ printf 'cwd=%s\\n' "$PWD"
     assert f"cwd={PROJECT_ROOT}" in (log_dir / "api.log").read_text()
     assert arch_library in (log_dir / "api.log").read_text()
     assert arch_library in (log_dir / "worker_8.log").read_text()
-    assert (
-        "args=-m uvicorn ascend_op_eval.entrypoints.run_api:app"
-        in (log_dir / "api.log").read_text()
-    )
+    assert "args=-m ascend_op_eval.entrypoints.run_api" in (log_dir / "api.log").read_text()
     assert (
         "args=-m ascend_op_eval.entrypoints.run_worker --card 8"
         in (log_dir / "worker_8.log").read_text()
@@ -720,6 +717,7 @@ def test_stop_without_pid_file_matches_api_cpu_and_npu_workers(tmp_path):
 [[ "$1" == "-TERM" && "$2" == "-f" ]] || exit 2
 printf '%s\\n' \\
   'python -m uvicorn ascend_op_eval.entrypoints.run_api:app --host 127.0.0.1' \\
+  'python -m ascend_op_eval.entrypoints.run_api' \\
   'python -m ascend_op_eval.entrypoints.run_worker --cpu' \\
   'python -m ascend_op_eval.entrypoints.run_worker --card 3' \\
   'python -m ascend_op_eval.entrypoints.run_worker --cardinality 3' | grep -E "$3"
@@ -740,6 +738,7 @@ printf '%s\\n' \\
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
         "python -m uvicorn ascend_op_eval.entrypoints.run_api:app --host 127.0.0.1",
+        "python -m ascend_op_eval.entrypoints.run_api",
         "python -m ascend_op_eval.entrypoints.run_worker --cpu",
         "python -m ascend_op_eval.entrypoints.run_worker --card 3",
     ]
@@ -901,3 +900,91 @@ def test_engine_import_context_cli_reports_probe_status(sandbox, json_output):
         assert json.loads(result.stdout) == {"engine_import_context": status}
     else:
         assert f"engine import context {status}" in result.stdout
+
+
+@pytest.mark.parametrize("local_id", [False, True])
+def test_a3_runs_the_image_bound_by_the_manifest(tmp_path, local_id):
+    from test_deployment_preflight import write_manifest
+
+    profile = PROJECT_ROOT / "deploy/a3"
+    manifest = write_manifest(tmp_path)
+    registry = tmp_path / "caller registry.json"
+    registry.touch()
+    _write_executable(
+        tmp_path / "docker",
+        """#!/bin/bash
+printf '%s\\n' "$@" >> "$DOCKER_CALLS"
+if [[ "$1" == image && "$LOCAL_ID_ONLY" == yes && "$3" == *@* ]]; then exit 1; fi
+""",
+    )
+    calls = tmp_path / "docker-calls"
+    result = subprocess.run(
+        ["bash", str(profile / "run.sh")], cwd=tmp_path, capture_output=True, text=True,
+        env=os.environ | {
+            "PATH": f"{tmp_path}:{os.environ['PATH']}", "DOCKER_CALLS": str(calls),
+            "LOCAL_ID_ONLY": "yes" if local_id else "no",
+            "ASCEND_OP_EVAL_RELEASE_MANIFEST_HOST": str(manifest),
+            "ASCEND_OP_EVAL_CAPABILITY_SECRET_PATH": str(registry),
+            "ASCEND_OP_EVAL_ENV_FILE": str(profile / ".env.example"),
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    argv = calls.read_text().splitlines()
+    assert argv.index("inspect") < argv.index("rm") < argv.index("run")
+    assert argv[-2:] == [EVALUATOR_BUILD if local_id else EVAL_IMAGE, "all"]
+    assert f"ASCEND_OP_EVAL_IMAGE={EVAL_IMAGE}" in argv
+    assert f"ASCEND_OP_EVAL_EVALUATOR_BUILD={EVALUATOR_BUILD}" in argv
+    sandbox = profile / "engine-sandbox.json"
+    digest = hashlib.sha256(sandbox.read_bytes()).hexdigest()
+    assert f"ASCEND_OP_EVAL_ENGINE_SANDBOX_SHA256={digest}" in argv
+    assert f"{manifest}:{CONTAINER_MANIFEST}:ro" in argv
+    for name in ("ascend-op-eval", "triton-eval"):
+        assert f"{registry}:/run/secrets/{name}:ro" in argv
+
+
+@pytest.mark.parametrize("failure", ["missing-file", "wrong-build", "missing-image"])
+def test_a3_rejects_unavailable_release_before_container_replacement(tmp_path, failure):
+    profile = PROJECT_ROOT / "deploy/a3"
+    manifest = tmp_path / "manifest.json"
+    if failure != "missing-file":
+        manifest.write_text(json.dumps({
+            "image_reference": EVAL_IMAGE,
+            "evaluator_build": "wrong" if failure == "wrong-build" else EVALUATOR_BUILD,
+        }))
+    _write_executable(tmp_path / "docker", '#!/bin/bash\necho "$1" >> "$CALLS"\nexit 1\n')
+    calls = tmp_path / "calls"
+    result = subprocess.run(
+        ["bash", str(profile / "run.sh")], cwd=tmp_path, capture_output=True, text=True,
+        env=os.environ | {
+            "PATH": f"{tmp_path}:{os.environ['PATH']}", "CALLS": str(calls),
+            "ASCEND_OP_EVAL_RELEASE_MANIFEST_HOST": str(manifest),
+            "ASCEND_OP_EVAL_CAPABILITY_SECRET_PATH": str(profile / ".env.example"),
+            "ASCEND_OP_EVAL_ENV_FILE": str(profile / ".env.example"),
+        },
+    )
+    assert result.returncode != 0
+    assert (calls.read_text().splitlines() if calls.exists() else []) == (
+        ["image", "image"] if failure == "missing-image" else []
+    )
+
+
+@pytest.mark.parametrize("metadata_exit", [0, 1])
+def test_host_wheels_use_service_metadata_from_another_cwd(tmp_path, metadata_exit):
+    wheel = "torch-cp311-cp311-linux_aarch64.whl"
+    _write_executable(
+        tmp_path / "python3",
+        '#!/bin/bash\n[[ "$2" == "$EXPECTED_PROJECT" && -r "$2" ]] || exit 2\n'
+        'echo "https://example.invalid/$WHEEL"\nexit "$METADATA_EXIT"\n',
+    )
+    _write_executable(tmp_path / "curl", '#!/bin/bash\nlast="${!#}"\ntouch "${last##*/}"\n')
+    output = tmp_path / "wheel house"
+    result = subprocess.run(
+        ["bash", str(PROJECT_ROOT / "scripts/dl_wheels.sh")], cwd=tmp_path,
+        env=os.environ | {
+            "PATH": f"{tmp_path}:{os.environ['PATH']}", "WHEEL": wheel, "WHEEL_DIR": str(output),
+            "METADATA_EXIT": str(metadata_exit),
+            "EXPECTED_PROJECT": str(PROJECT_ROOT / "packages/ascend-op-eval/pyproject.toml"),
+        },
+    )
+    assert result.returncode == metadata_exit
+    assert (output / wheel).exists() == (metadata_exit == 0)

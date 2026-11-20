@@ -6,11 +6,12 @@ the checkout. The API entrypoint starts the configured listeners.
 
 | Task | Commands | Guide |
 | --- | --- | --- |
-| Compose deployment | `compose.sh`, `deployment_preflight.py` | [Deployment](../docs/operations/deployment.md) |
+| Compose deployment | `deploy/compose/compose.sh`, `scripts/deployment_preflight.py` | [Deployment](../docs/operations/deployment.md) |
 | Release identity | `release_manifest.py` | [Release identity](../docs/reference/release-identity.md) |
 | Automatic release PR and publication | `python -m scripts.release_pr` | [Release workflow](../docs/reference/release-identity.md#automated-release-prs) |
 | Manual API/worker startup | `ascend-op-eval-server api`, `ascend-op-eval-server worker --cpu`, `ascend-op-eval-server worker --card 0` | [Deployment](../docs/operations/deployment.md) |
-| Host workers and API | `start.sh`, `stop.sh`, `dl_wheels.sh` | [Deployment](../docs/operations/deployment.md) |
+| Offline A3 image | `deploy/a3/run.sh` | [A3 deployment](../docs/operations/deployment.md#a3-deployment) |
+| Host workers and API | `deploy/host/start.sh`, `deploy/host/stop.sh`, `deploy/host/download-wheels.sh` | [Deployment](../docs/operations/deployment.md) |
 | Host smoke and limited NPU checks | `test_eval_service.py`, `npu_release_gate.py` | [Tests](../tests/README.md) |
 | Separate versus combined timing and trace | `npu_feedback_comparison.py` | [Feedback measurements](../docs/research/feedback-performance.md) |
 | Profiler and sandbox preparation | `prepare_profiler_runtime.py`, `prepare_engine_runtime_overlay.py` | [Profiler runtime](../docs/operations/profiler-runtime.md) |

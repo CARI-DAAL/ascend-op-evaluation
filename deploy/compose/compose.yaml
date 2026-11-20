@@ -1,9 +1,9 @@
 name: ${ASCEND_OP_EVAL_COMPOSE_PROJECT_NAME:?set the existing project name before upgrading}
 
 # One independent v2.1 evaluation instance per host. Configure its private bind,
-# cards and host runtime paths in docker/.env; the consumer owns instance selection.
+# cards and host runtime paths in deploy/compose/.env; the consumer owns instance selection.
 # AOF data survives container replacement. Never remove the named data volume.
-# Start through deploy/compose/compose.sh after exporting the same docker/.env inputs.
+# Start through deploy/compose/compose.sh after exporting the same deploy/compose/.env inputs.
 # The wrapper sets --project-directory to the repository root for relative paths
 # and the existing Compose project / Redis volume identity.
 
