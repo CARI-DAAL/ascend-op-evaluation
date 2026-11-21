@@ -590,27 +590,23 @@ def test_container_launcher_initializes_host_runtime_before_selected_python(
         custom_python,
         """#!/usr/bin/env bash
 printf 'runner=custom\n'
+if [[ "$1" == -m ]]; then python3; fi
 printf 'toolkit=%s\n' "${ASCEND_TOOLKIT_HOME:-}"
 printf 'ld=%s\n' "${LD_LIBRARY_PATH:-}"
 printf 'args=%s\n' "$*"
 """,
     )
-    _write_executable(
-        fake_bin / "python3",
-        """#!/usr/bin/env bash
-printf 'runner=default\n'
-printf 'toolkit=%s\n' "${ASCEND_TOOLKIT_HOME:-}"
-printf 'ld=%s\n' "${LD_LIBRARY_PATH:-}"
-printf 'args=%s\n' "$*"
-""",
-    )
+    _write_executable(fake_bin / "python3", "#!/bin/sh\necho child=selected\n")
+    ambient = tmp_path / "ambient"
+    ambient.mkdir()
+    _write_executable(ambient / "python3", "#!/bin/sh\necho child=ambient\n")
 
     result = subprocess.run(
         [
             *_container_bwrap_args(tmp_path),
             "/usr/bin/env",
             "-i",
-            f"PATH={fake_bin}:/usr/bin:/bin",
+            f"PATH={ambient}:{fake_bin}:/usr/bin:/bin",
             f"PYTHON_BIN={custom_python}",
             f"CANN_SET_ENV_PATH={set_env}",
             "ASCEND_TOOLKIT_HOME=baked-toolkit",
@@ -635,6 +631,7 @@ printf 'args=%s\n' "$*"
     assert f"{set_env.parent}/aarch64-linux/lib64" in result.stdout
     # One extra interpreter call: the in-container readiness gate (heredoc `-`).
     assert result.stdout.count("runner=custom") == len(expected_args) + 1
+    assert result.stdout.count("child=selected") == len(expected_args)
     assert "args=-\n" in result.stdout
     for expected in expected_args:
         assert expected in result.stdout
@@ -658,8 +655,13 @@ fi
 printf 'ld=%s\\n' "${{LD_LIBRARY_PATH:-}}"
 printf 'args=%s\\n' "$*"
 printf 'cwd=%s\\n' "$PWD"
+python3
 """,
     )
+    _write_executable(tmp_path / "python3", "#!/bin/sh\necho child=selected\n")
+    ambient = tmp_path / "ambient"
+    ambient.mkdir()
+    _write_executable(ambient / "python3", "#!/bin/sh\necho child=ambient\n")
     log_dir = tmp_path / "logs"
     env_file = tmp_path / "service.env"
     interpreter = (
@@ -683,6 +685,7 @@ printf 'cwd=%s\\n' "$PWD"
     env = os.environ.copy()
     env["ASCEND_OP_EVAL_ENV_FILE"] = str(env_file)
     env["LD_LIBRARY_PATH"] = "baseline-ld"
+    env["PATH"] = f"{ambient}:{os.environ['PATH']}:{tmp_path}"
 
     result = subprocess.run(
         ["bash", str(PROJECT_ROOT / "deploy/host/start.sh")],
@@ -696,6 +699,8 @@ printf 'cwd=%s\\n' "$PWD"
     assert f"cwd={PROJECT_ROOT}" in (log_dir / "api.log").read_text()
     assert arch_library in (log_dir / "api.log").read_text()
     assert arch_library in (log_dir / "worker_8.log").read_text()
+    for log in log_dir.glob("*.log"):
+        assert "child=selected" in log.read_text()
     assert "args=-m ascend_op_eval.entrypoints.run_api" in (log_dir / "api.log").read_text()
     assert (
         "args=-m ascend_op_eval.entrypoints.run_worker --card 8"
