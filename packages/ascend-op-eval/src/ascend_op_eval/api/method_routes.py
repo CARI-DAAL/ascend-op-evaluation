@@ -151,7 +151,9 @@ def method_runtimes(caller: ReadCaller, instance: Instance):
 @router.post(
     "/method-evaluations",
     response_model=EvaluationResource,
-    responses=errors.error_responses(400, 401, 403, 404, 409, 413, 422, 429, 500, 503),
+    responses=errors.error_responses(
+        400, 401, 403, 404, 409, 413, 422, 429, 500, 503, inflight_limit=True,
+    ),
 )
 async def submit_method(
     submission: MethodSubmission,

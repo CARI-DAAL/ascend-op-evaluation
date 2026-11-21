@@ -1,9 +1,8 @@
 """Stable error codes and the API error boundary.
 
 Every non-2xx response is a single-line, byte-bounded, redacted
-``ErrorEnvelope``. The initial code policy is frozen here: a code's phase may
-be narrowed to its failing check at the resource layer, but its retryable
-value never varies by call site.
+``ErrorEnvelope``. Inflight limits permit retry once capacity is available.
+Oversized requests require a smaller body.
 """
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -16,13 +15,19 @@ from ascend_op_eval.api.contract import Check, ErrorEnvelope, ErrorInfo
 RETRY_AFTER_ONE = {"Retry-After": "1"}
 
 
-def error_responses(*statuses: int, model: type[BaseModel] = ErrorEnvelope) -> dict:
+def error_responses(
+    *statuses: int, model: type[BaseModel] = ErrorEnvelope, inflight_limit: bool = False
+) -> dict:
     """Declare the error bodies and headers emitted by the shared handlers."""
     responses = {}
     for status in statuses:
         response = {"model": model, "description": HTTPStatus(status).phrase}
-        if status in {429, 503}:
+        if status in {429, 503} or (status == 413 and inflight_limit):
             response["headers"] = {"Retry-After": {"schema": {"type": "string", "const": "1"}}}
+            if status == 413:
+                response["headers"]["Retry-After"]["description"] = (
+                    "Present when admission reaches an inflight limit."
+                )
         elif status == 401 and model is ErrorEnvelope:
             response["headers"] = {
                 "WWW-Authenticate": {"schema": {"type": "string", "const": "Bearer"}},
