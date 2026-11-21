@@ -39,7 +39,7 @@ from ascend_op_eval.operator_input import OperatorRequest, PreflightRequest, to_
 router = APIRouter()
 
 SUBMIT_RESPONSES = {
-    **error_responses(400, 401, 403, 409, 413, 422, 429, 500, 503),
+    **error_responses(400, 401, 403, 409, 413, 422, 429, 500, 503, inflight_limit=True),
     202: {
         "model": EvaluationResource,
         "description": "Accepted or replayed evaluation still running.",

@@ -75,7 +75,7 @@ async def test_compile_obeys_normal_inflight_limit(tmp_path, release_catalog_fil
     error = second.json()["error"]
     assert error["code"] == "LIMIT_EXCEEDED"
     assert error["retryable"] is True
-    assert "Retry-After" in second.headers
+    assert second.headers["Retry-After"] == "1"
 
 
 def test_cpu_claim_and_recovery_keep_the_same_execution_class(

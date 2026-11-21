@@ -67,6 +67,14 @@ async def test_live_spec_documents_requests_responses_and_auth(app):
     assert parameters["wait_seconds"]["schema"]["maximum"] == 60
     for status in (400, 401, 403, 409, 413, 422, 429, 500, 503):
         assert response_schema(submit, status)
+    for path in ("/evaluations", "/verify", "/benchmark", "/profile", "/preflight",
+                 "/method-evaluations"):
+        response_413 = document["paths"][path]["post"]["responses"]["413"]
+        retry_after = response_413["headers"]["Retry-After"]
+        assert retry_after["schema"] == {"type": "string", "const": "1"}
+        assert not retry_after.get("required", False)
+    health_413 = document["paths"]["/livez"]["get"]["responses"]["413"]
+    assert "Retry-After" not in health_413.get("headers", {})
 
 
 async def test_real_async_replay_and_error_responses_match_live_spec(app):

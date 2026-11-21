@@ -202,6 +202,8 @@ async def test_body_over_four_mib_is_413_with_streamed_count(app):
         payload = request_payload(triton_code="k" * (5 * 1024 * 1024))
         response = await post(client, payload=payload)
     assert response.status_code == 413
+    assert response.json()["error"]["retryable"] is False
+    assert "Retry-After" not in response.headers
 
 
 async def test_body_over_four_mib_without_content_length_is_413(app):
@@ -213,6 +215,8 @@ async def test_body_over_four_mib_without_content_length_is_413(app):
             headers=trial_headers(),
         )
     assert response.status_code == 413
+    assert response.json()["error"]["retryable"] is False
+    assert "Retry-After" not in response.headers
 
 
 def raw_chunk(payload):
