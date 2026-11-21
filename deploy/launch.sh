@@ -5,6 +5,11 @@ set -euo pipefail
 mode="${1:?expected api, workers or all}"
 log_dir="${2:-}"
 python_bin="${PYTHON_BIN:-python3}"
+if [[ "${python_bin}" == */* ]]; then
+  # CANN's profiler runs python3 by name from its export directory.
+  python_dir="$(CDPATH= cd -- "$(dirname -- "${python_bin}")" && pwd)"
+  export PATH="${python_dir}:${PATH}"
+fi
 api=(-m ascend_op_eval.entrypoints.run_api)
 case "${mode}" in
   api) exec "${python_bin}" "${api[@]}" ;;
