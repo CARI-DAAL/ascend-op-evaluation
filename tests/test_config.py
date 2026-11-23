@@ -1,8 +1,10 @@
+import json
 import os
 import re
 
 import pytest
 from ascend_op_eval.config import Settings
+from ascend_op_eval.deployment import HardwareProfileDeclaration
 
 
 def test_defaults():
@@ -67,32 +69,68 @@ def test_worker_hardware_profile_is_stable_and_scopes_the_attested_stack():
 
 def test_additional_worker_profiles_are_qualified_for_one_service():
     changed = Settings(worker_hardware_model="Ascend910C")
-    settings = Settings(
-        additional_worker_hardware_profiles=[changed.worker_hardware_profile],
+    declaration = HardwareProfileDeclaration(
+        hardware_profile=changed.worker_hardware_profile,
+        hardware_model=changed.worker_hardware_model,
+        driver_version=changed.worker_driver_version,
+        runtime_version=changed.worker_runtime_version,
+        toolchain_version=changed.worker_toolchain_version,
     )
+    settings = Settings(additional_worker_hardware_profiles=[declaration])
     assert settings.qualified_worker_hardware_profiles == {
         settings.worker_hardware_profile,
         changed.worker_hardware_profile,
     }
+    assert [profile.model_dump() for profile in settings.worker_hardware_profiles] == [
+        {
+            "hardware_profile": settings.worker_hardware_profile,
+            "hardware_model": settings.worker_hardware_model,
+            "driver_version": settings.worker_driver_version,
+            "runtime_version": settings.worker_runtime_version,
+            "toolchain_version": settings.worker_toolchain_version,
+            "default": True,
+        },
+        declaration.model_dump() | {"default": False},
+    ]
 
 
 def test_additional_worker_profiles_load_from_json_environment(monkeypatch):
     changed = Settings(worker_hardware_model="Ascend910C")
+    declaration = {
+        "hardware_profile": changed.worker_hardware_profile,
+        "hardware_model": changed.worker_hardware_model,
+        "driver_version": changed.worker_driver_version,
+        "runtime_version": changed.worker_runtime_version,
+        "toolchain_version": changed.worker_toolchain_version,
+    }
     monkeypatch.setenv(
         "ASCEND_OP_EVAL_ADDITIONAL_WORKER_HARDWARE_PROFILES",
-        f'["{changed.worker_hardware_profile}"]',
+        json.dumps([declaration]),
     )
 
     settings = Settings.from_env()
 
     assert settings.additional_worker_hardware_profiles == [
-        changed.worker_hardware_profile
+        HardwareProfileDeclaration.model_validate(declaration)
     ]
 
 
 def test_worker_profile_settings_reject_malformed_additional_profiles():
     with pytest.raises(ValueError):
-        Settings(additional_worker_hardware_profiles=["910c"])
+        Settings(additional_worker_hardware_profiles=[{"hardware_profile": "910c"}])
+
+
+def test_worker_profile_settings_reject_an_id_that_does_not_match_its_fields():
+    changed = Settings(worker_hardware_model="Ascend910C")
+    declaration = {
+        "hardware_profile": "hw_" + "0" * 32,
+        "hardware_model": changed.worker_hardware_model,
+        "driver_version": changed.worker_driver_version,
+        "runtime_version": changed.worker_runtime_version,
+        "toolchain_version": changed.worker_toolchain_version,
+    }
+    with pytest.raises(ValueError, match="does not match its declared stack"):
+        Settings(additional_worker_hardware_profiles=[declaration])
 
 
 def test_command_environment_uses_settings_and_preserves_toolchain(monkeypatch):

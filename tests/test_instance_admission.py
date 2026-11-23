@@ -7,6 +7,7 @@ from ascend_op_eval.control.instance import (
     UnsupportedHardwareProfileError,
 )
 from ascend_op_eval.control.models import WorkerIdentity, new_worker_id
+from ascend_op_eval.deployment import HardwareProfileDeclaration
 from conftest import make_caller, make_request, ready_key
 from test_api import (
     algorithms,
@@ -26,6 +27,16 @@ def cpu_worker(settings):
         algorithms(settings),
         settings.worker_hardware_profile,
         execution_class="cpu",
+    )
+
+
+def profile_declaration(settings):
+    return HardwareProfileDeclaration(
+        hardware_profile=settings.worker_hardware_profile,
+        hardware_model=settings.worker_hardware_model,
+        driver_version=settings.worker_driver_version,
+        runtime_version=settings.worker_runtime_version,
+        toolchain_version=settings.worker_toolchain_version,
     )
 
 
@@ -132,7 +143,9 @@ def test_one_instance_routes_two_qualified_hardware_pools(
 ):
     other_hardware = settings.model_copy(update={"worker_hardware_model": "Ascend910C"})
     service_settings = settings.model_copy(update={
-        "additional_worker_hardware_profiles": [other_hardware.worker_hardware_profile],
+        "additional_worker_hardware_profiles": [
+            profile_declaration(other_hardware)
+        ],
     })
     other_worker = replace(
         make_worker(), hardware_profile=other_hardware.worker_hardware_profile
@@ -165,7 +178,9 @@ def test_readiness_requires_both_execution_classes_for_every_qualified_pool(
 ):
     other_hardware = settings.model_copy(update={"worker_hardware_model": "Ascend910C"})
     service_settings = settings.model_copy(update={
-        "additional_worker_hardware_profiles": [other_hardware.worker_hardware_profile],
+        "additional_worker_hardware_profiles": [
+            profile_declaration(other_hardware)
+        ],
     })
     instance = EvaluationInstance(settings=service_settings, store=store)
 

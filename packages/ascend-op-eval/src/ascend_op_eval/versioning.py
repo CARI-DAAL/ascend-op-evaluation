@@ -53,6 +53,7 @@ CAPABILITIES = (
     "op-profile-capture-scope",
     "profile-case-checkpoints",
     "version-discovery",
+    "deployment-discovery",
     "custom-method-v1",
     "evaluation-cancellation",
     "method-artifact-recovery",

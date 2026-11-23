@@ -7,13 +7,37 @@ owner: maintainers
 
 # Deploy an evaluation instance
 
+## Deployment model
+
+One running service instance is described by four independently verifiable
+things:
+
+1. **Service release**: the service version, evaluator build and release
+   verification reported by `GET /version`.
+2. **Hardware profiles**: complete worker-stack declarations whose derived IDs
+   partition admission, queues, caches and reusable evidence.
+3. **Listeners**: the HTTP and optional HTTPS bind points owned by this API
+   process.
+4. **Capabilities**: release-level API capabilities plus the method-runtime
+   capabilities this deployment declares.
+
+`GET /deployment` reports the last three with the release/build identity after
+ordinary capability authentication. It is a declaration, not a health claim:
+`GET /readyz` independently requires fresh CPU and NPU workers for every
+qualified profile. `/version` remains process-local release identity and does
+not expose deployment configuration. Benchmark, adapter and task-version
+selection belongs to callers; the service only verifies and executes on the
+profile they select.
+
+## Launchers
+
 Choose the launcher that owns this instance's processes and Redis.
 
 | Deployment | Launcher | Durable state |
 | --- | --- | --- |
 | Standard image with Compose | [Compose wrapper](../../deploy/compose/compose.sh) | Compose manages Redis and its named volume |
 | Host Python and CANN installation | [Host launcher](../../deploy/host/start.sh) | Operator supplies Redis |
-| A3 offline image with native AscendC | [A3 launcher](../../deploy/a3/run.sh) | Existing host Redis on port 6391, database 7 |
+| A3 offline image with native AscendC (deployment example) | [A3 launcher](../../deploy/a3/run.sh) | Existing host Redis on port 6391, database 7 |
 
 Both images start the API and workers with the [image entrypoint](../../deploy/images/entrypoint.sh).
 Host and image launchers load the selected CANN toolkit through the [same initialization script](../../deploy/cann.sh)
@@ -53,15 +77,27 @@ start a competing API or Redis process.
 The deployment-derived profile of the API host's worker inventory is always
 qualified and remains the default when a request omits `hardware_profile`. To
 serve additional pools through the same durable instance, set a JSON list of
-their immutable profile IDs:
+complete descriptors. The declared ID must equal the ID derived from the four
+stack fields; startup rejects a mismatch instead of guessing which field is
+wrong:
 
 ```bash
-ASCEND_OP_EVAL_ADDITIONAL_WORKER_HARDWARE_PROFILES='["hw_…", "hw_…"]'
+ASCEND_OP_EVAL_ADDITIONAL_WORKER_HARDWARE_PROFILES='[
+  {
+    "hardware_profile": "hw_…",
+    "hardware_model": "Ascend910C",
+    "driver_version": "26.1.1",
+    "runtime_version": "CANN-9.2.0",
+    "toolchain_version": "CANN 9.2.0 / python 3.12.13 / torch 2.10.0+cpu / torch_npu 2.10.0.post4 / triton_ascend 3.6.0"
+  }
+]'
 ```
 
-Each worker logs its derived profile at startup. Keep the inventory settings and
-derived-profile list under the same deployment review: an ID only grants
-admission, while a fresh compatible worker heartbeat establishes capacity.
+Each worker logs its derived profile at startup, and `/deployment` publishes the
+complete local and additional descriptors so an operator can compare profiles
+field by field. Keep worker inventory and descriptor review together: a
+descriptor only grants admission, while a fresh compatible worker heartbeat
+establishes capacity.
 Explicit request profiles that are not in that qualified set are rejected. A
 request that omits the field is admitted to the API host's default profile.
 Idempotent replay compares both canonical request bytes and the admitted

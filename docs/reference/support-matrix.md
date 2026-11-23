@@ -15,6 +15,7 @@ proof that a particular device, profiler or upstream task has been qualified.
 | Operator definition/workloads, Triton and native request formats | Implemented; existing wire interface retained | CPU protocol/regression suite; target NPU checks remain separate |
 | Durable admission, original-owner recovery, attempts and fencing | Implemented; storage identity retained | CPU HTTP/store/recovery suite |
 | Hardware-profile admission, worker pools and evidence isolation | Implemented in the existing evaluation service | CPU protocol suite; each physical hardware stack still requires its own device qualification |
+| Authenticated deployment discovery with full profile descriptors | Implemented by `GET /deployment` | CPU HTTP/OpenAPI suite |
 | Immutable custom checker/measurement/harness packages | Implemented as `custom-method-v1` | CPU end-to-end method acceptance; caller-method authority |
 | Runtime discovery for custom methods, cancellation, frozen materials | Implemented on existing evaluation lifecycle | CPU acceptance; deployment declarations are not blanket hardware attestation |
 | Default definition/workload client adapter | Independently installable | Portable and HTTP client regressions |

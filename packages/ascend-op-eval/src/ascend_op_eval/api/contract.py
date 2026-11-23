@@ -28,6 +28,7 @@ from pydantic import (
     model_validator,
 )
 
+from ascend_op_eval.deployment import HardwareProfileDescriptor
 from ascend_op_eval.methods.contracts import (
     MethodExecution,
     MethodIdentity,
@@ -1459,3 +1460,23 @@ class VersionInfo(StrictModel):
     default_protocol: Digest | None
     capabilities: list[str]
     release: ReleaseVerification
+
+
+class DeploymentListener(StrictModel):
+    """One listener declared by this deployment, without filesystem secrets."""
+
+    protocol: Literal["http", "https"]
+    host: str = Field(min_length=1)
+    port: int = Field(ge=1, le=65535)
+
+
+class DeploymentInfo(StrictModel):
+    """Deployment-specific discovery: listeners, capabilities, and profiles."""
+
+    schema_version: SchemaVersion
+    service_version: str
+    evaluator_build: str
+    listeners: list[DeploymentListener]
+    capabilities: list[str]
+    method_capabilities: list[str]
+    hardware_profiles: list[HardwareProfileDescriptor]

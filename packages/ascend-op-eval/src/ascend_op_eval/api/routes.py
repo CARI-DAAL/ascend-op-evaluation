@@ -20,6 +20,8 @@ from ascend_op_eval.api.auth import (
     require_submit_caller,
 )
 from ascend_op_eval.api.contract import (
+    DeploymentInfo,
+    DeploymentListener,
     EvaluationProgress,
     EvaluationRequest,
     EvaluationResource,
@@ -185,6 +187,38 @@ def get_version(
             source_revision=identity.source_revision,
             source_digest=identity.source_digest,
         ),
+    )
+
+
+@router.get(
+    "/deployment", response_model=DeploymentInfo,
+    responses=error_responses(401, 403, 413, 500),
+)
+def get_deployment(
+    context: Annotated[AppContext, Depends(get_context)],
+    caller: Annotated[Caller, Depends(require_caller)],
+) -> DeploymentInfo:
+    """Report deployment identity to any authenticated caller.
+
+    This is declared configuration, not worker readiness: callers still route
+    work to a profile and wait for `/readyz` independently.
+    """
+    settings = context.instance.settings
+    listeners = [DeploymentListener(
+        protocol="http", host=settings.api_host, port=settings.api_port,
+    )]
+    if settings.api_tls_port is not None:
+        listeners.append(DeploymentListener(
+            protocol="https", host=settings.api_tls_host, port=settings.api_tls_port,
+        ))
+    return DeploymentInfo(
+        schema_version="2.1",
+        service_version=context.release.service_version,
+        evaluator_build=settings.evaluator_build,
+        listeners=listeners,
+        capabilities=list(versioning.CAPABILITIES),
+        method_capabilities=list(settings.method_capabilities),
+        hardware_profiles=list(settings.worker_hardware_profiles),
     )
 
 

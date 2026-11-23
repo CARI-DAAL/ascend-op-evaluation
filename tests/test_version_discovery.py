@@ -11,6 +11,7 @@ import pytest
 from ascend_op_eval import versioning
 from ascend_op_eval.api.dependencies import AppContext
 from ascend_op_eval.config import Settings
+from ascend_op_eval.deployment import HardwareProfileDeclaration
 from test_api import (
     OBSERVER_TOKEN,
     TRIAL_TOKEN,
@@ -26,6 +27,16 @@ pytestmark = pytest.mark.anyio
 
 def auth(token=TRIAL_TOKEN):
     return {"Authorization": f"Bearer {token}"}
+
+
+def profile_declaration(settings):
+    return HardwareProfileDeclaration(
+        hardware_profile=settings.worker_hardware_profile,
+        hardware_model=settings.worker_hardware_model,
+        driver_version=settings.worker_driver_version,
+        runtime_version=settings.worker_runtime_version,
+        toolchain_version=settings.worker_toolchain_version,
+    )
 
 
 @pytest.fixture
@@ -125,6 +136,83 @@ async def test_live_spec_documents_version_discovery(app):
     assert operation["security"] == [{"CapabilityBearer": []}]
     schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
     assert schema
+    from jsonschema import Draft202012Validator
+
+    Draft202012Validator(
+        {**schema, "components": document["components"]}
+    ).validate(response.json())
+    for status in (401, 403, 413, 500):
+        assert operation["responses"][str(status)]["content"]["application/json"]["schema"]
+
+
+async def test_deployment_reports_profiles_listeners_and_capabilities(app):
+    async with app.http as client:
+        unauthenticated = await client.get("/deployment")
+        refused = await client.get("/readyz")
+        response = await client.get("/deployment", headers=auth())
+
+    assert unauthenticated.status_code == 401
+    assert refused.status_code == 503
+    assert response.status_code == 200
+    assert response.json() == {
+        "schema_version": "2.1",
+        "service_version": versioning.service_version(),
+        "evaluator_build": app.settings.evaluator_build,
+        "listeners": [{
+            "protocol": "http",
+            "host": app.settings.api_host,
+            "port": app.settings.api_port,
+        }],
+        "capabilities": list(versioning.CAPABILITIES),
+        "method_capabilities": app.settings.method_capabilities,
+        "hardware_profiles": [
+            profile.model_dump() for profile in app.settings.worker_hardware_profiles
+        ],
+    }
+    serialized = json.dumps(response.json())
+    assert app.settings.redis_url not in serialized
+    assert str(app.settings.capability_secret_path) not in serialized
+
+
+async def test_deployment_reports_tls_and_additional_hardware_profiles(tmp_path):
+    local = make_test_settings(tmp_path)
+    additional = local.model_copy(update={"worker_hardware_model": "Ascend910C"})
+    settings = local.model_copy(update={
+        "api_tls_host": "127.0.0.2",
+        "api_tls_port": 12907,
+        "api_tls_certfile": tmp_path / "tls.crt",
+        "api_tls_keyfile": tmp_path / "tls.key",
+        "additional_worker_hardware_profiles": [profile_declaration(additional)],
+    })
+    app = build_app(tmp_path, None, settings=settings)
+
+    async with app.http as client:
+        response = await client.get("/deployment", headers=auth())
+
+    assert response.status_code == 200
+    document = response.json()
+    assert document["listeners"] == [
+        {"protocol": "http", "host": "127.0.0.1", "port": 11907},
+        {"protocol": "https", "host": "127.0.0.2", "port": 12907},
+    ]
+    assert document["hardware_profiles"] == [
+        profile_declaration(local).model_dump() | {"default": True},
+        profile_declaration(additional).model_dump() | {"default": False},
+    ]
+    serialized = json.dumps(document)
+    assert "tls.crt" not in serialized
+    assert "tls.key" not in serialized
+    assert app.settings.redis_url not in serialized
+
+
+async def test_live_spec_documents_deployment_discovery(app):
+    async with app.http as client:
+        document = (await client.get("/openapi.json")).json()
+        response = await client.get("/deployment", headers=auth())
+
+    operation = document["paths"]["/deployment"]["get"]
+    assert operation["security"] == [{"CapabilityBearer": []}]
+    schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
     from jsonschema import Draft202012Validator
 
     Draft202012Validator(

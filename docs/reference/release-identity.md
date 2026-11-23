@@ -96,6 +96,12 @@ implemented capabilities and the verification status. Identity is
 process-local, so it answers while no worker can serve a request, and it
 reports no deployment configuration.
 
+`GET /deployment` is the separate deployment view: the release/build identity,
+declared listeners, release and method capabilities, and every qualified
+hardware profile with its complete stack fields. It likewise answers while no
+worker can serve, but it is not readiness; use `GET /readyz` for worker
+capacity.
+
 The bundled client reports its own version offline with
 `triton_eval.py --version` -- no service, token or service package needed --
 and queries a deployment with `triton_eval.py version --url ... --capability-file ...`.
