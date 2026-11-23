@@ -21,10 +21,12 @@ from typing import Annotated, Any, Literal
 from pydantic import Field, ValidationError, model_validator
 
 from ascend_op_eval.api.contract import (
+    HARDWARE_PROFILE_DESCRIPTION,
     MAX_SOURCE_BYTES,
     Check,
     CorrectnessParams,
     EvaluationRequest,
+    HardwareProfile,
     NativeCandidate,
     PerformanceParams,
     ProfileParams,
@@ -411,6 +413,11 @@ class OperatorRequest(StrictModel):
     candidate: NativeCandidate | None = None
     custom_inputs_code: SourceCode | None = None
     seed: int = Field(default=200, ge=0, le=2**32 - 1)
+    hardware_profile: HardwareProfile | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description=HARDWARE_PROFILE_DESCRIPTION,
+    )
     checks: list[Check] = Field(
         default_factory=lambda data: (
             ["correctness", "performance"]
@@ -646,6 +653,7 @@ def to_evaluation_request(
     try:
         return EvaluationRequest(
             schema_version="2.1", purpose="trial", op_name="operator",
+            hardware_profile=request.hardware_profile,
             implementation=implementation,
             reference_code=reference_code, kernel_code=kernel_code,
             native_candidate=request.candidate,

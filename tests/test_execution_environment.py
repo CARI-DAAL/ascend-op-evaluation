@@ -55,6 +55,12 @@ def test_worker_environment_optional_distribution_presence(monkeypatch, availabl
     assert environment.triton_version == expected_triton
 
 
+def test_worker_environment_publishes_the_hardware_profile():
+    settings = Settings()
+    environment = build_execution_environment(settings)
+    assert environment.hardware_profile == settings.worker_hardware_profile
+
+
 def test_source_only_triton_populates_complete_worker_identity(tmp_path, monkeypatch):
     """Source installs can execute kernels without providing .dist-info metadata."""
     package = tmp_path / "triton"

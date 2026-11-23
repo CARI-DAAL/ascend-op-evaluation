@@ -305,6 +305,12 @@ def _environment() -> "m.ExecutionEnvironment":
     )
 
 
+def _profiled_environment() -> "m.ExecutionEnvironment":
+    return _environment().model_copy(update={
+        "hardware_profile": "hw_f51181e7ebbbcd4f0371adfd3a2e98e7",
+    })
+
+
 def _provenance(environment) -> "m.Provenance":
     return m.Provenance(
         schema_version="2.1",
@@ -446,6 +452,18 @@ def _fixtures() -> dict[str, "m.StrictModel"]:
             started_at=started,
             finished_at=finished,
             id_hex="0" * 31 + "3",
+        ),
+        "resource-completed-correct-hardware-profile.json": _resource(
+            "completed", with_performance,
+            result=_result(
+                correctness=_ok(_correct_data()),
+                performance=_ok(_performance_data()),
+                environment=_profiled_environment(),
+            ),
+            revision=3,
+            started_at=started,
+            finished_at=finished,
+            id_hex="7" * 32,
         ),
         "resource-completed-wrong.json": _resource(
             "completed", with_performance,

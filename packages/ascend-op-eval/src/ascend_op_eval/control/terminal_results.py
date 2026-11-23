@@ -103,6 +103,11 @@ def complete_evaluation(
     cross-policy correctness reuse is refused by the evidence validator).
     """
     requested_set = set(requested_checks)
+    if (
+        execution_environment is not None
+        and execution_environment.hardware_profile != pinned.hardware_profile
+    ):
+        raise ValueError("execution environment uses a different hardware profile")
     if not requested_set or requested_set.difference(_CHECK_ORDER):
         raise ValueError("completion requires known, nonempty requested checks")
     requested = [check for check in _CHECK_ORDER if check in requested_set]

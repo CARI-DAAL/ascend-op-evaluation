@@ -12,8 +12,10 @@ Fixed keyspace under ``settings.redis_prefix`` (default ``triton-eval:v2.1``)::
     resource:{evaluation_id}                     hash (canonical request, public
                                                  resource JSON, owner, quotas metadata)
     idempotency:{sha256(caller_id NUL key)}      hash: evaluation_id, request_digest
-    ready:{cpu|npu}:interactive                  zset, score = queue sequence
-    ready:{cpu|npu}:bulk                         zset, score = queue sequence (rollout class)
+    ready:{cpu|npu}:{hardware_profile}:interactive
+                                                 zset, score = queue sequence
+    ready:{cpu|npu}:{hardware_profile}:bulk
+                                                 zset, score = queue sequence (rollout)
     queue-sequence                               integer
     deadlines                                    zset, score = deadline epoch ms
     running-leases                               zset, score = lease expiry epoch ms
@@ -173,11 +175,16 @@ class EvaluationStore:
             return self._s.rollout_rate_limit_per_minute, self._s.rollout_max_inflight
         return self._s.trusted_rate_limit_per_minute, self._s.trusted_max_inflight
 
-    def _ready_key(self, traffic_class: str, execution_class: ExecutionClass) -> str:
+    def _ready_key(
+        self,
+        traffic_class: str,
+        execution_class: ExecutionClass,
+        hardware_profile: str,
+    ) -> str:
         """Strict-priority dispatch: rollout drains from bulk, everything else
         from interactive; workers always scan interactive first."""
         suffix = "bulk" if traffic_class == "rollout" else "interactive"
-        return self._key(f"ready:{execution_class}:{suffix}")
+        return self._key(f"ready:{execution_class}:{hardware_profile}:{suffix}")
 
     def create_or_replay(self, command: CreateResourceCommand) -> CreateResourceResult:
         """Atomically write idempotency, resource, FIFO entry, deadline, and quotas.
@@ -243,7 +250,11 @@ class EvaluationStore:
                     },
                 )
                 pipeline.zadd(
-                    self._ready_key(command.traffic_class, command.execution_class),
+                    self._ready_key(
+                        command.traffic_class,
+                        command.execution_class,
+                        command.hardware_profile,
+                    ),
                     {command.evaluation_id: successor},
                 )
                 pipeline.zadd(self._key("deadlines"), {command.evaluation_id: deadline_ms})
@@ -276,6 +287,7 @@ class EvaluationStore:
         if (
             record[b"request_digest"].decode("utf-8") != command.admission.request_digest
             or stored[b"canonical_request"] != command.admission.canonical_request
+            or stored[b"hardware_profile"].decode("utf-8") != command.hardware_profile
         ):
             return CreateResourceResult("conflict", None)
         resource = EvaluationResource.model_validate_json(stored[b"resource"])
@@ -328,6 +340,7 @@ class EvaluationStore:
             ),
             "resource": dump_contract(resource),
             "evaluator_build": command.evaluator_build,
+            "hardware_profile": command.hardware_profile,
             "correctness_algorithm": command.algorithms.correctness,
             "decoy_algorithm": command.algorithms.decoy,
             "benchmark_algorithm": command.algorithms.benchmark,
@@ -623,8 +636,8 @@ class EvaluationStore:
             card = None
             avoid_card = None
         for ready_key in (
-            self._ready_key("trial", worker.execution_class),
-            self._ready_key("rollout", worker.execution_class),
+            self._ready_key("trial", worker.execution_class, worker.hardware_profile),
+            self._ready_key("rollout", worker.execution_class, worker.hardware_profile),
         ):
             lease = self._claim_from_queue(worker, ready_key, leases_key, avoid_card, card=card)
             if lease is not None:
@@ -1206,6 +1219,7 @@ class EvaluationStore:
         ready_key = self._ready_key(
             self._stored_traffic_class(stored),
             metadata.get("execution_class") or stored[b"execution_class"].decode("utf-8"),
+            stored[b"hardware_profile"].decode("utf-8"),
         )
         sequence_key = self._key("queue-sequence")
         pipeline.watch(ready_key, sequence_key)
@@ -1252,6 +1266,18 @@ class EvaluationStore:
                     result.model_dump(mode="json", exclude_none=False),
                     context={"requested_checks": requested},
                 )
+                environment = validated.provenance.execution_environment
+                if (
+                    stored[b"execution_class"] == b"npu"
+                    and state == "completed"
+                    and (
+                        environment is None
+                        or environment.hardware_profile != lease.pinned.hardware_profile
+                    )
+                ):
+                    raise ValueError(
+                        "completed NPU evidence must pin the admitted hardware profile"
+                    )
                 _commit_pre_exec(lease.evaluation_id)
                 self._commit_terminal_locked(
                     pipeline,
@@ -1329,8 +1355,11 @@ class EvaluationStore:
             stored[b"idempotency_key"].decode("utf-8"), self._s.retention_seconds
         )
         execution_class = stored[b"execution_class"].decode("utf-8")
-        pipeline.zrem(self._ready_key("trial", execution_class), evaluation_id)
-        pipeline.zrem(self._ready_key("rollout", execution_class), evaluation_id)
+        hardware_profile = stored[b"hardware_profile"].decode("utf-8")
+        pipeline.zrem(self._ready_key("trial", execution_class, hardware_profile), evaluation_id)
+        pipeline.zrem(
+            self._ready_key("rollout", execution_class, hardware_profile), evaluation_id
+        )
         pipeline.zrem(self._key("deadlines"), evaluation_id)
         pipeline.zrem(self._key("running-leases"), evaluation_id)
         pipeline.zrem(self._key("state:queued"), evaluation_id)
@@ -1566,6 +1595,7 @@ class EvaluationStore:
                 benchmark=stored[b"benchmark_algorithm"].decode("utf-8"),
                 profiler=stored[b"profiler_algorithm"].decode("utf-8"),
             ),
+            hardware_profile=stored[b"hardware_profile"].decode("utf-8"),
             purpose=stored[b"purpose"].decode("utf-8"),
             manifest_id=stored[b"manifest_id"].decode("utf-8") or None,
             problem_id=stored[b"problem_id"].decode("utf-8") or None,
@@ -1631,6 +1661,7 @@ class EvaluationStore:
         return {
             "execution_class": worker.execution_class,
             "evaluator_build": worker.evaluator_build,
+            "hardware_profile": worker.hardware_profile,
             "correctness_algorithm": worker.algorithms.correctness,
             "decoy_algorithm": worker.algorithms.decoy,
             "benchmark_algorithm": worker.algorithms.benchmark,

@@ -45,6 +45,7 @@ EXPECTED_FIXTURES = [
     "resource-failed-poison.json",
     "resource-completed-compile-error.json",
     "resource-completed-correct.json",
+    "resource-completed-correct-hardware-profile.json",
     "resource-completed-decoy.json",
     "resource-completed-execution-timeout.json",
     "resource-completed-performance-profile-op.json",

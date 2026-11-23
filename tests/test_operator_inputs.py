@@ -35,6 +35,13 @@ def test_minimal_request_and_durable_defaults():
     assert "ascend_op_eval" not in durable.reference_code
 
 
+def test_hardware_profile_target_survives_durable_conversion():
+    profile = "hw_" + "a" * 32
+    durable = to_evaluation_request(request(hardware_profile=profile))
+
+    assert durable.hardware_profile == profile
+
+
 def test_check_coupling_uses_final_endpoint_checks():
     profile = request(profile={"mode": "deep"})
     durable = to_evaluation_request(profile, checks=["profile"])

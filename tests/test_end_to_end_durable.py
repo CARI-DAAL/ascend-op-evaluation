@@ -139,7 +139,7 @@ def _identity(app):
     from ascend_op_eval.control.models import WorkerIdentity, new_worker_id
 
     return WorkerIdentity(new_worker_id(), app.settings.evaluator_build,
-                          algorithms(app.settings))
+                          algorithms(app.settings), app.settings.worker_hardware_profile)
 
 
 def _trial_caller():

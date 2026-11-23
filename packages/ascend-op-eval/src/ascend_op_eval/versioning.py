@@ -56,12 +56,14 @@ CAPABILITIES = (
     "custom-method-v1",
     "evaluation-cancellation",
     "method-artifact-recovery",
+    "hardware-profile-routing",
 )
 
 # The placeholder build of an unconfigured deployment; never a release build.
 ZERO_BUILD = "git:" + "0" * 40
 
 BUILD_PATTERN = re.compile(r"^(sha256:[0-9a-f]{64}|git:[0-9a-f]{40})$")
+HARDWARE_PROFILE_PATTERN = r"^hw_[0-9a-f]{32}$"
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _REVISION = re.compile(r"^[0-9a-f]{40}$")
 _VERSION = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$")

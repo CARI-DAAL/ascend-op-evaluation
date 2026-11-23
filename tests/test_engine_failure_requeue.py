@@ -14,6 +14,7 @@ from conftest import (
     make_caller,
     make_completed_result,
     make_request,
+    ready_key,
 )
 from test_worker import StubEvaluator, _healthy_worker, _ScriptedCanary, build_worker
 
@@ -242,7 +243,7 @@ def test_requeue_publishes_replacement_and_card_avoidance(
     assert stored[b"last_failed_card"] == b"6"
     assert stored[b"fencing_token"] == str(lease.fencing_token + 1).encode()
     assert redis_client.zscore(_key(settings, "running-leases"), command.evaluation_id) is None
-    assert redis_client.zrange(_key(settings, "ready:npu:interactive"), 0, -1) == [
+    assert redis_client.zrange(ready_key(settings), 0, -1) == [
         command.evaluation_id.encode()
     ]
 

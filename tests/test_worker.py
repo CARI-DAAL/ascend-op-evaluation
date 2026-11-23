@@ -156,6 +156,7 @@ def test_empty_claim_heartbeats_and_runs_maintenance(store, settings, clock, que
     class Compatibility:
         evaluator_build = settings.evaluator_build
         algorithms = algorithms(settings)
+        hardware_profile = settings.worker_hardware_profile
         execution_class = "npu"
 
     assert store.has_fresh_compatible_worker(Compatibility())
@@ -169,6 +170,7 @@ def test_incompatible_worker_build_is_not_fresh(store, settings, clock, queued):
     class Other:
         evaluator_build = "sha256:" + "b" * 64
         algorithms = algorithms(settings)
+        hardware_profile = settings.worker_hardware_profile
         execution_class = "npu"
 
     assert not store.has_fresh_compatible_worker(Other())
@@ -275,7 +277,12 @@ def test_late_delivery_deadline_completion_preserves_requested_checks(
     )
     store.create_or_replay(cmd)
     lease = store.claim_next(
-        WorkerIdentity(new_worker_id(), settings.evaluator_build, algorithms(settings))
+        WorkerIdentity(
+            new_worker_id(),
+            settings.evaluator_build,
+            algorithms(settings),
+            settings.worker_hardware_profile,
+        )
     )
     worker = build_worker(store, settings, StubEvaluator(settings), clock)
     # Directly exercise the worker's own synthesis; the commit wins the CAS

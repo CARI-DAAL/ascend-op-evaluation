@@ -11,6 +11,8 @@ import json
 import re
 from datetime import datetime, timezone
 
+import pytest
+from ascend_op_eval.api.contract import ExecutionEnvironment
 from ascend_op_eval.control.broker import MAX_ATTEMPTS
 from ascend_op_eval.serialization import sha256_hex
 from conftest import (
@@ -20,6 +22,7 @@ from conftest import (
     make_grade_caller,
     make_grade_request,
     make_request,
+    ready_key,
 )
 
 
@@ -70,7 +73,7 @@ def test_claim_transitions_queued_to_running(
     assert visible.finished_at is None
 
     member = command.evaluation_id.encode()
-    assert redis_client.zrange(_key(settings, "ready:npu:interactive"), 0, -1) == []
+    assert redis_client.zrange(ready_key(settings), 0, -1) == []
     assert redis_client.zscore(_key(settings, "state:queued"), member) is None
     assert redis_client.zscore(_key(settings, "state:running"), member) == float(
         lease.deadline_at_ms
@@ -83,6 +86,47 @@ def test_claim_transitions_queued_to_running(
 
 def test_claim_returns_none_when_queue_is_empty(store, make_worker):
     assert store.claim_next(make_worker()) is None
+
+
+def test_completed_npu_results_require_the_pinned_hardware_profile(
+    store, make_command, make_worker, clock, settings,
+):
+    command, lease = _create_and_claim(store, make_command, make_worker, clock)
+    environment = ExecutionEnvironment(
+        hardware_model=settings.worker_hardware_model,
+        hardware_profile=settings.worker_hardware_profile,
+        hardware_count=1,
+        driver_version=settings.worker_driver_version,
+        runtime_version=settings.worker_runtime_version,
+        torch_version=None,
+        torch_npu_version=None,
+        triton_version=None,
+        toolchain_version=settings.worker_toolchain_version,
+    )
+    complete = make_completed_result(settings).model_copy(update={
+        "provenance": make_completed_result(settings).provenance.model_copy(
+            update={"execution_environment": environment}
+        ),
+    })
+    mismatched = complete.model_copy(update={
+        "provenance": complete.provenance.model_copy(update={
+            "execution_environment": complete.provenance.execution_environment.model_copy(
+                update={"hardware_profile": "hw_" + "a" * 32}
+            ),
+        }),
+    })
+    without_profile = complete.model_copy(update={
+        "provenance": complete.provenance.model_copy(update={
+            "execution_environment": None,
+        }),
+    })
+
+    with pytest.raises(ValueError, match="hardware profile"):
+        store.commit_terminal(lease, "completed", mismatched)
+    with pytest.raises(ValueError, match="hardware profile"):
+        store.commit_terminal(lease, "completed", without_profile)
+
+    assert store.commit_terminal(lease, "completed", complete) is True
 
 
 def test_claim_never_starts_a_past_deadline_delivery(
@@ -159,7 +203,7 @@ def test_commit_completed_is_one_atomic_terminal_transition(
     assert redis_client.zscore(_key(settings, "state:running"), member) is None
     assert redis_client.zscore(_key(settings, "deadlines"), member) is None
     assert redis_client.zscore(_key(settings, "running-leases"), member) is None
-    assert redis_client.zrange(_key(settings, "ready:npu:interactive"), 0, -1) == []
+    assert redis_client.zrange(ready_key(settings), 0, -1) == []
 
     retention = settings.retention_seconds
     resource_key = _key(settings, f"resource:{command.evaluation_id}")

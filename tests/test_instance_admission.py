@@ -2,8 +2,12 @@
 from dataclasses import replace
 
 import pytest
+from ascend_op_eval.control.instance import (
+    EvaluationInstance,
+    UnsupportedHardwareProfileError,
+)
 from ascend_op_eval.control.models import WorkerIdentity, new_worker_id
-from conftest import make_caller, make_request
+from conftest import make_caller, make_request, ready_key
 from test_api import (
     algorithms,
     build_app,
@@ -17,7 +21,10 @@ from test_api import (
 
 def cpu_worker(settings):
     return WorkerIdentity(
-        new_worker_id(), settings.evaluator_build, algorithms(settings),
+        new_worker_id(),
+        settings.evaluator_build,
+        algorithms(settings),
+        settings.worker_hardware_profile,
         execution_class="cpu",
     )
 
@@ -109,6 +116,83 @@ def test_claim_requires_the_admitted_build_and_algorithms(store, make_command, m
     assert store.claim_next(worker).evaluation_id == command.evaluation_id
 
 
+def test_claim_requires_the_admitted_hardware_profile(store, make_command, make_worker):
+    command = make_command()
+    store.create_or_replay(command)
+    worker = make_worker()
+    other_profile = replace(worker, hardware_profile="hw_" + "1" * 32)
+    assert store.claim_next(other_profile) is None
+    lease = store.claim_next(worker)
+    assert lease.evaluation_id == command.evaluation_id
+    assert lease.pinned.hardware_profile == command.hardware_profile
+
+
+def test_one_instance_routes_two_qualified_hardware_pools(
+    store, settings, make_worker
+):
+    other_hardware = settings.model_copy(update={"worker_hardware_model": "Ascend910C"})
+    service_settings = settings.model_copy(update={
+        "additional_worker_hardware_profiles": [other_hardware.worker_hardware_profile],
+    })
+    other_worker = replace(
+        make_worker(), hardware_profile=other_hardware.worker_hardware_profile
+    )
+    store.heartbeat(make_worker())
+    store.heartbeat(other_worker)
+    instance = EvaluationInstance(settings=service_settings, store=store)
+
+    local = instance.submit(
+        make_request(), make_caller(), session_id="local", idempotency_key="local",
+    )
+    remote = instance.submit(
+        make_request(hardware_profile=other_hardware.worker_hardware_profile),
+        make_caller(), session_id="remote", idempotency_key="remote",
+    )
+
+    local_lease = store.claim_next(make_worker())
+    remote_lease = store.claim_next(other_worker)
+    assert local_lease.evaluation_id == local.resource.evaluation_id
+    assert local_lease.pinned.hardware_profile == settings.worker_hardware_profile
+    assert remote_lease.evaluation_id == remote.resource.evaluation_id
+    assert (
+        remote_lease.pinned.hardware_profile
+        == other_hardware.worker_hardware_profile
+    )
+
+
+def test_readiness_requires_both_execution_classes_for_every_qualified_pool(
+    store, settings, make_worker
+):
+    other_hardware = settings.model_copy(update={"worker_hardware_model": "Ascend910C"})
+    service_settings = settings.model_copy(update={
+        "additional_worker_hardware_profiles": [other_hardware.worker_hardware_profile],
+    })
+    instance = EvaluationInstance(settings=service_settings, store=store)
+
+    assert instance.is_ready() is False
+    store.heartbeat(make_worker())
+    store.heartbeat(cpu_worker(settings))
+    assert instance.is_ready() is False
+
+    store.heartbeat(replace(
+        make_worker(), hardware_profile=other_hardware.worker_hardware_profile,
+    ))
+    store.heartbeat(replace(
+        cpu_worker(settings), hardware_profile=other_hardware.worker_hardware_profile,
+    ))
+    assert instance.is_ready() is True
+
+
+def test_instance_rejects_an_unqualified_hardware_profile(
+    store, settings, make_worker
+):
+    store.heartbeat(make_worker())
+    instance = EvaluationInstance(settings=settings, store=store)
+    request = make_request(hardware_profile="hw_" + "b" * 32)
+    with pytest.raises(UnsupportedHardwareProfileError):
+        instance.submit(request, make_caller(), session_id="s", idempotency_key="k")
+
+
 def test_cpu_deadline_removes_dispatch_and_releases_quota(
     store, settings, clock, make_command,
 ):
@@ -120,7 +204,7 @@ def test_cpu_deadline_removes_dispatch_and_releases_quota(
     resource = store.get_visible(command.evaluation_id, make_caller())
     assert resource.state == "timed_out"
     assert resource.result.compile.status == "timeout"
-    assert store._r.zcard(f"{settings.redis_prefix}:ready:cpu:interactive") == 0
+    assert store._r.zcard(ready_key(settings, execution_class="cpu")) == 0
     # A fresh admission in the same session has capacity after the deadline.
     assert store.create_or_replay(make_command(
         request=make_request(checks=["compile"]), idempotency_key="after-deadline",

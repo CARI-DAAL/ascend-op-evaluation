@@ -8,6 +8,7 @@ from ascend_op_eval.api.contract import (
     CorrectnessResult,
     EvaluationRequest,
     EvaluationResult,
+    ExecutionEnvironment,
     Provenance,
 )
 from ascend_op_eval.config import Settings
@@ -75,6 +76,15 @@ CATALOG_REFERENCE_CODE = "import torch\n\n\nclass Model(torch.nn.Module):\n    p
 def make_caller(caller_id="caller-1", caller_class="trial", scopes=("trial:submit", "trial:read")):
     return Caller(
         caller_id=caller_id, caller_class=caller_class, scopes=frozenset(scopes)
+    )
+
+
+def ready_key(settings, execution_class="npu", *, rollout=False):
+    """Durable ready-queue key for this deployment's hardware profile."""
+    traffic_class = "bulk" if rollout else "interactive"
+    return (
+        f"{settings.redis_prefix}:ready:{execution_class}:"
+        f"{settings.worker_hardware_profile}:{traffic_class}"
     )
 
 
@@ -150,6 +160,7 @@ def make_command(settings):
             idempotency_key=idempotency_key,
             admission=admission,
             evaluator_build=settings.evaluator_build,
+            hardware_profile=settings.worker_hardware_profile,
             algorithms=AlgorithmVersions(
                 correctness=settings.correctness_algorithm_version,
                 decoy=settings.decoy_algorithm_version,
@@ -202,6 +213,7 @@ def make_worker(settings):
         return WorkerIdentity(
             worker_id=worker_id or new_worker_id(),
             evaluator_build=evaluator_build or settings.evaluator_build,
+            hardware_profile=settings.worker_hardware_profile,
             algorithms=algorithms
             or AlgorithmVersions(
                 correctness=settings.correctness_algorithm_version,
@@ -246,9 +258,20 @@ def make_correctness_success(passed_cases=1, total_cases=1):
 
 def make_completed_result(settings):
     """A complete result for a correctness-only request."""
+    environment = ExecutionEnvironment(
+        hardware_model=settings.worker_hardware_model,
+        hardware_profile=settings.worker_hardware_profile,
+        hardware_count=1,
+        driver_version=settings.worker_driver_version,
+        runtime_version=settings.worker_runtime_version,
+        torch_version=None,
+        torch_npu_version=None,
+        triton_version=None,
+        toolchain_version=settings.worker_toolchain_version,
+    )
     return EvaluationResult(
         correctness=make_correctness_success(),
         performance=None,
         profile=None,
-        provenance=make_provenance(settings),
+        provenance=make_provenance(settings, execution_environment=environment),
     )

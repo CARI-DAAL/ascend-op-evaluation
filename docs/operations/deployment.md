@@ -19,6 +19,60 @@ Both images start the API and workers with the [image entrypoint](../../deploy/i
 Host and image launchers load the selected CANN toolkit through the [same initialization script](../../deploy/cann.sh)
 and use the [process launcher](../../deploy/launch.sh) to start CPU workers and one NPU worker per assigned card.
 
+## Hardware profiles and worker pools
+
+The four `ASCEND_OP_EVAL_WORKER_*` inventory settings are a deployment
+attestation, not operator-selected labels. The service derives an immutable
+`hardware_profile` from the exact hardware model, driver version, runtime
+version and toolchain version. Admission pins that profile, ready queues are
+partitioned by it, workers must heartbeat with it to claim work, and terminal
+NPU results publish it in `provenance.execution_environment`. CPU-only compile
+results retain `execution_environment: null`; they establish no reusable
+correctness evidence and cannot become grade-eligible evidence.
+
+Use one evaluation service for 910B, 910C and other qualified Ascend stacks.
+Run a worker pool for each hardware profile against the same Redis prefix when
+mixed capacity is required; each pool receives only work admitted for its
+exact stack. CPU workers use the same deployment profile as NPU workers:
+compile/precheck remains part of that deployment's attested runtime, and no
+separate synthetic CPU profile is introduced. Correctness evidence and timing
+baselines are not shared across profiles. Syntax/import verdict-cache keys are
+also partitioned by profile.
+An additional pool is a worker-only deployment on its own hardware host. It
+uses the central Redis URL and prefix, the same verified evaluator build and
+algorithm settings, and its own four worker-inventory values; it must not
+start a competing API or Redis process.
+
+The deployment-derived profile of the API host's worker inventory is always
+qualified and remains the default when a request omits `hardware_profile`. To
+serve additional pools through the same durable instance, set a JSON list of
+their immutable profile IDs:
+
+```bash
+ASCEND_OP_EVAL_ADDITIONAL_WORKER_HARDWARE_PROFILES='["hw_…", "hw_…"]'
+```
+
+Each worker logs its derived profile at startup. Keep the inventory settings and
+derived-profile list under the same deployment review: an ID only grants
+admission, while a fresh compatible worker heartbeat establishes capacity.
+Explicit request profiles that are not in that qualified set are rejected. A
+request that omits the field is admitted to the API host's default profile.
+Idempotent replay compares both canonical request bytes and the admitted
+profile, so the same caller/key cannot be replayed onto a different pool.
+Completed NPU evidence is refused if its worker environment omits the profile
+or publishes one different from admission.
+`/readyz` requires fresh compatible CPU and NPU workers for every qualified
+profile; a single unavailable pool therefore makes the whole service not ready.
+
+Do not deploy new binaries over queued or running v2.1 work that lacks
+`hardware_profile`. Drain old active work before the rollout, or stop admission
+and let the old work terminalize/recover under the old deployment. The service
+intentionally does not guess a legacy profile: an unscoped fallback could send
+910B timing or correctness evidence to a 910C worker.
+Historical terminal v2.1 resources without the field remain readable, but their
+environment is incomplete and cannot authorize correctness reuse or grade
+eligibility.
+
 ## Standard Compose deployment
 
 Build the standard image from the repository root.
@@ -251,13 +305,16 @@ persistence and explicit operator cleanup. Compose stores Redis AOF data in the
 `triton-eval-redis-v2` volume, including these cache entries. Cache connection
 errors are advisory; durable evaluation state still requires working Redis.
 
-Use the same `ASCEND_OP_EVAL_BASELINE_CACHE_NAMESPACE` on all workers of an instance
-(default `torch-baseline-v1`). This scope assumes equivalent fixed hardware and
-runtime across its cards. Change it when hardware, runtime or measurement behavior
-changes, then restart workers. New evaluations populate a fresh scope; old keys
-remain until explicitly removed. Never clear the entire Redis database to clear
-baseline timings: it also owns durable evaluations. A cache namespace change does
-not replace the required evaluator build update for runtime changes.
+Use the same `ASCEND_OP_EVAL_BASELINE_CACHE_NAMESPACE` on all workers of one
+hardware profile (default `torch-baseline-v1`). The worker automatically appends
+its immutable hardware profile to that logical namespace, so separate 910B and
+910C worker pools cannot consume one another's timing entries. Change the
+logical namespace only for an explicit measurement-policy reset; a hardware,
+driver, runtime or toolchain change produces a fresh profile automatically.
+Old keys remain until explicitly removed. Never clear the entire Redis database
+to clear baseline timings: it also owns durable evaluations. A cache namespace
+or profile change does not replace the required evaluator build update for
+runtime changes.
 
 Benchmark requests bypass the older pinned timing caches, regardless of the new
 cache switch. Legacy reference-output settings remain a separate correctness

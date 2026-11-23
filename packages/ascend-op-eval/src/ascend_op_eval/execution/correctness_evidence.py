@@ -119,6 +119,11 @@ def resolve_source(
             or provenance.correctness_algorithm != pinned.algorithms.correctness
             or provenance.decoy_algorithm != pinned.algorithms.decoy):
         raise CorrectnessEvidenceError("correctness evidence uses a different evaluator protocol")
+    if (
+        is_complete_execution_environment(provenance.execution_environment)
+        and provenance.execution_environment.hardware_profile != pinned.hardware_profile
+    ):
+        raise CorrectnessEvidenceError("correctness evidence uses a different worker environment")
     if not is_complete_execution_environment(provenance.execution_environment) or (
         check_environment and (
             not is_complete_execution_environment(execution_environment)

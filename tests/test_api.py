@@ -89,8 +89,13 @@ def algorithms(settings):
 def seed_worker(app, *, execution_class="npu"):
     """Heartbeat one compatible worker so new admissions pass readiness."""
     app.store.heartbeat(
-        WorkerIdentity(new_worker_id(), app.settings.evaluator_build,
-                       algorithms(app.settings), execution_class=execution_class)
+        WorkerIdentity(
+            new_worker_id(),
+            app.settings.evaluator_build,
+            algorithms(app.settings),
+            app.settings.worker_hardware_profile,
+            execution_class=execution_class,
+        ),
     )
 
 
@@ -227,7 +232,7 @@ async def test_terminal_replay_returns_200(app, make_command):
     created = app.store.create_or_replay(command)
     lease = app.store.claim_next(
         WorkerIdentity(new_worker_id(), app.settings.evaluator_build,
-                       algorithms(app.settings))
+                       algorithms(app.settings), app.settings.worker_hardware_profile)
     )
     app.store.commit_terminal(lease, "completed", make_completed_result(app.settings))
 
@@ -266,7 +271,7 @@ async def test_get_terminal_resource_has_no_retry_after(app, make_command):
     created = app.store.create_or_replay(command)
     lease = app.store.claim_next(
         WorkerIdentity(new_worker_id(), app.settings.evaluator_build,
-                       algorithms(app.settings))
+                       algorithms(app.settings), app.settings.worker_hardware_profile)
     )
     app.store.commit_terminal(lease, "completed", make_completed_result(app.settings))
     async with app.http as client:

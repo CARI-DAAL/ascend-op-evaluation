@@ -1,7 +1,7 @@
 """Cached verdicts never bypass durable admission and leased execution."""
 import pytest
 from ascend_op_eval.execution import verdict_cache
-from conftest import make_caller
+from conftest import make_caller, ready_key
 from test_api import build_app, internal_request, post, request_payload, seed_worker
 
 pytestmark = pytest.mark.anyio
@@ -19,7 +19,10 @@ async def test_cached_verdict_still_admits_queued_work(tmp_path, release_catalog
         internal_request(triton_code=payload["triton_code"], checks=checks).kernel_code,
         "triton_ascend_impl", app.settings.cann_fingerprint,
     )
-    verdict_cache.VerdictCache(app.store._r, prefix=app.settings.redis_prefix).put(
+    cache_prefix = (
+        f"{app.settings.redis_prefix}:{app.settings.worker_hardware_profile}"
+    )
+    verdict_cache.VerdictCache(app.store._r, prefix=cache_prefix).put(
         digest, "compile_error", 60,
     )
     async with app.http as client:
@@ -28,7 +31,7 @@ async def test_cached_verdict_still_admits_queued_work(tmp_path, release_catalog
     assert response.json()["state"] == "queued"
     assert response.json()["result"] is None
     assert app.store._r.zcard(
-        f"{app.settings.redis_prefix}:ready:{execution_class}:interactive"
+        ready_key(app.settings, execution_class=execution_class)
     ) == 1
 
 
@@ -95,7 +98,7 @@ async def test_v21_terminal_http_bodies_validate_against_published_schema(
     app.store.create_or_replay(command)
     lease = app.store.claim_next(
         WorkerIdentity(new_worker_id(), app.settings.evaluator_build,
-                       algorithms(app.settings))
+                       algorithms(app.settings), app.settings.worker_hardware_profile)
     )
     app.store.commit_terminal(lease, "completed",
                               make_completed_result(app.settings))

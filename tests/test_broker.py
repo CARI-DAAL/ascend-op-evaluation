@@ -1,14 +1,15 @@
 """Durable resource admission: creation shape, FIFO ordering, keyspace, TTLs."""
 import re
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from ascend_op_eval.api.contract import EvaluationResource
 from ascend_op_eval.config import Settings
 from ascend_op_eval.control.broker import EvaluationStore, StorageError, _digest_text
-from ascend_op_eval.control.models import new_evaluation_id
+from ascend_op_eval.control.models import new_evaluation_id, new_worker_id
 from ascend_op_eval.serialization import sha256_hex
-from conftest import make_caller, make_completed_result, make_request
+from conftest import make_caller, make_completed_result, make_request, ready_key
 
 
 def _key(settings, suffix):
@@ -66,6 +67,7 @@ def test_resource_hash_stores_exact_canonical_bytes_and_metadata(
     assert stored[b"reference_digest"] == command.admission.reference_digest.encode()
     assert stored[b"requested_checks"] == b'["correctness"]'
     assert stored[b"evaluator_build"] == settings.evaluator_build.encode()
+    assert stored[b"hardware_profile"] == settings.worker_hardware_profile.encode()
     assert stored[b"correctness_algorithm"] == settings.correctness_algorithm_version.encode()
     assert stored[b"decoy_algorithm"] == settings.decoy_algorithm_version.encode()
     assert stored[b"benchmark_algorithm"] == settings.benchmark_algorithm_version.encode()
@@ -85,8 +87,27 @@ def test_fifo_sequence_numbers_are_monotonic(store, redis_client, settings, make
         ids.append(command.evaluation_id)
 
     assert redis_client.get(_key(settings, "queue-sequence")) == b"3"
-    entries = redis_client.zrange(_key(settings, "ready:npu:interactive"), 0, -1, withscores=True)
+    key = ready_key(settings)
+    entries = redis_client.zrange(key, 0, -1, withscores=True)
     assert entries == [(ids[0].encode(), 1.0), (ids[1].encode(), 2.0), (ids[2].encode(), 3.0)]
+
+
+def test_ready_dispatch_is_partitioned_by_hardware_profile(
+    store, redis_client, settings, make_command, make_worker
+):
+    command = make_command()
+    store.create_or_replay(command)
+
+    profile_key = ready_key(settings)
+    compatible_worker = make_worker()
+    different_profile_worker = replace(
+        compatible_worker,
+        worker_id=new_worker_id(),
+        hardware_profile="hw_" + "a" * 32,
+    )
+    assert redis_client.zrange(profile_key, 0, -1) == [command.evaluation_id.encode()]
+    assert store.claim_next(different_profile_worker) is None
+    assert store.claim_next(compatible_worker).evaluation_id == command.evaluation_id
 
 
 def test_state_and_deadline_indexes_track_queued_resource(
@@ -181,12 +202,12 @@ def test_terminal_commit_releases_rollout_inflight(
     assert int(redis_client.get(rollout_key)) == 0
 
 
-def _queue_members(redis_client):
+def _queue_members(redis_client, settings):
     return {
         "interactive": set(
-            redis_client.zrange("triton-eval:v2.1:ready:npu:interactive", 0, -1)
+            redis_client.zrange(ready_key(settings), 0, -1)
         ),
-        "bulk": set(redis_client.zrange("triton-eval:v2.1:ready:npu:bulk", 0, -1)),
+        "bulk": set(redis_client.zrange(ready_key(settings, rollout=True), 0, -1)),
     }
 
 
@@ -195,18 +216,18 @@ def _rollout_command(make_command, n):
                         idempotency_key=f"k-{n}", traffic_class="rollout")
 
 
-def test_rollout_routes_to_bulk_queue(store, redis_client, make_command):
+def test_rollout_routes_to_bulk_queue(store, redis_client, settings, make_command):
     cmd = _rollout_command(make_command, 1)
     store.create_or_replay(cmd)
-    queues = _queue_members(redis_client)
+    queues = _queue_members(redis_client, settings)
     assert cmd.evaluation_id.encode() in queues["bulk"]
     assert not queues["interactive"]
 
 
-def test_trial_routes_to_interactive_queue(store, redis_client, make_command):
+def test_trial_routes_to_interactive_queue(store, redis_client, settings, make_command):
     cmd = make_command()
     store.create_or_replay(cmd)
-    queues = _queue_members(redis_client)
+    queues = _queue_members(redis_client, settings)
     assert cmd.evaluation_id.encode() in queues["interactive"]
     assert not queues["bulk"]
 
@@ -244,7 +265,7 @@ def test_recovery_requeues_rollout_to_bulk(store, redis_client, clock, settings,
     clock.advance_ms(settings.lease_seconds * 1000 + 1)
     counts = store.recover_expired_leases()
     assert counts.requeued == 1
-    queues = _queue_members(redis_client)
+    queues = _queue_members(redis_client, settings)
     assert cmd.evaluation_id.encode() in queues["bulk"]
     assert not queues["interactive"]
 

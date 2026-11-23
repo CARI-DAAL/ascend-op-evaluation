@@ -38,7 +38,11 @@ def build_worker(card: int | None, settings: Settings | None = None) -> Worker:
     os.environ["ASCEND_RT_VISIBLE_DEVICES"] = "" if card is None else str(card)
     storage = InstanceStorage.connect(settings)
     baseline_cache = BaselineCache(
-        storage.advisory, prefix=settings.redis_prefix, namespace=settings.baseline_cache_namespace,
+        storage.advisory,
+        prefix=settings.redis_prefix,
+        namespace=(
+            f"{settings.baseline_cache_namespace}:{settings.worker_hardware_profile}"
+        ),
     )
     runner = partial(run_script, environment=command_environment(settings))
     evaluator = EvaluationEvaluator(
@@ -55,7 +59,10 @@ def build_worker(card: int | None, settings: Settings | None = None) -> Worker:
     )
     return Worker(
         storage.store, evaluator, device_id=card, settings=settings, metrics=storage.metrics,
-        verdict_cache=VerdictCache(storage.advisory, prefix=settings.redis_prefix),
+        verdict_cache=VerdictCache(
+            storage.advisory,
+            prefix=f"{settings.redis_prefix}:{settings.worker_hardware_profile}",
+        ),
         script_runner=runner,
     )
 
@@ -111,6 +118,9 @@ def main() -> None:
     # Formal worker startup: verify the release before claiming any attempt.
     startup_identity(Settings.from_env())
     worker = build_worker(args.card)
+    logger.info(
+        "worker hardware profile %s", worker.settings.worker_hardware_profile,
+    )
     if args.card is not None:
         hold_device(worker.settings, args.card)
     stop = _install_signal_handlers()

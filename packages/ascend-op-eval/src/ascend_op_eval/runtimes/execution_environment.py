@@ -18,7 +18,11 @@ from ascend_op_eval.config import Settings
 
 def is_complete_execution_environment(environment: ExecutionEnvironment | None) -> bool:
     """Unknown hardware/software identity cannot authorize trusted evidence reuse."""
-    if environment is None or environment.hardware_count <= 0:
+    if (
+        environment is None
+        or environment.hardware_profile is None
+        or environment.hardware_count <= 0
+    ):
         return False
     return all(
         isinstance(value, str) and bool(value.strip())
@@ -51,6 +55,7 @@ def build_execution_environment(settings: Settings) -> ExecutionEnvironment:
     """Assemble the worker environment from attested settings plus local packages."""
     return ExecutionEnvironment(
         hardware_model=settings.worker_hardware_model,
+        hardware_profile=settings.worker_hardware_profile,
         hardware_count=1,
         driver_version=settings.worker_driver_version,
         runtime_version=settings.worker_runtime_version,

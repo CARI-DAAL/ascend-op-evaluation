@@ -52,6 +52,7 @@ class PinnedProvenance:
 
     evaluator_build: str
     algorithms: AlgorithmVersions
+    hardware_profile: str
     purpose: Purpose
     manifest_id: str | None
     problem_id: str | None
@@ -59,12 +60,13 @@ class PinnedProvenance:
     @classmethod
     def for_request(
         cls, request: EvaluationRequest, *, evaluator_build: str,
-        algorithms: AlgorithmVersions,
+        algorithms: AlgorithmVersions, hardware_profile: str,
     ) -> "PinnedProvenance":
         context = request.grade_context
         return cls(
             evaluator_build=evaluator_build,
             algorithms=algorithms,
+            hardware_profile=hardware_profile,
             purpose=request.purpose,
             manifest_id=context.manifest_id if context is not None else None,
             problem_id=context.problem_id if context is not None else None,
@@ -82,6 +84,7 @@ class CreateResourceCommand:
     admission: CanonicalAdmission
     evaluator_build: str
     algorithms: AlgorithmVersions
+    hardware_profile: str
 
     @property
     def execution_class(self) -> ExecutionClass:
@@ -99,10 +102,11 @@ class CreateResourceResult:
 
 @dataclass(frozen=True)
 class WorkerCompatibility:
-    """Exact evaluator build and algorithm versions a worker must match."""
+    """Exact evaluator build, algorithms and hardware a worker must match."""
 
     evaluator_build: str
     algorithms: AlgorithmVersions
+    hardware_profile: str
     execution_class: ExecutionClass = "npu"
 
 
@@ -111,6 +115,7 @@ class WorkerIdentity:
     worker_id: str
     evaluator_build: str
     algorithms: AlgorithmVersions
+    hardware_profile: str
     execution_class: ExecutionClass = "npu"
 
 

@@ -126,6 +126,7 @@ def _npu_strict_command(settings, caller=None):
         idempotency_key="key-1",
         admission=admission,
         evaluator_build=settings.evaluator_build,
+        hardware_profile=settings.worker_hardware_profile,
         algorithms=AlgorithmVersions(
             correctness=settings.effective_correctness_algorithm_version,
             decoy=settings.decoy_algorithm_version,

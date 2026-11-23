@@ -95,6 +95,7 @@ def _pinned() -> PinnedProvenance:
             benchmark="geometric-mean-baseline-v2",
             profiler="profiler-v1",
         ),
+        hardware_profile="hw_" + "2" * 32,
         manifest_id=None,
         problem_id=None,
         purpose="trial",

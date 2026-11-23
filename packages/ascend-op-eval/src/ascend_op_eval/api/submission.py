@@ -19,6 +19,7 @@ from ascend_op_eval.control.instance import (
     EvaluationInstance,
     InstanceNotReadyError,
     QueueUnavailableError,
+    UnsupportedHardwareProfileError,
 )
 from ascend_op_eval.control.models import CreateResourceResult
 from ascend_op_eval.control.security import Caller
@@ -73,6 +74,10 @@ class HttpSubmission:
             raise errors.forbidden() from None
         except CorrectnessEvidenceError as error:
             raise errors.invalid_request_schema(str(error)) from None
+        except UnsupportedHardwareProfileError:
+            raise errors.invalid_request_schema(
+                "hardware_profile is not qualified by this service"
+            ) from None
         except InstanceNotReadyError:
             raise errors.not_ready() from None
         except QueueUnavailableError:

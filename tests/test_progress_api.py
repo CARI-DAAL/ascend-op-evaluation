@@ -27,7 +27,10 @@ async def test_progress_http_exposes_check_before_resource_finishes(
         assert submitted.status_code == 202
         evaluation_id = submitted.json()["evaluation_id"]
         lease = app.store.claim_next(WorkerIdentity(
-            new_worker_id(), app.settings.evaluator_build, algorithms(app.settings),
+            new_worker_id(),
+            app.settings.evaluator_build,
+            algorithms(app.settings),
+            app.settings.worker_hardware_profile,
         ))
         assert app.store.set_active_check(lease, "correctness")
         assert app.store.save_check_outcome(lease, "correctness", make_correctness_success())

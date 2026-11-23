@@ -8,7 +8,10 @@ from ascend_op_eval.entrypoints import run_worker
 
 
 def test_cpu_cli_never_holds_an_npu(monkeypatch):
-    worker = SimpleNamespace(settings=object(), serve_forever=mock.Mock())
+    worker = SimpleNamespace(
+        settings=SimpleNamespace(worker_hardware_profile="hw_" + "1" * 32),
+        serve_forever=mock.Mock(),
+    )
     build = mock.Mock(return_value=worker)
     monkeypatch.setattr("sys.argv", ["run_worker.py", "--cpu"])
     monkeypatch.setattr(run_worker, "build_worker", build)
@@ -38,10 +41,13 @@ def test_worker_assembles_independent_dependencies_and_shared_runner(monkeypatch
         reference_device_policy="npu-strict", card_canary_on_startup=False,
     )
     durable, advisory = fakeredis.FakeRedis(), fakeredis.FakeRedis()
-    redis_factory = mock.Mock(side_effect=[durable, advisory])
+    redis_factory = mock.Mock(side_effect=[durable, advisory, durable, advisory])
     monkeypatch.setattr(redis.Redis, "from_url", redis_factory)
     monkeypatch.setenv("TRITON_EVAL_REFERENCE_DEVICE_POLICY", "cpu-first")
     worker = run_worker.build_worker(3, settings)
+    other_hardware = run_worker.build_worker(
+        4, settings.model_copy(update={"worker_hardware_model": "Ascend910C"})
+    )
     assert redis_factory.call_args_list[0] == mock.call(settings.redis_url, decode_responses=False)
     cache_options = redis_factory.call_args_list[1].kwargs
     assert cache_options["socket_connect_timeout"] == 0.25
@@ -51,12 +57,23 @@ def test_worker_assembles_independent_dependencies_and_shared_runner(monkeypatch
     assert cache_options["retry_on_error"] == []
     cache = worker.evaluator.benchmark.baseline_cache
     key = cache.key_for("torch", method="event", warmup=5, repeats=50)
+    other_key = other_hardware.evaluator.benchmark.baseline_cache.key_for(
+        "torch", method="event", warmup=5, repeats=50
+    )
+    assert other_key != key
+    worker.verdict_cache.put("shared-verdict", "compile_error", 60)
+    other_hardware.verdict_cache.put("other-verdict", "precheck_passed", 60)
+    assert other_hardware.verdict_cache.get("shared-verdict") is None
+    assert worker.verdict_cache.get("other-verdict") is None
     cache.publish(key, 1, {1: 2.0})
     assert advisory.exists(key)
     assert not durable.exists(key)
     worker.verdict_cache.put("candidate", "compile_error", 60)
-    assert advisory.exists("test-owner:verdict:candidate")
-    assert not durable.exists("test-owner:verdict:candidate")
+    verdict_key = (
+        f"test-owner:{settings.worker_hardware_profile}:verdict:candidate"
+    )
+    assert advisory.exists(verdict_key)
+    assert not durable.exists(verdict_key)
     worker.metrics.increment("worker_attempts_total", {})
     assert advisory.hget("test-owner:metrics:data:worker_attempts_total", "total") == b"1"
     assert not durable.exists("test-owner:metrics:data:worker_attempts_total")

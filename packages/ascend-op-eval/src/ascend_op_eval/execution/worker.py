@@ -228,6 +228,7 @@ class Worker:
         self.script_runner = script_runner
         self.identity = identity or WorkerIdentity(
             new_worker_id(), settings.evaluator_build, _algorithms(settings),
+            settings.worker_hardware_profile,
             execution_class="cpu" if device_id is None else "npu",
         )
         execution_class = "cpu" if device_id is None else "npu"
@@ -530,6 +531,7 @@ class Worker:
         parsed_pinned = PinnedProvenance.for_request(
             request, evaluator_build=lease.pinned.evaluator_build,
             algorithms=lease.pinned.algorithms,
+            hardware_profile=lease.pinned.hardware_profile,
         )
         if (recomputed != canonical or sha256_hex(canonical) != lease.request_digest
                 or set(request.checks) != set(lease.requested_checks)

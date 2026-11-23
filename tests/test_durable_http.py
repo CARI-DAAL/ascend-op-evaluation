@@ -28,7 +28,7 @@ def _http_trial_caller():
 def claim_and_complete(app):
     lease = app.store.claim_next(
         WorkerIdentity(new_worker_id(), app.settings.evaluator_build,
-                       algorithms(app.settings))
+                       algorithms(app.settings), app.settings.worker_hardware_profile)
     )
     assert lease is not None
     assert app.store.commit_terminal(
@@ -70,7 +70,12 @@ async def test_wait_expiry_returns_the_observed_running_revision(app, monkeypatc
     seed_worker(app)
     instance = app.app.state.context.instance
     get_resource = instance.get
-    worker = WorkerIdentity(new_worker_id(), app.settings.evaluator_build, algorithms(app.settings))
+    worker = WorkerIdentity(
+        new_worker_id(),
+        app.settings.evaluator_build,
+        algorithms(app.settings),
+        app.settings.worker_hardware_profile,
+    )
 
     def claim_before_read(evaluation_id, caller):
         app.store.claim_next(worker)

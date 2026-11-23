@@ -1,12 +1,17 @@
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, TypeAdapter, model_validator
 from pydantic_settings import BaseSettings, EnvSettingsSource, SettingsConfigDict
 
-from ascend_op_eval.versioning import BUILD_PATTERN, ZERO_BUILD
+from ascend_op_eval.serialization import canonical_json_bytes, sha256_hex
+from ascend_op_eval.versioning import (
+    BUILD_PATTERN,
+    HARDWARE_PROFILE_PATTERN,
+    ZERO_BUILD,
+)
 
 # The evaluation engine (verify / internal benchmark / profile / validate) is
 # vendored inside the package: this service is self-contained. `engine_dir`
@@ -163,6 +168,11 @@ class Settings(BaseSettings):
         ),
         min_length=1,
     )
+    # Additional qualified pools sharing this durable instance. The local
+    # deployment-derived profile remains the default for omitted requests.
+    additional_worker_hardware_profiles: list[Annotated[str, Field(
+        pattern=HARDWARE_PROFILE_PATTERN,
+    )]] = Field(default_factory=list)
 
     # --- evaluator provenance pinned at admission ---
     # The build-identity format is defined once, by the version module.
@@ -190,6 +200,25 @@ class Settings(BaseSettings):
     # it; a release-mode failure never degrades into it.
     release_mode: Literal["dev", "release"] = "dev"
     release_manifest: Path | None = None
+
+    @property
+    def worker_hardware_profile(self) -> str:
+        """Stable identity for the deployment-attested hardware stack."""
+        digest = sha256_hex(canonical_json_bytes({
+            "hardware_model": self.worker_hardware_model,
+            "driver_version": self.worker_driver_version,
+            "runtime_version": self.worker_runtime_version,
+            "toolchain_version": self.worker_toolchain_version,
+        }))
+        return f"hw_{digest[:32]}"
+
+    @property
+    def qualified_worker_hardware_profiles(self) -> frozenset[str]:
+        """Profiles one admission service may pin, including its local pool."""
+        return frozenset((
+            self.worker_hardware_profile,
+            *self.additional_worker_hardware_profiles,
+        ))
 
     def correctness_algorithm_for(self, policy: str) -> str:
         """Correctness protocol identity under an explicit reference policy.

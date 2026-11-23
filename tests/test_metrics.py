@@ -206,7 +206,7 @@ async def test_terminal_dimensions_are_instrumented(app, make_command):
     )
     lease = app.store.claim_next(
         WorkerIdentity(new_worker_id(), app.settings.evaluator_build,
-                       algorithms(app.settings))
+                       algorithms(app.settings), app.settings.worker_hardware_profile)
     )
     app.store.commit_terminal(lease, "completed", make_completed_result(app.settings))
     body = app.app.state.context.instance.metrics.render_openmetrics().decode()
@@ -220,7 +220,7 @@ def test_worker_dimensions_are_instrumented(app):
     from test_api import algorithms
 
     identity = WorkerIdentity(new_worker_id(), app.settings.evaluator_build,
-                              algorithms(app.settings))
+                              algorithms(app.settings), app.settings.worker_hardware_profile)
     app.store.heartbeat(identity)
     app.store.note_fenced_write()
     body = app.app.state.context.instance.metrics.render_openmetrics().decode()

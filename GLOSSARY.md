@@ -58,6 +58,10 @@ _Avoid_: execution（用于指代某一次尝试时）
 能够运行程序且具有确定身份、依赖条件与能力的环境。
 _Avoid_: image tag（只描述可变镜像标签时）
 
+**Hardware profile / 硬件身份**:
+由部署声明的硬件型号、driver、runtime 与 toolchain 版本共同派生的不可变身份，用于 admission、worker claim、队列分区与证据复用。
+_Avoid_: hardware version（缺少完整栈身份时）, profile（可能与评测配置或性能剖析混淆时）
+
 **Method / 评测方法**:
 具有明确身份、参数含义与结果契约的可复用评测过程。
 _Avoid_: benchmark（用于泛指比较或测量算法时）

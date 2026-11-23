@@ -191,7 +191,10 @@ async def test_http_progress_and_reaper_preserve_partial_timing(
         assert submitted.status_code == 202, submitted.text
         evaluation_id = submitted.json()["evaluation_id"]
         lease = app.store.claim_next(WorkerIdentity(
-            new_worker_id(), app.settings.evaluator_build, algorithms(app.settings),
+            new_worker_id(),
+            app.settings.evaluator_build,
+            algorithms(app.settings),
+            app.settings.worker_hardware_profile,
         ))
         assert lease is not None
         correctness = make_correctness_success(passed_cases=21, total_cases=21)
@@ -321,7 +324,9 @@ def test_grade_requires_full_measurement_even_with_valid_correctness_and_environ
         requested_checks=["correctness", "performance"],
         outcomes={"correctness": correctness, "performance": performance},
         pinned=lease.pinned,
-        execution_environment=result_fixture().provenance.execution_environment,
+        execution_environment=result_fixture().provenance.execution_environment.model_copy(
+            update={"hardware_profile": lease.pinned.hardware_profile},
+        ),
     )
     assert result.correctness == correctness and result.performance == performance
     assert result.provenance.grade_eligible is complete

@@ -78,14 +78,17 @@ ALGORITHMS = AlgorithmVersions(
 )
 
 ENVIRONMENT = ExecutionEnvironment(
-    hardware_model="Ascend910B3",
+    hardware_model="Ascend910",
+    hardware_profile="hw_7c213277860cc8b9b4e30be52956a7d8",
     hardware_count=1,
-    driver_version="24.1.0",
-    runtime_version="8.0.RC3",
+    driver_version="26.0.rc1",
+    runtime_version="CANN-9.1.1",
     torch_version="2.1.0",
     torch_npu_version="2.1.0.post3",
     triton_version="3.0.0",
-    toolchain_version="CANN 8.0.RC3",
+    toolchain_version=(
+        "CANN 9.1.1 / python 3.10 / torch 2.9.0 / torch_npu 2.9.0.post8 / triton_ascend 3.2.0"
+    ),
 )
 
 
@@ -93,6 +96,7 @@ def trial_pinned():
     return PinnedProvenance(
         evaluator_build="git:" + "0" * 40,
         algorithms=ALGORITHMS,
+        hardware_profile=ENVIRONMENT.hardware_profile,
         purpose="trial",
         manifest_id=None,
         problem_id=None,
@@ -103,6 +107,7 @@ def grade_pinned():
     return PinnedProvenance(
         evaluator_build="git:" + "0" * 40,
         algorithms=ALGORITHMS,
+        hardware_profile=ENVIRONMENT.hardware_profile,
         purpose="grade",
         manifest_id="release-1",
         problem_id="addmm-1",
@@ -520,6 +525,7 @@ def test_execution_environment_never_carries_host_or_card_identity():
     env = build_execution_environment(Settings())
     assert set(env.model_dump()) == {
         "hardware_model",
+        "hardware_profile",
         "hardware_count",
         "driver_version",
         "runtime_version",

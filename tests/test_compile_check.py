@@ -288,6 +288,7 @@ async def test_replacement_does_not_retain_previous_attempt_compile_evidence(
                 app.settings.benchmark_algorithm_version,
                 app.settings.profiler_algorithm_version,
             ),
+            app.settings.worker_hardware_profile,
         )
         lease = app.store.claim_next(identity)
         progress = FencedProgress(app.store, lease)

@@ -4,10 +4,17 @@ import json
 from pathlib import Path
 
 import pytest
-from ascend_op_eval.api.contract import EvaluationRequest, EvaluationResult
+from ascend_op_eval.api.contract import (
+    EvaluationRequest,
+    EvaluationResource,
+    EvaluationResult,
+)
 from ascend_op_eval.control.admission import ForbiddenError, admit
 from ascend_op_eval.control.instance import EvaluationInstance
-from conftest import make_caller, make_completed_result, make_request
+from ascend_op_eval.runtimes.execution_environment import (
+    is_complete_execution_environment,
+)
+from conftest import make_caller, make_completed_result, make_request, ready_key
 
 
 def published_v21_resource_validator():
@@ -45,6 +52,18 @@ def test_published_resource_validators_resolve_nested_outcomes(
     resource["result"]["correctness"]["status"] = "invalid"
     with pytest.raises(jsonschema.ValidationError):
         validator.validate(resource)
+
+
+def test_v21_terminal_resources_without_a_hardware_profile_remain_readable():
+    root = Path(__file__).resolve().parent / "fixtures/evaluation_api/2.1/fixtures"
+    payload = json.loads(
+        (root / "resource-completed-correct.json").read_text(encoding="utf-8")
+    )
+
+    resource = EvaluationResource.model_validate_json(json.dumps(payload))
+    provenance = resource.result.provenance
+    assert provenance.execution_environment.hardware_profile is None
+    assert not is_complete_execution_environment(provenance.execution_environment)
 
 
 def _request(**overrides):
@@ -228,7 +247,7 @@ def test_rollout_purpose_resolves_rollout_traffic_class(
         make_request(purpose="rollout"), make_caller(), session_id="s1", idempotency_key="k1",
     )
     assert store._r.zscore(
-        f"{settings.redis_prefix}:ready:npu:bulk", outcome.resource.evaluation_id,
+        ready_key(settings, rollout=True), outcome.resource.evaluation_id,
     ) is not None
 
 

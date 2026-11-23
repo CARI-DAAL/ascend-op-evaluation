@@ -9,6 +9,7 @@ from conftest import (
     make_completed_result,
     make_correctness_success,
     make_request,
+    ready_key,
 )
 
 
@@ -24,7 +25,9 @@ def _fresh_store(redis_server, settings, clock):
 
 def _compatibility(worker):
     return WorkerCompatibility(
-        evaluator_build=worker.evaluator_build, algorithms=worker.algorithms
+        evaluator_build=worker.evaluator_build,
+        algorithms=worker.algorithms,
+        hardware_profile=worker.hardware_profile,
     )
 
 
@@ -50,7 +53,7 @@ def test_queued_deadline_times_out_without_an_attempt(
     assert store.expire_due_resources() == 0
     member = command.evaluation_id.encode()
     assert redis_client.zscore(_key(settings, "deadlines"), member) is None
-    assert redis_client.zrange(_key(settings, "ready:npu:interactive"), 0, -1) == []
+    assert redis_client.zrange(ready_key(settings), 0, -1) == []
 
 
 def test_running_deadline_times_out_and_raises_the_fence(
@@ -92,7 +95,7 @@ def test_worker_crash_below_attempt_limit_requeues_and_reruns(
     visible = store.get_visible(command.evaluation_id, make_caller())
     assert visible.state == "running"
     assert visible.revision == 2
-    assert redis_client.zrange(_key(settings, "ready:npu:interactive"), 0, -1) == [
+    assert redis_client.zrange(ready_key(settings), 0, -1) == [
         command.evaluation_id.encode()
     ]
 
@@ -186,11 +189,11 @@ def test_duplicate_ready_member_for_a_running_resource_is_removed(
     lease = store.claim_next(make_worker())
     assert lease is not None
     # A duplicated queue delivery for an already-claimed resource.
-    redis_client.zadd(_key(settings, "ready:npu:interactive"), {command.evaluation_id: 99})
+    redis_client.zadd(ready_key(settings), {command.evaluation_id: 99})
 
     assert store.claim_next(make_worker()) is None
 
-    assert redis_client.zrange(_key(settings, "ready:npu:interactive"), 0, -1) == []
+    assert redis_client.zrange(ready_key(settings), 0, -1) == []
     visible = store.get_visible(command.evaluation_id, make_caller())
     assert visible.state == "running"
     assert visible.revision == 2
@@ -249,7 +252,9 @@ def test_heartbeat_readiness_requires_fresh_compatible_workers(
     foreign = make_worker()
     store.heartbeat(foreign)
     wrong_build = WorkerCompatibility(
-        evaluator_build="git:" + "f" * 40, algorithms=worker.algorithms
+        evaluator_build="git:" + "f" * 40,
+        algorithms=worker.algorithms,
+        hardware_profile=worker.hardware_profile,
     )
     assert store.has_fresh_compatible_worker(wrong_build) is False
     wrong_algorithms = WorkerCompatibility(
@@ -260,6 +265,7 @@ def test_heartbeat_readiness_requires_fresh_compatible_workers(
             benchmark=worker.algorithms.benchmark,
             profiler=worker.algorithms.profiler,
         ),
+        hardware_profile=worker.hardware_profile,
     )
     assert store.has_fresh_compatible_worker(wrong_algorithms) is False
 

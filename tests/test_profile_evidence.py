@@ -104,6 +104,7 @@ def evaluate(monkeypatch, tmp_path, outputs, *, indices=(0,), mode="op", recomme
                 correctness="correctness-v1", decoy="decoy-v1",
                 benchmark="geometric-mean-v1", profiler="profiler-v1",
             ),
+            hardware_profile="hw_" + "2" * 32,
             purpose="trial", manifest_id=None, problem_id=None,
         ),
         progress,

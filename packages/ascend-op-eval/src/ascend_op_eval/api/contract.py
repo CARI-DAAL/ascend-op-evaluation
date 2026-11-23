@@ -34,6 +34,7 @@ from ascend_op_eval.methods.contracts import (
     MethodResult,
     MethodStageRecord,
 )
+from ascend_op_eval.versioning import HARDWARE_PROFILE_PATTERN
 
 SchemaVersion = Literal["2.1"]
 Purpose = Literal["trial", "grade", "rollout"]
@@ -44,6 +45,13 @@ MeasurementMethod = Literal[
 ResourceState = Literal["queued", "running", "completed", "failed", "timed_out", "cancelled"]
 
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+HardwareProfile = Annotated[str, Field(pattern=HARDWARE_PROFILE_PATTERN)]
+
+HARDWARE_PROFILE_DESCRIPTION = (
+    "Qualified worker-pool identity. Omit it to use the service's local "
+    "profile; an explicit profile must be qualified by deployment "
+    "configuration."
+)
 
 FiniteOrSentinel = float | Literal["inf", "-inf", "nan"]
 DivergenceKind = Literal["shape_mismatch", "value_mismatch", "non_finite_mismatch"]
@@ -261,6 +269,11 @@ class EvaluationRequest(StrictModel):
 
     schema_version: SchemaVersion
     purpose: Purpose = "trial"
+    hardware_profile: HardwareProfile | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description=HARDWARE_PROFILE_DESCRIPTION,
+    )
     implementation: Literal["comparison", "torch", "triton", "native", "method"] = Field(
         default="comparison", exclude_if=lambda value: value == "comparison"
     )
@@ -1248,6 +1261,15 @@ MethodCheckOutcome = Annotated[
 
 class ExecutionEnvironment(StrictModel):
     hardware_model: str
+    hardware_profile: str | None = Field(
+        default=None,
+        pattern=HARDWARE_PROFILE_PATTERN,
+        exclude_if=lambda value: value is None,
+        description=(
+            "Deployment-derived hardware-stack identity. It is absent only on "
+            "historical v2.1 records and makes evidence incomplete."
+        ),
+    )
     hardware_count: int
     driver_version: str
     runtime_version: str

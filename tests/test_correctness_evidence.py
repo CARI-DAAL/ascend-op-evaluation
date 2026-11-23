@@ -24,7 +24,7 @@ from ascend_op_eval.execution.correctness_evidence import (
 )
 from ascend_op_eval.execution.worker import Worker
 from ascend_op_eval.operator_input import to_evaluation_request
-from conftest import make_caller, make_completed_result, make_provenance
+from conftest import make_caller, make_completed_result, make_provenance, ready_key
 from pydantic import ValidationError
 from test_api import algorithms, build_app, post, request_payload, seed_worker, trial_headers
 from test_evaluation_evaluator import ENVIRONMENT, StubCheck, load
@@ -111,6 +111,19 @@ def test_changed_evaluator_protocol_refuses_reuse(store, source, kind):
         pinned = replace(pinned, algorithms=replace(pinned.algorithms, **{kind: "changed"}))
     with pytest.raises(CorrectnessEvidenceError, match="evaluator protocol"):
         store.validate_correctness_source(target_request(source), make_caller(), pinned)
+
+
+def test_changed_hardware_profile_refuses_reuse_before_admission(store, source):
+    result = source.resource.result.model_copy(update={
+        "provenance": source.resource.result.provenance.model_copy(update={
+            "execution_environment": ENVIRONMENT.model_copy(update={
+                "hardware_profile": "hw_" + "a" * 32,
+            }),
+        }),
+    })
+    overwrite_resource(store, source, result=result)
+    with pytest.raises(CorrectnessEvidenceError, match="worker environment"):
+        validate(store, source)
 
 
 def test_absent_invisible_and_observer_source_have_same_error(store, source):
@@ -285,19 +298,19 @@ def test_affinity_backlog_pages_preserve_eligible_fifo_and_interactive_priority(
     ordinary = [make_command(idempotency_key=f"ordinary-{index}") for index in range(2)]
     for command in ordinary:
         assert store.create_or_replay(command).decision == "created"
-    ready_key = store._key("ready:npu:interactive")
+    queue_key = ready_key(settings)
     stale_id = "ev_" + "f" * 32
     # A missing member at the page boundary must not shift past eligible work.
-    before_boundary = store._r.zscore(ready_key, blockers[8].evaluation_id)
-    store._r.zadd(ready_key, {stale_id: before_boundary + 0.5})
+    before_boundary = store._r.zscore(queue_key, blockers[8].evaluation_id)
+    store._r.zadd(queue_key, {stale_id: before_boundary + 0.5})
     worker = make_worker()
     assert store.claim_next(worker, card=1).evaluation_id == ordinary[0].evaluation_id
     assert store.claim_next(worker, card=1).evaluation_id == ordinary[1].evaluation_id
-    assert store._r.zscore(ready_key, stale_id) is None
-    assert store._r.zcard(ready_key) == blocker_count
+    assert store._r.zscore(queue_key, stale_id) is None
+    assert store._r.zcard(queue_key) == blocker_count
     assert store.claim_next(worker, card=1).evaluation_id == older_bulk.evaluation_id
     assert store.claim_next(worker, card=0).evaluation_id == blockers[0].evaluation_id
-    assert store._r.zcard(ready_key) == blocker_count - 1
+    assert store._r.zcard(queue_key) == blocker_count - 1
 
 
 def test_paged_scan_retries_if_queue_order_changes_before_claim(
@@ -512,6 +525,7 @@ def test_default_request_and_outcome_omit_reuse_markers(source):
     pinned = PinnedProvenance.for_request(
         target_request(source), evaluator_build=source.pinned.evaluator_build,
         algorithms=source.pinned.algorithms,
+        hardware_profile=source.pinned.hardware_profile,
     )
     assert pinned == source.pinned
 
@@ -531,9 +545,15 @@ async def test_http_explicit_reuse_admits_without_executing_code_and_replays(
         first = await post(client, payload)
         assert first.status_code == 202
         source_id = first.json()["evaluation_id"]
-        lease = app.store.claim_next(WorkerIdentity(
-            new_worker_id(), app.settings.evaluator_build, algorithms(app.settings),
-        ), card=0)
+        lease = app.store.claim_next(
+            WorkerIdentity(
+                new_worker_id(),
+                app.settings.evaluator_build,
+                algorithms(app.settings),
+                app.settings.worker_hardware_profile,
+            ),
+            card=0,
+        )
         result = make_completed_result(app.settings).model_copy(update={
             "provenance": make_provenance(app.settings, execution_environment=ENVIRONMENT),
         })

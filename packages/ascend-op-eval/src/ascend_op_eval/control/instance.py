@@ -30,6 +30,10 @@ class QueueUnavailableError(Exception):
     """Durable storage cannot currently accept a new resource."""
 
 
+class UnsupportedHardwareProfileError(ValueError):
+    """The request targets a profile this admission service did not qualify."""
+
+
 class EvaluationInstance:
     """Authorize, admit and recover evaluations within one owning instance."""
 
@@ -57,6 +61,9 @@ class EvaluationInstance:
             request.purpose == "trial"
             and caller.caller_id in self.settings.rollout_caller_ids
         )
+        hardware_profile = request.hardware_profile or self.settings.worker_hardware_profile
+        if hardware_profile not in self.settings.qualified_worker_hardware_profiles:
+            raise UnsupportedHardwareProfileError()
         command = CreateResourceCommand(
             evaluation_id=new_evaluation_id(),
             caller_id=caller.caller_id,
@@ -67,6 +74,7 @@ class EvaluationInstance:
             admission=admission,
             evaluator_build=self.settings.evaluator_build,
             algorithms=self._algorithms,
+            hardware_profile=hardware_profile,
         )
         # Existing work remains recoverable while workers or publication
         # readiness are temporarily unavailable. The atomic operation below
@@ -78,9 +86,10 @@ class EvaluationInstance:
                     request, caller, PinnedProvenance.for_request(
                         request, evaluator_build=self.settings.evaluator_build,
                         algorithms=self._algorithms,
+                        hardware_profile=hardware_profile,
                     ),
                 )
-            self._require_ready(command.execution_class)
+            self._require_ready(command.execution_class, hardware_profile)
         outcome = self.store.create_or_replay(command)
         self._bump(
             "evaluation_admissions_total", decision=outcome.decision,
@@ -97,20 +106,24 @@ class EvaluationInstance:
         return self.store.get_progress_visible(evaluation_id, caller)
 
     def is_ready(self) -> bool:
-        """Whole-instance readiness requires capacity for both execution classes."""
+        """Require fresh CPU and NPU capacity for every qualified pool."""
         try:
-            self._require_ready("cpu")
-            self._require_ready("npu")
+            for hardware_profile in sorted(self.settings.qualified_worker_hardware_profiles):
+                self._require_ready("cpu", hardware_profile)
+                self._require_ready("npu", hardware_profile)
         except (InstanceNotReadyError, QueueUnavailableError):
             return False
         return True
 
-    def _require_ready(self, execution_class: ExecutionClass) -> None:
+    def _require_ready(
+        self, execution_class: ExecutionClass, hardware_profile: str,
+    ) -> None:
         if not self.store.probe_storage():
             raise QueueUnavailableError()
         compatible = self.store.has_fresh_compatible_worker(WorkerCompatibility(
             evaluator_build=self.settings.evaluator_build,
             algorithms=self._algorithms,
+            hardware_profile=hardware_profile,
             execution_class=execution_class,
         ))
         self._bump(

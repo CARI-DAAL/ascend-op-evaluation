@@ -20,7 +20,7 @@ from ascend_op_eval.control.terminal_results import (
 FIXTURES = Path(__file__).parents[1] / "tests/fixtures/evaluation_api/2.1/fixtures"
 
 
-def result_fixture(name="correct"):
+def result_fixture(name="correct-hardware-profile"):
     resource = json.loads((FIXTURES / f"resource-completed-{name}.json").read_text())
     return EvaluationResult.model_validate(resource["result"])
 
@@ -36,6 +36,7 @@ def pinned():
             benchmark=provenance.benchmark_algorithm,
             profiler=provenance.profiler_algorithm,
         ),
+        hardware_profile=provenance.execution_environment.hardware_profile,
         purpose="grade",
         manifest_id="release-1",
         problem_id="addmm-1",
@@ -101,10 +102,17 @@ def test_complete_subject_verdicts_are_grade_inputs_even_when_subject_did_not_pa
     pinned, subject,
 ):
     source = result_fixture(subject)
+    environment = result_fixture().provenance.execution_environment
+    if source.provenance.execution_environment.hardware_profile is None:
+        environment = source.provenance.execution_environment.model_copy(update={
+            "hardware_profile": environment.hardware_profile,
+        })
+    else:
+        environment = source.provenance.execution_environment
     result = complete_evaluation(
         requested_checks=["correctness", "performance"],
         outcomes={"correctness": source.correctness, "performance": source.performance},
-        pinned=pinned, execution_environment=source.provenance.execution_environment,
+        pinned=pinned, execution_environment=environment,
     )
     assert result.provenance.grade_eligible is True
     assert result.correctness == source.correctness
