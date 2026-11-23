@@ -30,6 +30,13 @@ NPU results publish it in `provenance.execution_environment`. CPU-only compile
 results retain `execution_environment: null`; they establish no reusable
 correctness evidence and cannot become grade-eligible evidence.
 
+Worker startup proves that attestation before connecting to Redis. An NPU worker
+checks the selected card through `npu-smi`, reads the effective CANN inventory,
+and compares the installed Python/Torch/torch_npu/Triton versions. A CPU worker
+checks its executable CANN/toolchain identity but cannot attest a physical NPU,
+so it does not guess one. Any missing or differing identity fails startup; the
+worker never falls back to another hardware profile.
+
 Use one evaluation service for 910B, 910C and other qualified Ascend stacks.
 Run a worker pool for each hardware profile against the same Redis prefix when
 mixed capacity is required; each pool receives only work admitted for its

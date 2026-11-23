@@ -18,8 +18,41 @@ def test_cpu_cli_never_holds_an_npu(monkeypatch):
     monkeypatch.setattr(run_worker, "hold_device", mock.Mock(side_effect=AssertionError))
     monkeypatch.setattr(run_worker, "set_process_title", lambda: None)
     monkeypatch.setattr(run_worker, "_install_signal_handlers", lambda: "stop")
+    verify = mock.Mock()
+    monkeypatch.setattr(run_worker, "verify_worker_environment", verify)
     run_worker.main()
-    build.assert_called_once_with(None)
+    build.assert_called_once()
+    assert build.call_args.args[0] is None
+    verify.assert_called_once()
+    assert verify.call_args.args[1] is None
+    worker.serve_forever.assert_called_once_with(stop_event="stop")
+
+
+def test_worker_cli_verifies_environment_before_connecting_to_storage(monkeypatch):
+    settings = SimpleNamespace(worker_hardware_profile="hw_" + "2" * 32)
+    worker = SimpleNamespace(
+        settings=settings,
+        serve_forever=mock.Mock(),
+    )
+    events = []
+    build = mock.Mock(return_value=worker)
+    build.side_effect = lambda *args: (events.append("build"), worker)[1]
+    verify = mock.Mock(side_effect=lambda *_: events.append("verify"))
+    startup = mock.Mock(side_effect=lambda _: events.append("release"))
+    monkeypatch.setattr("sys.argv", ["run_worker.py", "--card", "5"])
+    settings_type = mock.Mock(from_env=mock.Mock(return_value=settings))
+    monkeypatch.setattr(run_worker, "Settings", settings_type)
+    monkeypatch.setattr(run_worker, "startup_identity", startup)
+    monkeypatch.setattr(run_worker, "verify_worker_environment", verify)
+    monkeypatch.setattr(run_worker, "build_worker", build)
+    monkeypatch.setattr(run_worker, "hold_device", mock.Mock())
+    monkeypatch.setattr(run_worker, "set_process_title", lambda: None)
+    monkeypatch.setattr(run_worker, "_install_signal_handlers", lambda: "stop")
+    run_worker.main()
+    assert events == ["release", "verify", "build"]
+    startup.assert_called_once_with(settings)
+    verify.assert_called_once_with(settings, 5)
+    build.assert_called_once_with(5, settings)
     worker.serve_forever.assert_called_once_with(stop_event="stop")
 
 

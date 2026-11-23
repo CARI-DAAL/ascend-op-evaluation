@@ -17,6 +17,7 @@ from ascend_op_eval.execution.baseline_cache import BaselineCache
 from ascend_op_eval.execution.process_title import set_process_title as _set_process_title
 from ascend_op_eval.execution.verdict_cache import VerdictCache
 from ascend_op_eval.execution.worker import Worker
+from ascend_op_eval.execution.worker_environment import verify_worker_environment
 from ascend_op_eval.versioning import startup_identity
 
 logger = logging.getLogger(__name__)
@@ -115,9 +116,12 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    # Formal worker startup: verify the release before claiming any attempt.
-    startup_identity(Settings.from_env())
-    worker = build_worker(args.card)
+    # Formal worker startup: verify the release and this process's actual
+    # hardware/toolchain identity before connecting to storage or claiming work.
+    settings = Settings.from_env()
+    startup_identity(settings)
+    verify_worker_environment(settings, args.card)
+    worker = build_worker(args.card, settings)
     logger.info(
         "worker hardware profile %s", worker.settings.worker_hardware_profile,
     )
