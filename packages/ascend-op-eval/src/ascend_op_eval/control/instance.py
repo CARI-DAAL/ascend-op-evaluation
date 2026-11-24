@@ -65,12 +65,16 @@ class EvaluationInstance:
         profile_ids = {profile.hardware_profile for profile in active_profiles}
         if request.hardware_profile is not None:
             hardware_profile = request.hardware_profile
+            if hardware_profile not in profile_ids:
+                raise UnsupportedHardwareProfileError()
         elif len(active_profiles) == 1:
             hardware_profile = next(iter(active_profiles)).hardware_profile
+        elif not active_profiles:
+            # An omitted profile is a routing decision, not part of the caller's
+            # payload. Until a complete pool observes the host, readiness fails.
+            raise InstanceNotReadyError()
         else:
             # No silent fallback: callers must select one of the discovered IDs.
-            raise UnsupportedHardwareProfileError()
-        if hardware_profile not in profile_ids:
             raise UnsupportedHardwareProfileError()
         command = CreateResourceCommand(
             evaluation_id=new_evaluation_id(),

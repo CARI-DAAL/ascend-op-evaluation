@@ -15,8 +15,8 @@ torch_npu = pytest.importorskip(
 pytestmark = [
     pytest.mark.npu,
     pytest.mark.skipif(
-        os.environ.get("TRITON_EVAL_RUN_NPU_PROFILE_TESTS") != "1",
-        reason="set TRITON_EVAL_RUN_NPU_PROFILE_TESTS=1 on an NPU host",
+        os.environ.get("ASCEND_OP_EVAL_RUN_NPU_PROFILE_TESTS") != "1",
+        reason="set ASCEND_OP_EVAL_RUN_NPU_PROFILE_TESTS=1 on an NPU host",
     ),
 ]
 

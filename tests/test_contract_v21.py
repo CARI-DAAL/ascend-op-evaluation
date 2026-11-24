@@ -291,7 +291,7 @@ async def test_leased_compile_http_body_validates_against_published_schema(
     settings = make_test_settings(tmp_path)
     app = build_app(tmp_path, release_catalog_files, settings=settings,
                     clock=FakeClock(int(time.time() * 1000)))
-    seed_worker(app, execution_class="cpu")
+    seed_worker(app)
     payload = request_payload(checks=["compile"], triton_code="def broken(:\n")
     digest = verdict_cache.digest_for(
         internal_request(checks=["compile"], triton_code="def broken(:\n").kernel_code,

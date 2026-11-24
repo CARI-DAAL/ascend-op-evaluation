@@ -1,3 +1,4 @@
+import importlib.metadata
 import json
 from types import SimpleNamespace
 
@@ -44,6 +45,45 @@ TEST_HARDWARE = HardwareProfileDescriptor(
     ),
     default=False,
 )
+
+_CPU_TEST_WORKER_DISTRIBUTIONS = {
+    "torch-npu": "2.10.0.post4",
+    "triton-ascend": "3.6.0",
+}
+
+
+@pytest.fixture(autouse=True)
+def absent_worker_distribution_metadata(monkeypatch):
+    """Supply only the Ascend distributions CPU CI cannot install.
+
+    Worker startup still fails closed in production: this seam does not change
+    ``build_execution_environment``. It makes the CPU test process look like a
+    complete worker process without requiring private Ascend wheels in CI.
+    """
+    actual = importlib.metadata.version
+    missing = {
+        name
+        for name in _CPU_TEST_WORKER_DISTRIBUTIONS
+        if not _distribution_exists(actual, name)
+    }
+    if not missing:
+        return
+
+    def version(distribution: str) -> str:
+        normalized = distribution.replace("_", "-")
+        if normalized in missing:
+            return _CPU_TEST_WORKER_DISTRIBUTIONS[normalized]
+        return actual(distribution)
+
+    monkeypatch.setattr(importlib.metadata, "version", version)
+
+
+def _distribution_exists(version_reader, distribution: str) -> bool:
+    try:
+        version_reader(distribution)
+    except importlib.metadata.PackageNotFoundError:
+        return False
+    return True
 
 
 @pytest.fixture

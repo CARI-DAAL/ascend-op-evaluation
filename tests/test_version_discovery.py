@@ -103,7 +103,8 @@ async def test_identity_is_discoverable_while_no_worker_can_serve(app):
         # No observed pool can make a routing choice: submission fails, but
         # process identity and empty deployment discovery remain available.
         refused = await post(client, headers=trial_headers())
-        assert refused.status_code == 422
+        assert refused.status_code == 503
+        assert refused.json()["error"]["code"] == "NOT_READY"
         assert (await client.get("/readyz")).status_code == 503
         assert (await client.get("/version", headers=auth())).status_code == 200
         deployment = await client.get("/deployment", headers=auth())
@@ -178,7 +179,7 @@ async def test_deployment_reports_profiles_listeners_and_capabilities(app):
         response = await client.get("/deployment", headers=auth())
 
     assert unauthenticated.status_code == 401
-    assert refused.status_code == 503
+    assert refused.status_code == 200
     assert response.status_code == 200
     assert response.json() == {
         "schema_version": "2.1",

@@ -20,6 +20,7 @@ from ascend_op_eval.evaluators.shaping import (
 from conftest import (
     TEST_HARDWARE,
     make_caller,
+    make_completed_result,
     make_correctness_success,
     make_grade_caller,
     make_grade_request,
@@ -237,6 +238,9 @@ async def test_http_progress_and_reaper_preserve_partial_timing(
                 requested_checks=["correctness", "performance"],
                 outcomes={"correctness": correctness, "performance": completed},
                 pinned=lease.pinned,
+                execution_environment=(
+                    make_completed_result(app.settings).provenance.execution_environment
+                ),
             )
             assert app.store.commit_terminal(lease, "completed", result)
             expected, state = completed.data, "completed"

@@ -174,7 +174,9 @@ def test_real_sandbox_method_cleans_detached_session_child(tmp_path):
                         )
                     )
                 ],
-                "environment": {"PYTHONPATH": str(root)},
+                "environment": {
+                    "PYTHONPATH": str(root / "packages/ascend-op-eval/src")
+                },
             }
         )
     )

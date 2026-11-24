@@ -54,7 +54,7 @@ def app_with_precheck(tmp_path, release_catalog_files, **overrides):
 
 
 def cpu_worker(app):
-    seed_worker(app, execution_class="cpu")
+    seed_worker(app)
     return build_worker(
         app.store,
         app.settings,

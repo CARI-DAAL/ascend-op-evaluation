@@ -143,7 +143,7 @@ async def test_admitted_materials_remain_readable_after_registry_expiry(tmp_path
     from test_api import seed_worker
 
     app = build_app(tmp_path, None)
-    seed_worker(app, execution_class="cpu")
+    seed_worker(app)
     body = package(inputs={"actual": {"media_type": "text/plain"}})
     async with app.http as client:
         artifact = (
@@ -182,7 +182,7 @@ async def test_required_outputs_cannot_exceed_declared_count_budget(tmp_path):
     from test_api import seed_worker
 
     app = build_app(tmp_path, None)
-    seed_worker(app, execution_class="cpu")
+    seed_worker(app)
     async with app.http as client:
         method = (
             await client.post(

@@ -14,8 +14,8 @@ from msprof_smoke_kernels import KERNEL_CODE, REFERENCE_CODE  # noqa: E402
 pytestmark = [
     pytest.mark.npu,
     pytest.mark.skipif(
-        os.environ.get("TRITON_EVAL_RUN_NPU_PROFILE_TESTS") != "1",
-        reason="set TRITON_EVAL_RUN_NPU_PROFILE_TESTS=1 on an NPU host",
+        os.environ.get("ASCEND_OP_EVAL_RUN_NPU_PROFILE_TESTS") != "1",
+        reason="set ASCEND_OP_EVAL_RUN_NPU_PROFILE_TESTS=1 on an NPU host",
     ),
 ]
 
@@ -32,6 +32,9 @@ def _run(tmp_path, mode, case_idx):
     output = tmp_path / f"{mode}_{case_idx}.json"
     engine = (
         Path(__file__).parents[1]
+        / "packages"
+        / "ascend-op-eval"
+        / "src"
         / "ascend_op_eval"
         / "engine"
         / "profile_runner.py"

@@ -110,7 +110,7 @@ async def test_method_schema_rejects_unbounded_or_ambiguous_features(tmp_path, s
 
 async def test_unknown_parameters_and_missing_capability_fail_before_admission(tmp_path):
     app = build_app(tmp_path, None)
-    seed_worker(app, execution_class="cpu")
+    seed_worker(app)
     async with app.http as client:
         method = (await client.post("/methods", json=package(), headers=trial_headers())).json()
         bad = await client.post(
@@ -144,7 +144,7 @@ async def test_unknown_parameters_and_missing_capability_fail_before_admission(t
 
 async def test_alias_retry_recovers_frozen_admission_after_alias_changes(tmp_path):
     app = build_app(tmp_path, None)
-    seed_worker(app, execution_class="cpu")
+    seed_worker(app)
     async with app.http as client:
         first = (
             await client.post(
@@ -192,7 +192,7 @@ async def test_alias_retry_recovers_frozen_admission_after_alias_changes(tmp_pat
 
 async def test_queued_method_cancellation_is_terminal_and_idempotent(tmp_path):
     app = build_app(tmp_path, None)
-    seed_worker(app, execution_class="cpu")
+    seed_worker(app)
     async with app.http as client:
         method = (await client.post("/methods", json=package(), headers=trial_headers())).json()
         admitted = await client.post(
@@ -212,7 +212,7 @@ async def test_queued_method_cancellation_is_terminal_and_idempotent(tmp_path):
 
 async def test_running_cancel_waits_for_cleanup_then_fences_old_attempt(tmp_path):
     app = build_app(tmp_path, None)
-    seed_worker(app, execution_class="cpu")
+    seed_worker(app)
     async with app.http as client:
         method = (await client.post("/methods", json=package(), headers=trial_headers())).json()
         admitted = await client.post(
@@ -255,7 +255,7 @@ async def test_same_artifact_bytes_cannot_change_sealed_media_type(tmp_path):
 
 async def test_public_identity_preserves_zero_false_null_and_defaults(tmp_path):
     app = build_app(tmp_path, None)
-    seed_worker(app, execution_class="cpu")
+    seed_worker(app)
     schema = {
         "type": "object",
         "additionalProperties": False,
@@ -297,7 +297,7 @@ async def test_public_identity_preserves_zero_false_null_and_defaults(tmp_path):
 
 async def test_cancelled_lost_worker_is_not_requeued(tmp_path):
     app = build_app(tmp_path, None)
-    seed_worker(app, execution_class="cpu")
+    seed_worker(app)
     async with app.http as client:
         method = (await client.post("/methods", json=package(), headers=trial_headers())).json()
         response = await client.post(
@@ -326,7 +326,7 @@ async def test_method_artifacts_are_attempt_bound_across_recovery(tmp_path):
     from ascend_op_eval.methods.contracts import StoredArtifact
 
     app = build_app(tmp_path, None)
-    seed_worker(app, execution_class="cpu")
+    seed_worker(app)
     async with app.http as client:
         method = (await client.post("/methods", json=package(), headers=trial_headers())).json()
         response = await client.post(
@@ -360,7 +360,7 @@ async def test_method_artifacts_are_attempt_bound_across_recovery(tmp_path):
 
 async def test_alias_resolution_race_returns_the_admitted_request(tmp_path, monkeypatch):
     app = build_app(tmp_path, None)
-    seed_worker(app, execution_class="cpu")
+    seed_worker(app)
     instance = app.app.state.context.instance
     original_submit = instance.submit
     async with app.http as client:
@@ -400,7 +400,7 @@ async def test_alias_resolution_race_returns_the_admitted_request(tmp_path, monk
 async def test_runtime_discovery_does_not_claim_unconfigured_isolation(tmp_path):
     app = build_app(tmp_path, None)
     app.settings.method_capabilities = ["python", "process-isolation"]
-    seed_worker(app, execution_class="cpu")
+    seed_worker(app)
     async with app.http as client:
         runtimes = (await client.get("/method-runtimes", headers=trial_headers())).json()
         assert runtimes["runtimes"][0]["capabilities"] == ["python"]

@@ -499,7 +499,7 @@ def test_build_execution_environment_uses_observed_hardware():
     assert env.toolchain_version == TEST_HARDWARE.toolchain_version
 
 
-def test_build_execution_environment_reads_optional_versions_in_process():
+def test_build_execution_environment_reads_required_versions_in_process():
     env = build_execution_environment(TEST_HARDWARE)
 
     def expected(distribution):

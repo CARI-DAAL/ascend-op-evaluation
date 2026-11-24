@@ -86,10 +86,9 @@ def algorithms(settings):
     )
 
 
-def seed_worker(app, *, execution_class=None):
-    """Heartbeat one compatible worker so new admissions pass readiness."""
-    classes = ("cpu", "npu") if execution_class is None else (execution_class,)
-    for worker_class in classes:
+def seed_worker(app):
+    """Heartbeat a complete CPU/NPU pool so admissions pass profile readiness."""
+    for worker_class in ("cpu", "npu"):
         app.store.heartbeat(
             WorkerIdentity(
                 new_worker_id(),

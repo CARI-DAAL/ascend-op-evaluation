@@ -108,7 +108,7 @@ async def test_health_alias_has_same_readiness_as_readyz(app):
     async with app.http as client:
         assert (await client.get("/health")).status_code == 503
         seed_worker(app)
-        seed_worker(app, execution_class="cpu")
+        seed_worker(app)
         health = await client.get("/health")
         ready = await client.get("/readyz")
     assert health.status_code == ready.status_code == 200

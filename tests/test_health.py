@@ -39,7 +39,6 @@ async def test_readyz_requires_fresh_compatible_worker(app):
 
 async def test_readyz_succeeds_with_dependencies(app):
     seed_worker(app)
-    seed_worker(app, execution_class="cpu")
     async with app.http as client:
         response = await client.get("/readyz")
     assert response.status_code == 200
@@ -59,7 +58,6 @@ async def test_startup_and_readiness_work_outside_repository(app, tmp_path, monk
     """Runtime startup needs storage and capacity, not checked-in schema documents."""
     monkeypatch.chdir(tmp_path)
     seed_worker(app)
-    seed_worker(app, execution_class="cpu")
     async with app.app.router.lifespan_context(app.app):
         async with app.http as client:
             response = await client.get("/readyz")

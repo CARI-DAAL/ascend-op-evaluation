@@ -313,7 +313,9 @@ def test_real_sandbox_child_keeps_task_label(tmp_path):
                         )
                     )
                 ],
-                "environment": {"PYTHONPATH": str(ROOT)},
+                "environment": {
+                    "PYTHONPATH": str(ROOT / "packages/ascend-op-eval/src")
+                },
             }
         )
     )

@@ -13,7 +13,7 @@ pytestmark = pytest.mark.anyio
 async def test_cached_verdict_still_admits_queued_work(tmp_path, release_catalog_files, checks):
     app = build_app(tmp_path, release_catalog_files)
     execution_class = "cpu" if checks == ["compile"] else "npu"
-    seed_worker(app, execution_class=execution_class)
+    seed_worker(app)
     payload = request_payload(triton_code="def broken(: pass", checks=checks)
     digest = verdict_cache.digest_for(
         internal_request(triton_code=payload["triton_code"], checks=checks).kernel_code,

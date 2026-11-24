@@ -220,8 +220,13 @@ def test_worker_dimensions_are_instrumented(app):
     from ascend_op_eval.control.models import WorkerIdentity, new_worker_id
     from test_api import algorithms
 
-    identity = WorkerIdentity(new_worker_id(), app.settings.evaluator_build,
-                              algorithms(app.settings), TEST_HARDWARE.hardware_profile)
+    identity = WorkerIdentity(
+        new_worker_id(),
+        app.settings.evaluator_build,
+        algorithms(app.settings),
+        TEST_HARDWARE.hardware_profile,
+        hardware=TEST_HARDWARE,
+    )
     app.store.heartbeat(identity)
     app.store.note_fenced_write()
     body = app.app.state.context.instance.metrics.render_openmetrics().decode()
