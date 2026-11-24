@@ -10,6 +10,7 @@ from typing import Literal
 from ascend_op_eval.api.contract import Check, EvaluationRequest, EvaluationResource, Purpose
 from ascend_op_eval.control.admission import CanonicalAdmission
 from ascend_op_eval.control.security import CallerClass
+from ascend_op_eval.deployment import HardwareProfileDescriptor
 
 # Quota buckets: trial and trusted derive from purpose; rollout is a
 # server-declared class for RL traffic (settings.rollout_caller_ids). An
@@ -116,6 +117,7 @@ class WorkerIdentity:
     evaluator_build: str
     algorithms: AlgorithmVersions
     hardware_profile: str
+    hardware: HardwareProfileDescriptor | None = None
     execution_class: ExecutionClass = "npu"
 
 

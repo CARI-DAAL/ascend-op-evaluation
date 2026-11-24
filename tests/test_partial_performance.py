@@ -17,7 +17,13 @@ from ascend_op_eval.evaluators.shaping import (
     shape_performance,
     shape_single_performance,
 )
-from conftest import make_caller, make_correctness_success, make_grade_caller, make_grade_request
+from conftest import (
+    TEST_HARDWARE,
+    make_caller,
+    make_correctness_success,
+    make_grade_caller,
+    make_grade_request,
+)
 from pydantic import ValidationError
 from test_api import algorithms, build_app, request_payload, seed_worker, trial_headers
 from test_shaping import load
@@ -194,7 +200,7 @@ async def test_http_progress_and_reaper_preserve_partial_timing(
             new_worker_id(),
             app.settings.evaluator_build,
             algorithms(app.settings),
-            app.settings.worker_hardware_profile,
+            TEST_HARDWARE.hardware_profile,
         ))
         assert lease is not None
         correctness = make_correctness_success(passed_cases=21, total_cases=21)

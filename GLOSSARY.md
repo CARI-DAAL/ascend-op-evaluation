@@ -59,11 +59,11 @@ _Avoid_: execution（用于指代某一次尝试时）
 _Avoid_: image tag（只描述可变镜像标签时）
 
 **Hardware profile / 硬件身份**:
-由部署声明的硬件型号、driver、runtime 与 toolchain 版本共同派生的不可变身份，用于 admission、worker claim、队列分区与证据复用。
+由 worker 实际观察到的硬件型号、driver、runtime 与 toolchain 版本共同派生的不可变身份，用于 admission、worker claim、队列分区与证据复用。
 _Avoid_: hardware version（缺少完整栈身份时）, profile（可能与评测配置或性能剖析混淆时）
 
 **Hardware profile descriptor / 硬件身份描述**:
-硬件身份的完整可读声明：派生 ID 及硬件型号、driver、runtime 与 toolchain 字段，用于部署发现和逐字段比对。
+硬件身份的完整观察结果：派生 ID 及硬件型号、driver、runtime 与 toolchain 字段，用于部署发现和逐字段比对。
 _Avoid_: opaque profile ID（只暴露哈希而隐藏差异来源时）
 
 **Method / 评测方法**:

@@ -24,7 +24,7 @@ from ascend_op_eval.execution.correctness_evidence import (
 )
 from ascend_op_eval.execution.worker import Worker
 from ascend_op_eval.operator_input import to_evaluation_request
-from conftest import make_caller, make_completed_result, make_provenance, ready_key
+from conftest import TEST_HARDWARE, make_caller, make_completed_result, make_provenance, ready_key
 from pydantic import ValidationError
 from test_api import algorithms, build_app, post, request_payload, seed_worker, trial_headers
 from test_evaluation_evaluator import ENVIRONMENT, StubCheck, load
@@ -444,10 +444,11 @@ def test_worker_reuses_zero_verify_and_publishes_typed_outcome(
         "runtime_version": "changed",
     })
     monkeypatch.setattr("ascend_op_eval.execution.worker.build_execution_environment",
-                        lambda settings: environment)
+                        lambda hardware: environment)
     worker = Worker(
         store, EvaluationEvaluator(verify=verify, benchmark=benchmark, profile=None),
-        device_id=0, settings=settings, clock=clock, sleep=lambda _: None,
+        device_id=0, settings=settings, clock=clock, hardware=TEST_HARDWARE,
+        sleep=lambda _: None,
     )
     assert worker.run_once()
     result = store.get_visible(command.evaluation_id, make_caller()).result
@@ -470,11 +471,14 @@ def test_admission_replay_is_recoverable_after_source_expiry(
     store, settings, clock, source, make_worker,
 ):
     store.heartbeat(make_worker())
+    store.heartbeat(replace(make_worker("cpu-worker"), execution_class="cpu"))
     instance = EvaluationInstance(settings=settings, store=store)
     request = target_request(source)
     admitted = instance.submit(request, make_caller(), session_id="reuse", idempotency_key="reuse")
     assert admitted.decision == "created"
     clock.advance_ms(settings.max_recovery_age_seconds * 1000 + 1)
+    store.heartbeat(make_worker())
+    store.heartbeat(replace(make_worker("cpu-worker"), execution_class="cpu"))
     replay = instance.submit(request, make_caller(), session_id="reuse", idempotency_key="reuse")
     assert replay.decision == "replayed"
     assert replay.resource.evaluation_id == admitted.resource.evaluation_id
@@ -487,18 +491,20 @@ def test_expiry_while_queued_fails_without_verification(
 ):
     clock.advance_ms((settings.max_recovery_age_seconds - 10) * 1000)
     store.heartbeat(make_worker())
+    store.heartbeat(replace(make_worker("cpu-worker"), execution_class="cpu"))
     instance = EvaluationInstance(settings=settings, store=store)
     admitted = instance.submit(
         target_request(source), make_caller(), session_id="reuse", idempotency_key="expiry",
     )
     clock.advance_ms(11_000)
     monkeypatch.setattr("ascend_op_eval.execution.worker.build_execution_environment",
-                        lambda settings: ENVIRONMENT)
+                        lambda hardware: ENVIRONMENT)
     verify = StubCheck(None)
     benchmark = EvidenceBenchmark()
     worker = Worker(
         store, EvaluationEvaluator(verify=verify, benchmark=benchmark, profile=None),
-        device_id=0, settings=settings, clock=clock, sleep=lambda _: None,
+        device_id=0, settings=settings, clock=clock, hardware=TEST_HARDWARE,
+        sleep=lambda _: None,
     )
     assert worker.run_once()
     result = store.get_visible(admitted.resource.evaluation_id, make_caller()).result
@@ -550,7 +556,7 @@ async def test_http_explicit_reuse_admits_without_executing_code_and_replays(
                 new_worker_id(),
                 app.settings.evaluator_build,
                 algorithms(app.settings),
-                app.settings.worker_hardware_profile,
+                TEST_HARDWARE.hardware_profile,
             ),
             card=0,
         )

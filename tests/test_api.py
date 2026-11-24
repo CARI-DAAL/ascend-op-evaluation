@@ -18,7 +18,7 @@ from ascend_op_eval.control.broker import EvaluationStore
 from ascend_op_eval.control.instance import EvaluationInstance
 from ascend_op_eval.control.models import AlgorithmVersions, WorkerIdentity, new_worker_id
 from ascend_op_eval.control.security import CapabilityRegistry
-from conftest import FakeClock, make_completed_result
+from conftest import TEST_HARDWARE, FakeClock, make_completed_result
 
 pytestmark = pytest.mark.anyio
 
@@ -86,17 +86,20 @@ def algorithms(settings):
     )
 
 
-def seed_worker(app, *, execution_class="npu"):
+def seed_worker(app, *, execution_class=None):
     """Heartbeat one compatible worker so new admissions pass readiness."""
-    app.store.heartbeat(
-        WorkerIdentity(
-            new_worker_id(),
-            app.settings.evaluator_build,
-            algorithms(app.settings),
-            app.settings.worker_hardware_profile,
-            execution_class=execution_class,
-        ),
-    )
+    classes = ("cpu", "npu") if execution_class is None else (execution_class,)
+    for worker_class in classes:
+        app.store.heartbeat(
+            WorkerIdentity(
+                new_worker_id(),
+                app.settings.evaluator_build,
+                algorithms(app.settings),
+                TEST_HARDWARE.hardware_profile,
+                hardware=TEST_HARDWARE,
+                execution_class=worker_class,
+            ),
+        )
 
 
 class BuiltApp:
@@ -232,7 +235,7 @@ async def test_terminal_replay_returns_200(app, make_command):
     created = app.store.create_or_replay(command)
     lease = app.store.claim_next(
         WorkerIdentity(new_worker_id(), app.settings.evaluator_build,
-                       algorithms(app.settings), app.settings.worker_hardware_profile)
+                       algorithms(app.settings), TEST_HARDWARE.hardware_profile)
     )
     app.store.commit_terminal(lease, "completed", make_completed_result(app.settings))
 
@@ -271,7 +274,7 @@ async def test_get_terminal_resource_has_no_retry_after(app, make_command):
     created = app.store.create_or_replay(command)
     lease = app.store.claim_next(
         WorkerIdentity(new_worker_id(), app.settings.evaluator_build,
-                       algorithms(app.settings), app.settings.worker_hardware_profile)
+                       algorithms(app.settings), TEST_HARDWARE.hardware_profile)
     )
     app.store.commit_terminal(lease, "completed", make_completed_result(app.settings))
     async with app.http as client:

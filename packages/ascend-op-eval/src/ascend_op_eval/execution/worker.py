@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -43,6 +44,7 @@ from ascend_op_eval.control.models import (
     new_worker_id,
 )
 from ascend_op_eval.control.terminal_results import complete_evaluation
+from ascend_op_eval.deployment import HardwareProfileDescriptor
 from ascend_op_eval.evaluators.base import LeaseLostError
 from ascend_op_eval.evaluators.evaluation import EvaluationEvaluator
 from ascend_op_eval.execution.correctness_evidence import write_handoff
@@ -211,6 +213,7 @@ class Worker:
         device_id: int | None,
         settings: Settings,
         identity: WorkerIdentity | None = None,
+        hardware: HardwareProfileDescriptor,
         clock: Callable[[], int] | None = None,
         sleep=None,
         canary=None,
@@ -226,11 +229,21 @@ class Worker:
         self.metrics = metrics
         self.verdict_cache = verdict_cache
         self.script_runner = script_runner
-        self.identity = identity or WorkerIdentity(
-            new_worker_id(), settings.evaluator_build, _algorithms(settings),
-            settings.worker_hardware_profile,
-            execution_class="cpu" if device_id is None else "npu",
-        )
+        if identity is None:
+            self.identity = WorkerIdentity(
+                new_worker_id(), settings.evaluator_build, _algorithms(settings),
+                hardware.hardware_profile,
+                hardware=hardware,
+                execution_class="cpu" if device_id is None else "npu",
+            )
+        else:
+            if identity.hardware_profile != hardware.hardware_profile:
+                raise ValueError(
+                    "worker identity and observed hardware profile differ"
+                )
+            self.identity = replace(identity, hardware=hardware)
+        self.hardware_profile = self.identity.hardware_profile
+        self.hardware = hardware
         execution_class = "cpu" if device_id is None else "npu"
         if self.identity.execution_class != execution_class:
             raise ValueError("worker identity execution class does not match its device")
@@ -357,7 +370,7 @@ class Worker:
             ) as keeper:
                 try:
                     environment = (
-                        build_execution_environment(self.settings)
+                        build_execution_environment(self.hardware)
                         if self.device_id is not None else None
                     )
                     pinned = lease.pinned

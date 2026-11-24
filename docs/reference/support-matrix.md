@@ -17,7 +17,7 @@ proof that a particular device, profiler or upstream task has been qualified.
 | Hardware-profile admission, worker pools and evidence isolation | Implemented in the existing evaluation service | CPU protocol suite; each physical hardware stack still requires its own device qualification |
 | Authenticated deployment discovery with full profile descriptors | Implemented by `GET /deployment` | CPU HTTP/OpenAPI suite |
 | Immutable custom checker/measurement/harness packages | Implemented as `custom-method-v1` | CPU end-to-end method acceptance; caller-method authority |
-| Runtime discovery for custom methods, cancellation, frozen materials | Implemented on existing evaluation lifecycle | CPU acceptance; deployment declarations are not blanket hardware attestation |
+| Runtime discovery for custom methods, cancellation, frozen materials | Implemented on existing evaluation lifecycle | CPU acceptance; runtime declarations are not device qualification |
 | Default definition/workload client adapter | Independently installable | Portable and HTTP client regressions |
 | Fixed public CANNBench comparator and CSV aggregation | External method package | CPU-qualified against pinned modules; original provenance retained |
 | Full fixed-source CANNBench NPU bridge | Implemented external package | Device-unverified; upstream/task qualification required |

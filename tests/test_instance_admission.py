@@ -7,8 +7,8 @@ from ascend_op_eval.control.instance import (
     UnsupportedHardwareProfileError,
 )
 from ascend_op_eval.control.models import WorkerIdentity, new_worker_id
-from ascend_op_eval.deployment import HardwareProfileDeclaration
-from conftest import make_caller, make_request, ready_key
+from ascend_op_eval.deployment import HardwareProfileDescriptor, derive_hardware_profile
+from conftest import TEST_HARDWARE, make_caller, make_request, ready_key
 from test_api import (
     algorithms,
     build_app,
@@ -25,18 +25,24 @@ def cpu_worker(settings):
         new_worker_id(),
         settings.evaluator_build,
         algorithms(settings),
-        settings.worker_hardware_profile,
+        TEST_HARDWARE.hardware_profile,
+        hardware=TEST_HARDWARE,
         execution_class="cpu",
     )
 
 
-def profile_declaration(settings):
-    return HardwareProfileDeclaration(
-        hardware_profile=settings.worker_hardware_profile,
-        hardware_model=settings.worker_hardware_model,
-        driver_version=settings.worker_driver_version,
-        runtime_version=settings.worker_runtime_version,
-        toolchain_version=settings.worker_toolchain_version,
+def observed_hardware(**changes):
+    fields = {
+        "hardware_model": "Ascend910C",
+        "driver_version": "26.1.1",
+        "runtime_version": "CANN-9.2.0",
+        "toolchain_version": TEST_HARDWARE.toolchain_version,
+    }
+    fields.update(changes)
+    return HardwareProfileDescriptor(
+        hardware_profile=derive_hardware_profile(**fields),
+        default=False,
+        **fields,
     )
 
 
@@ -66,15 +72,16 @@ async def test_admission_replay_conflict_and_rejection_never_execute_candidate(
 
 
 @pytest.mark.anyio
-async def test_cpu_capacity_accepts_compile_but_not_npu_checks(tmp_path, release_catalog_files):
+async def test_cpu_only_pool_publishes_no_selectable_profile(
+    tmp_path, release_catalog_files,
+):
     app = build_app(tmp_path, release_catalog_files)
     app.store.heartbeat(cpu_worker(app.settings))
     async with app.http as client:
         compile_response = await post(client, request_payload(checks=["compile"]))
         correctness_response = await post(client, headers=trial_headers(key="npu"))
-    assert compile_response.status_code == 202, compile_response.text
-    assert compile_response.json()["state"] == "queued"
-    assert compile_response.json()["result"] is None
+    assert compile_response.status_code == 503, compile_response.text
+    assert compile_response.json()["error"]["code"] == "NOT_READY"
     assert correctness_response.status_code == 503
     assert correctness_response.json()["error"]["code"] == "NOT_READY"
 
@@ -83,7 +90,7 @@ async def test_cpu_capacity_accepts_compile_but_not_npu_checks(tmp_path, release
 async def test_compile_obeys_normal_inflight_limit(tmp_path, release_catalog_files):
     settings = make_test_settings(tmp_path).model_copy(update={"session_max_inflight": 1})
     app = build_app(tmp_path, release_catalog_files, settings=settings)
-    app.store.heartbeat(cpu_worker(settings))
+    seed_worker(app)
     async with app.http as client:
         first = await post(client, request_payload(checks=["compile"]))
         second = await post(client, request_payload(checks=["compile"]),
@@ -141,59 +148,57 @@ def test_claim_requires_the_admitted_hardware_profile(store, make_command, make_
 def test_one_instance_routes_two_qualified_hardware_pools(
     store, settings, make_worker
 ):
-    other_hardware = settings.model_copy(update={"worker_hardware_model": "Ascend910C"})
-    service_settings = settings.model_copy(update={
-        "additional_worker_hardware_profiles": [
-            profile_declaration(other_hardware)
-        ],
-    })
+    other_hardware = observed_hardware()
     other_worker = replace(
-        make_worker(), hardware_profile=other_hardware.worker_hardware_profile
+        make_worker(),
+        hardware_profile=other_hardware.hardware_profile,
+        hardware=other_hardware,
     )
-    store.heartbeat(make_worker())
-    store.heartbeat(other_worker)
-    instance = EvaluationInstance(settings=service_settings, store=store)
+    other_cpu = replace(cpu_worker(settings), hardware=other_hardware,
+                        hardware_profile=other_hardware.hardware_profile)
+    for worker in (make_worker(), cpu_worker(settings), other_worker, other_cpu):
+        store.heartbeat(worker)
+    instance = EvaluationInstance(settings=settings, store=store)
 
     local = instance.submit(
-        make_request(), make_caller(), session_id="local", idempotency_key="local",
+        make_request(hardware_profile=TEST_HARDWARE.hardware_profile),
+        make_caller(), session_id="local", idempotency_key="local",
     )
     remote = instance.submit(
-        make_request(hardware_profile=other_hardware.worker_hardware_profile),
+        make_request(hardware_profile=other_hardware.hardware_profile),
         make_caller(), session_id="remote", idempotency_key="remote",
     )
 
     local_lease = store.claim_next(make_worker())
     remote_lease = store.claim_next(other_worker)
     assert local_lease.evaluation_id == local.resource.evaluation_id
-    assert local_lease.pinned.hardware_profile == settings.worker_hardware_profile
+    assert local_lease.pinned.hardware_profile == TEST_HARDWARE.hardware_profile
     assert remote_lease.evaluation_id == remote.resource.evaluation_id
     assert (
         remote_lease.pinned.hardware_profile
-        == other_hardware.worker_hardware_profile
+        == other_hardware.hardware_profile
     )
 
 
-def test_readiness_requires_both_execution_classes_for_every_qualified_pool(
+def test_incomplete_pools_do_not_degrade_readiness_for_complete_profiles(
     store, settings, make_worker
 ):
-    other_hardware = settings.model_copy(update={"worker_hardware_model": "Ascend910C"})
-    service_settings = settings.model_copy(update={
-        "additional_worker_hardware_profiles": [
-            profile_declaration(other_hardware)
-        ],
-    })
-    instance = EvaluationInstance(settings=service_settings, store=store)
+    other_hardware = observed_hardware()
+    instance = EvaluationInstance(settings=settings, store=store)
 
     assert instance.is_ready() is False
     store.heartbeat(make_worker())
     store.heartbeat(cpu_worker(settings))
-    assert instance.is_ready() is False
+    assert instance.is_ready() is True
 
     store.heartbeat(replace(
-        make_worker(), hardware_profile=other_hardware.worker_hardware_profile,
+        make_worker(), hardware_profile=other_hardware.hardware_profile,
+        hardware=other_hardware,
     ))
+    assert instance.is_ready() is True
     store.heartbeat(replace(
-        cpu_worker(settings), hardware_profile=other_hardware.worker_hardware_profile,
+        cpu_worker(settings), hardware_profile=other_hardware.hardware_profile,
+        hardware=other_hardware,
     ))
     assert instance.is_ready() is True
 

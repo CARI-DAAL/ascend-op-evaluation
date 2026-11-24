@@ -255,7 +255,7 @@ class MethodRegistry:
                     "runtime_id": self.settings.method_runtime_id,
                     "capabilities": runtime_capabilities(self.settings),
                     "identity_source": (
-                        "deployment-declared; worker validates package/tool requirements"
+                        "service runtime; workers publish hardware profile separately"
                     ),
                 }
             ],
@@ -263,16 +263,12 @@ class MethodRegistry:
 
 
 def runtime_fingerprint(settings):
-    """Bind the operator's runtime declaration; child observations are separate."""
+    """Bind the service runtime; worker observations are separate."""
     return sha256_hex(
         canonical_json_bytes(
             {
                 "id": settings.method_runtime_id,
                 "capabilities": runtime_capabilities(settings),
-                "toolchain": settings.worker_toolchain_version,
-                "runtime": settings.worker_runtime_version,
-                "driver": settings.worker_driver_version,
-                "hardware": settings.worker_hardware_model,
                 "evaluator_build": settings.evaluator_build,
                 "sandbox_sha256": settings.engine_sandbox_sha256,
                 "runtime_overlay_sha256": settings.engine_runtime_overlay_sha256,

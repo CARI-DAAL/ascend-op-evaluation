@@ -21,7 +21,13 @@ from ascend_op_eval.config import Settings
 from ascend_op_eval.control.models import AlgorithmVersions, WorkerIdentity, new_worker_id
 from ascend_op_eval.evaluators.base import LeaseLostError
 from ascend_op_eval.execution.worker import LeaseKeeper, Worker
-from conftest import make_caller, make_completed_result, make_provenance, make_request
+from conftest import (
+    TEST_HARDWARE,
+    make_caller,
+    make_completed_result,
+    make_provenance,
+    make_request,
+)
 
 
 class StubEvaluator:
@@ -68,9 +74,25 @@ def algorithms(settings):
 def build_worker(store, settings, evaluator, clock, identity=None, **kwargs):
     return Worker(
         store, evaluator, device_id=kwargs.pop("device_id", 0),
-        settings=settings, identity=identity,
+        settings=settings, identity=identity, hardware=TEST_HARDWARE,
         clock=clock, sleep=lambda _s: None, **kwargs,
     )
+
+
+def test_claim_identity_receives_the_observed_hardware_descriptor(
+    store, settings, clock,
+):
+    identity = WorkerIdentity(
+        new_worker_id(), settings.evaluator_build, algorithms(settings),
+        TEST_HARDWARE.hardware_profile,
+    )
+    worker = build_worker(
+        store, settings, StubEvaluator(settings), clock, identity=identity,
+    )
+
+    assert worker.identity.hardware == TEST_HARDWARE
+    worker.store.heartbeat(worker.identity)
+    assert store.has_fresh_compatible_worker(identity)
 
 
 def terminalize_everything(store, clock):
@@ -156,7 +178,7 @@ def test_empty_claim_heartbeats_and_runs_maintenance(store, settings, clock, que
     class Compatibility:
         evaluator_build = settings.evaluator_build
         algorithms = algorithms(settings)
-        hardware_profile = settings.worker_hardware_profile
+        hardware_profile = TEST_HARDWARE.hardware_profile
         execution_class = "npu"
 
     assert store.has_fresh_compatible_worker(Compatibility())
@@ -170,7 +192,7 @@ def test_incompatible_worker_build_is_not_fresh(store, settings, clock, queued):
     class Other:
         evaluator_build = "sha256:" + "b" * 64
         algorithms = algorithms(settings)
-        hardware_profile = settings.worker_hardware_profile
+        hardware_profile = TEST_HARDWARE.hardware_profile
         execution_class = "npu"
 
     assert not store.has_fresh_compatible_worker(Other())
@@ -281,7 +303,7 @@ def test_late_delivery_deadline_completion_preserves_requested_checks(
             new_worker_id(),
             settings.evaluator_build,
             algorithms(settings),
-            settings.worker_hardware_profile,
+            TEST_HARDWARE.hardware_profile,
         )
     )
     worker = build_worker(store, settings, StubEvaluator(settings), clock)
@@ -560,7 +582,7 @@ def test_drained_worker_resumes_claims_after_recovery_ladder_succeeds(
 ):
     worker = Worker(
         store, StubEvaluator(canary_settings), device_id=0,
-        settings=canary_settings, clock=clock,
+        settings=canary_settings, clock=clock, hardware=TEST_HARDWARE,
         canary=_ScriptedCanary([False, False, False, False, True]),
         recovery_step=lambda step, **kwargs: "cleanup" if step == 1 else "reset",
     )
@@ -584,7 +606,8 @@ def test_worker_records_attempt_card_even_when_affinity_avoidance_is_disabled(
     settings = settings.model_copy(update={"card_affinity_avoidance": False})
     worker = Worker(
         store, StubEvaluator(settings, error=LeaseLostError()),
-        device_id=0, settings=settings, clock=clock, canary=lambda **kwargs: True,
+        device_id=0, settings=settings, clock=clock, hardware=TEST_HARDWARE,
+        canary=lambda **kwargs: True,
     )
     resource = store.create_or_replay(make_command()).resource
     for _ in range(2):

@@ -73,18 +73,13 @@ services:
       ASCEND_OP_EVAL_VERDICT_CACHE_ENABLED: ${ASCEND_OP_EVAL_VERDICT_CACHE_ENABLED-true}
       ASCEND_OP_EVAL_VERDICT_CACHE_TTL_SECONDS: ${ASCEND_OP_EVAL_VERDICT_CACHE_TTL_SECONDS-604800}
       ASCEND_OP_EVAL_PRECHECK_BUDGET_SECONDS: ${ASCEND_OP_EVAL_PRECHECK_BUDGET_SECONDS-60}
-      # Operator declarations from this host's actual inventory, recorded in provenance.
-      ASCEND_OP_EVAL_WORKER_HARDWARE_MODEL: ${ASCEND_OP_EVAL_WORKER_HARDWARE_MODEL-Ascend910}
-      ASCEND_OP_EVAL_WORKER_DRIVER_VERSION: ${ASCEND_OP_EVAL_WORKER_DRIVER_VERSION-26.0.rc1}
-      ASCEND_OP_EVAL_WORKER_RUNTIME_VERSION: ${ASCEND_OP_EVAL_WORKER_RUNTIME_VERSION-CANN-9.1.1}
-      ASCEND_OP_EVAL_WORKER_TOOLCHAIN_VERSION: ${ASCEND_OP_EVAL_WORKER_TOOLCHAIN_VERSION-CANN 9.1.1 / python 3.10 / torch 2.9.0 / torch_npu 2.9.0.post8 / triton_ascend 3.2.0}
-      # Additional qualified pools sharing this instance's durable Redis prefix.
-      ASCEND_OP_EVAL_ADDITIONAL_WORKER_HARDWARE_PROFILES: ${ASCEND_OP_EVAL_ADDITIONAL_WORKER_HARDWARE_PROFILES-[]}
+      # Workers discover the host/container stack themselves and publish it by
+      # heartbeat. There is deliberately no operator-declared hardware identity.
       ASCEND_OP_EVAL_CAPABILITY_SECRET_PATH: /run/secrets/ascend-op-eval
       CANN_SET_ENV_PATH: /opt/cann/ascend-toolkit/set_env.sh
       ASCEND_DRIVER_PATH: /usr/local/Ascend/driver                     # mounted from host
     volumes:
-      # The image contains the declared Python stack; only host CANN/driver is mounted.
+      # The image contains the Python stack; workers observe the mounted CANN/driver.
       - ${CANN_HOST:-/usr/local/Ascend}:/opt/cann:ro
       - /usr/local/dcmi:/usr/local/dcmi
       # Full host driver (lib64/device/kernel/...). GE op-store init needs more than lib64.

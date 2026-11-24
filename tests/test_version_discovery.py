@@ -11,13 +11,17 @@ import pytest
 from ascend_op_eval import versioning
 from ascend_op_eval.api.dependencies import AppContext
 from ascend_op_eval.config import Settings
-from ascend_op_eval.deployment import HardwareProfileDeclaration
+from ascend_op_eval.control.models import WorkerIdentity, new_worker_id
+from ascend_op_eval.deployment import HardwareProfileDescriptor, derive_hardware_profile
+from conftest import TEST_HARDWARE
 from test_api import (
     OBSERVER_TOKEN,
     TRIAL_TOKEN,
+    algorithms,
     build_app,
     make_test_settings,
     post,
+    seed_worker,
     trial_headers,
 )
 from test_cli_plugin import SCRIPT, TOKEN, server
@@ -29,14 +33,31 @@ def auth(token=TRIAL_TOKEN):
     return {"Authorization": f"Bearer {token}"}
 
 
-def profile_declaration(settings):
-    return HardwareProfileDeclaration(
-        hardware_profile=settings.worker_hardware_profile,
-        hardware_model=settings.worker_hardware_model,
-        driver_version=settings.worker_driver_version,
-        runtime_version=settings.worker_runtime_version,
-        toolchain_version=settings.worker_toolchain_version,
+def observed_hardware(**changes):
+    fields = {
+        "hardware_model": "Ascend910C",
+        "driver_version": "26.1.1",
+        "runtime_version": "CANN-9.2.0",
+        "toolchain_version": TEST_HARDWARE.toolchain_version,
+    }
+    fields.update(changes)
+    return HardwareProfileDescriptor(
+        hardware_profile=derive_hardware_profile(**fields),
+        default=False,
+        **fields,
     )
+
+
+def publish_profile(app, profile):
+    for execution_class in ("cpu", "npu"):
+        app.store.heartbeat(WorkerIdentity(
+            new_worker_id(),
+            app.settings.evaluator_build,
+            algorithms(app.settings),
+            profile.hardware_profile,
+            hardware=profile,
+            execution_class=execution_class,
+        ))
 
 
 @pytest.fixture
@@ -70,7 +91,7 @@ async def test_version_requires_a_capability_and_hides_deployment_configuration(
     serialized = json.dumps(document)
     assert app.settings.redis_url not in serialized
     assert str(app.settings.capability_secret_path) not in serialized
-    assert app.settings.worker_toolchain_version not in serialized
+    assert TEST_HARDWARE.toolchain_version not in serialized
     assert set(document["release"]) == {
         "mode", "verified", "unverified_reasons", "manifest_digest",
         "source_revision", "source_digest",
@@ -79,11 +100,15 @@ async def test_version_requires_a_capability_and_hides_deployment_configuration(
 
 async def test_identity_is_discoverable_while_no_worker_can_serve(app):
     async with app.http as client:
-        # Admission has no compatible worker: submission fails, discovery does not.
+        # No observed pool can make a routing choice: submission fails, but
+        # process identity and empty deployment discovery remain available.
         refused = await post(client, headers=trial_headers())
-        assert refused.status_code == 503
+        assert refused.status_code == 422
         assert (await client.get("/readyz")).status_code == 503
         assert (await client.get("/version", headers=auth())).status_code == 200
+        deployment = await client.get("/deployment", headers=auth())
+        assert deployment.status_code == 200
+        assert deployment.json()["hardware_profiles"] == []
 
 
 async def test_in_process_assembly_reports_an_unverified_development_identity(app):
@@ -146,6 +171,7 @@ async def test_live_spec_documents_version_discovery(app):
 
 
 async def test_deployment_reports_profiles_listeners_and_capabilities(app):
+    seed_worker(app)
     async with app.http as client:
         unauthenticated = await client.get("/deployment")
         refused = await client.get("/readyz")
@@ -166,7 +192,7 @@ async def test_deployment_reports_profiles_listeners_and_capabilities(app):
         "capabilities": list(versioning.CAPABILITIES),
         "method_capabilities": app.settings.method_capabilities,
         "hardware_profiles": [
-            profile.model_dump() for profile in app.settings.worker_hardware_profiles
+            TEST_HARDWARE.model_copy(update={"default": True}).model_dump()
         ],
     }
     serialized = json.dumps(response.json())
@@ -174,17 +200,17 @@ async def test_deployment_reports_profiles_listeners_and_capabilities(app):
     assert str(app.settings.capability_secret_path) not in serialized
 
 
-async def test_deployment_reports_tls_and_additional_hardware_profiles(tmp_path):
-    local = make_test_settings(tmp_path)
-    additional = local.model_copy(update={"worker_hardware_model": "Ascend910C"})
-    settings = local.model_copy(update={
+async def test_deployment_reports_tls_and_multiple_observed_profiles(tmp_path):
+    settings = make_test_settings(tmp_path).model_copy(update={
         "api_tls_host": "127.0.0.2",
         "api_tls_port": 12907,
         "api_tls_certfile": tmp_path / "tls.crt",
         "api_tls_keyfile": tmp_path / "tls.key",
-        "additional_worker_hardware_profiles": [profile_declaration(additional)],
     })
     app = build_app(tmp_path, None, settings=settings)
+    publish_profile(app, TEST_HARDWARE)
+    other = observed_hardware()
+    publish_profile(app, other)
 
     async with app.http as client:
         response = await client.get("/deployment", headers=auth())
@@ -195,10 +221,11 @@ async def test_deployment_reports_tls_and_additional_hardware_profiles(tmp_path)
         {"protocol": "http", "host": "127.0.0.1", "port": 11907},
         {"protocol": "https", "host": "127.0.0.2", "port": 12907},
     ]
-    assert document["hardware_profiles"] == [
-        profile_declaration(local).model_dump() | {"default": True},
-        profile_declaration(additional).model_dump() | {"default": False},
-    ]
+    assert document["hardware_profiles"] == sorted((
+        TEST_HARDWARE.model_copy(update={"default": False}).model_dump(),
+        other.model_dump(),
+    ), key=lambda profile: profile["hardware_profile"])
+    assert all(profile["default"] is False for profile in document["hardware_profiles"])
     serialized = json.dumps(document)
     assert "tls.crt" not in serialized
     assert "tls.key" not in serialized

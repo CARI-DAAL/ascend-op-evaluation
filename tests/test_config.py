@@ -1,10 +1,7 @@
-import json
 import os
-import re
 
 import pytest
 from ascend_op_eval.config import Settings
-from ascend_op_eval.deployment import HardwareProfileDeclaration
 
 
 def test_defaults():
@@ -53,84 +50,18 @@ def test_plan_c_health_env_override(monkeypatch):
     assert s.card_affinity_avoidance is False
 
 
-def test_worker_hardware_profile_is_stable_and_scopes_the_attested_stack():
-    default = Settings()
-    same = Settings(
-        worker_hardware_model=default.worker_hardware_model,
-        worker_driver_version=default.worker_driver_version,
-        worker_runtime_version=default.worker_runtime_version,
-        worker_toolchain_version=default.worker_toolchain_version,
-    )
-    changed = default.model_copy(update={"worker_hardware_model": "Ascend910C"})
-    assert default.worker_hardware_profile == same.worker_hardware_profile
-    assert default.worker_hardware_profile != changed.worker_hardware_profile
-    assert re.fullmatch(r"hw_[0-9a-f]{32}", default.worker_hardware_profile)
-
-
-def test_additional_worker_profiles_are_qualified_for_one_service():
-    changed = Settings(worker_hardware_model="Ascend910C")
-    declaration = HardwareProfileDeclaration(
-        hardware_profile=changed.worker_hardware_profile,
-        hardware_model=changed.worker_hardware_model,
-        driver_version=changed.worker_driver_version,
-        runtime_version=changed.worker_runtime_version,
-        toolchain_version=changed.worker_toolchain_version,
-    )
-    settings = Settings(additional_worker_hardware_profiles=[declaration])
-    assert settings.qualified_worker_hardware_profiles == {
-        settings.worker_hardware_profile,
-        changed.worker_hardware_profile,
-    }
-    assert [profile.model_dump() for profile in settings.worker_hardware_profiles] == [
-        {
-            "hardware_profile": settings.worker_hardware_profile,
-            "hardware_model": settings.worker_hardware_model,
-            "driver_version": settings.worker_driver_version,
-            "runtime_version": settings.worker_runtime_version,
-            "toolchain_version": settings.worker_toolchain_version,
-            "default": True,
-        },
-        declaration.model_dump() | {"default": False},
-    ]
-
-
-def test_additional_worker_profiles_load_from_json_environment(monkeypatch):
-    changed = Settings(worker_hardware_model="Ascend910C")
-    declaration = {
-        "hardware_profile": changed.worker_hardware_profile,
-        "hardware_model": changed.worker_hardware_model,
-        "driver_version": changed.worker_driver_version,
-        "runtime_version": changed.worker_runtime_version,
-        "toolchain_version": changed.worker_toolchain_version,
-    }
-    monkeypatch.setenv(
-        "ASCEND_OP_EVAL_ADDITIONAL_WORKER_HARDWARE_PROFILES",
-        json.dumps([declaration]),
-    )
+def test_worker_hardware_identity_cannot_be_declared_through_environment(monkeypatch):
+    for name in (
+        "HARDWARE_MODEL", "DRIVER_VERSION", "RUNTIME_VERSION", "TOOLCHAIN_VERSION",
+    ):
+        monkeypatch.setenv(f"ASCEND_OP_EVAL_WORKER_{name}", "operator-declared")
 
     settings = Settings.from_env()
 
-    assert settings.additional_worker_hardware_profiles == [
-        HardwareProfileDeclaration.model_validate(declaration)
-    ]
-
-
-def test_worker_profile_settings_reject_malformed_additional_profiles():
-    with pytest.raises(ValueError):
-        Settings(additional_worker_hardware_profiles=[{"hardware_profile": "910c"}])
-
-
-def test_worker_profile_settings_reject_an_id_that_does_not_match_its_fields():
-    changed = Settings(worker_hardware_model="Ascend910C")
-    declaration = {
-        "hardware_profile": "hw_" + "0" * 32,
-        "hardware_model": changed.worker_hardware_model,
-        "driver_version": changed.worker_driver_version,
-        "runtime_version": changed.worker_runtime_version,
-        "toolchain_version": changed.worker_toolchain_version,
-    }
-    with pytest.raises(ValueError, match="does not match its declared stack"):
-        Settings(additional_worker_hardware_profiles=[declaration])
+    assert not hasattr(settings, "worker_hardware_model")
+    assert not hasattr(settings, "worker_driver_version")
+    assert not hasattr(settings, "worker_runtime_version")
+    assert not hasattr(settings, "worker_toolchain_version")
 
 
 def test_command_environment_uses_settings_and_preserves_toolchain(monkeypatch):
@@ -162,7 +93,6 @@ def test_command_environment_uses_settings_and_preserves_toolchain(monkeypatch):
 
 
 def test_sandbox_settings_are_loaded_and_validated(monkeypatch):
-    import pytest
     from ascend_op_eval.config import command_environment
     from pydantic import ValidationError
 

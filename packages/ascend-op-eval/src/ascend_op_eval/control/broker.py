@@ -47,6 +47,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 import redis
+from pydantic import model_validator
 
 from ascend_op_eval.api.contract import (
     Check,
@@ -83,6 +84,7 @@ from ascend_op_eval.control.terminal_results import (
     complete_evaluation,
     persisted_check_outcomes,
 )
+from ascend_op_eval.deployment import DeploymentModel, HardwareProfileDescriptor
 from ascend_op_eval.execution.correctness_evidence import (
     CorrectnessEvidence,
     CorrectnessEvidenceError,
@@ -104,6 +106,25 @@ MAX_ATTEMPTS = 3
 logger = logging.getLogger(__name__)
 _CLAIM_SCAN_BATCH = 10
 _TERMINAL_STATES = ("completed", "failed", "timed_out", "cancelled")
+
+
+class _PersistedHeartbeat(DeploymentModel):
+    """Strict compatibility and hardware record stored in Redis."""
+
+    execution_class: ExecutionClass
+    evaluator_build: str
+    hardware_profile: str
+    correctness_algorithm: str
+    decoy_algorithm: str
+    benchmark_algorithm: str
+    profiler_algorithm: str
+    hardware: HardwareProfileDescriptor
+
+    @model_validator(mode="after")
+    def _validate_hardware_profile(self) -> "_PersistedHeartbeat":
+        if self.hardware_profile != self.hardware.hardware_profile:
+            raise ValueError("heartbeat profile differs from its descriptor")
+        return self
 
 
 def _no_op_failpoint(evaluation_id: str) -> None:
@@ -1668,6 +1689,35 @@ class EvaluationStore:
             "profiler_algorithm": worker.algorithms.profiler,
         }
 
+    @staticmethod
+    def _heartbeat_record(worker: WorkerIdentity) -> _PersistedHeartbeat:
+        if worker.hardware is None:
+            raise ValueError("worker heartbeat requires an observed hardware profile")
+        return _PersistedHeartbeat(
+            **EvaluationStore._compatibility_record(worker),
+            hardware=worker.hardware,
+        )
+
+    def _fresh_heartbeat_records(self) -> list[_PersistedHeartbeat]:
+        heartbeats_key = self._key("worker-heartbeats")
+        expiry_key = self._key("worker-heartbeat-expiry")
+        now_ms = self._clock()
+        stale = self._r.zrangebyscore(expiry_key, "-inf", now_ms)
+        if stale:
+            pipeline = self._r.pipeline()
+            pipeline.hdel(heartbeats_key, *stale)
+            pipeline.zrem(expiry_key, *stale)
+            pipeline.execute()
+
+        records: list[_PersistedHeartbeat] = []
+        for payload in self._r.hgetall(heartbeats_key).values():
+            try:
+                record = _PersistedHeartbeat.model_validate(load_canonical(payload))
+            except (TypeError, UnicodeDecodeError, ValueError):
+                continue
+            records.append(record)
+        return records
+
     @classmethod
     def _worker_matches_resource(cls, worker: WorkerIdentity, stored: dict) -> bool:
         return all(
@@ -1678,7 +1728,7 @@ class EvaluationStore:
     def heartbeat(self, worker: WorkerIdentity) -> None:
         """Record a worker heartbeat; fresh means within one lease window."""
         now_ms = self._clock()
-        payload = canonical_json_bytes(self._compatibility_record(worker))
+        payload = canonical_json_bytes(self._heartbeat_record(worker).model_dump())
         self._bump("worker_heartbeats_total")
         pipeline = self._r.pipeline()
         pipeline.hset(self._key("worker-heartbeats"), worker.worker_id, payload)
@@ -1688,24 +1738,45 @@ class EvaluationStore:
         )
         pipeline.execute()
 
+    def active_hardware_profiles(self) -> list[HardwareProfileDescriptor]:
+        """Publish only profiles with fresh CPU and NPU workers.
+
+        A profile is deployment identity, not a promise of capacity. Requiring
+        both execution classes here keeps discovery and admission from turning
+        a half-started pool into something callers can select.
+        """
+        discovered: dict[str, HardwareProfileDescriptor] = {}
+        classes: dict[str, set[str]] = {}
+        service_record = {
+            "evaluator_build": self._s.evaluator_build,
+            "correctness_algorithm": (
+                self._s.effective_correctness_algorithm_version
+            ),
+            "decoy_algorithm": self._s.decoy_algorithm_version,
+            "benchmark_algorithm": self._s.benchmark_algorithm_version,
+            "profiler_algorithm": self._s.profiler_algorithm_version,
+        }
+        for record in self._fresh_heartbeat_records():
+            if any(getattr(record, name) != value for name, value in service_record.items()):
+                continue
+            profile = record.hardware.hardware_profile
+            discovered[profile] = record.hardware.model_copy(update={"default": False})
+            classes.setdefault(profile, set()).add(record.execution_class)
+        complete = [
+            discovered[profile]
+            for profile in sorted(discovered)
+            if {"cpu", "npu"} <= classes[profile]
+        ]
+        return [
+            profile.model_copy(update={"default": len(complete) == 1})
+            for profile in complete
+        ]
+
     def has_fresh_compatible_worker(self, compatibility: WorkerCompatibility) -> bool:
         """True iff a non-pruned heartbeat matches build and all algorithms."""
-        heartbeats_key = self._key("worker-heartbeats")
-        expiry_key = self._key("worker-heartbeat-expiry")
-        now_ms = self._clock()
-        stale = self._r.zrangebyscore(expiry_key, "-inf", now_ms)
-        if stale:
-            pipeline = self._r.pipeline()
-            pipeline.hdel(heartbeats_key, *stale)
-            pipeline.zrem(expiry_key, *stale)
-            pipeline.execute()
         expected = self._compatibility_record(compatibility)
-        for payload in self._r.hgetall(heartbeats_key).values():
-            try:
-                record = json.loads(payload)
-            except ValueError:
-                continue
-            if record == expected:
+        for record in self._fresh_heartbeat_records():
+            if all(getattr(record, name) == value for name, value in expected.items()):
                 return True
         return False
 

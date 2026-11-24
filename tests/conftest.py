@@ -22,7 +22,28 @@ from ascend_op_eval.control.models import (
     new_worker_id,
 )
 from ascend_op_eval.control.security import Caller
+from ascend_op_eval.deployment import HardwareProfileDescriptor, derive_hardware_profile
 from ascend_op_eval.serialization import canonical_json_bytes, sha256_hex
+
+TEST_HARDWARE = HardwareProfileDescriptor(
+    hardware_profile=derive_hardware_profile(
+        hardware_model="Ascend910B1",
+        driver_version="26.1.1",
+        runtime_version="CANN-9.2.0",
+        toolchain_version=(
+            "CANN 9.2.0 / python 3.12.13 / torch 2.10.0+cpu / "
+            "torch_npu 2.10.0.post4 / triton_ascend 3.6.0"
+        ),
+    ),
+    hardware_model="Ascend910B1",
+    driver_version="26.1.1",
+    runtime_version="CANN-9.2.0",
+    toolchain_version=(
+        "CANN 9.2.0 / python 3.12.13 / torch 2.10.0+cpu / "
+        "torch_npu 2.10.0.post4 / triton_ascend 3.6.0"
+    ),
+    default=False,
+)
 
 
 @pytest.fixture
@@ -84,7 +105,7 @@ def ready_key(settings, execution_class="npu", *, rollout=False):
     traffic_class = "bulk" if rollout else "interactive"
     return (
         f"{settings.redis_prefix}:ready:{execution_class}:"
-        f"{settings.worker_hardware_profile}:{traffic_class}"
+        f"{TEST_HARDWARE.hardware_profile}:{traffic_class}"
     )
 
 
@@ -160,7 +181,7 @@ def make_command(settings):
             idempotency_key=idempotency_key,
             admission=admission,
             evaluator_build=settings.evaluator_build,
-            hardware_profile=settings.worker_hardware_profile,
+            hardware_profile=TEST_HARDWARE.hardware_profile,
             algorithms=AlgorithmVersions(
                 correctness=settings.correctness_algorithm_version,
                 decoy=settings.decoy_algorithm_version,
@@ -213,10 +234,11 @@ def make_worker(settings):
         return WorkerIdentity(
             worker_id=worker_id or new_worker_id(),
             evaluator_build=evaluator_build or settings.evaluator_build,
-            hardware_profile=settings.worker_hardware_profile,
+            hardware_profile=TEST_HARDWARE.hardware_profile,
+            hardware=TEST_HARDWARE,
             algorithms=algorithms
             or AlgorithmVersions(
-                correctness=settings.correctness_algorithm_version,
+                correctness=settings.effective_correctness_algorithm_version,
                 decoy=settings.decoy_algorithm_version,
                 benchmark=settings.benchmark_algorithm_version,
                 profiler=settings.profiler_algorithm_version,
@@ -259,15 +281,15 @@ def make_correctness_success(passed_cases=1, total_cases=1):
 def make_completed_result(settings):
     """A complete result for a correctness-only request."""
     environment = ExecutionEnvironment(
-        hardware_model=settings.worker_hardware_model,
-        hardware_profile=settings.worker_hardware_profile,
+        hardware_model=TEST_HARDWARE.hardware_model,
+        hardware_profile=TEST_HARDWARE.hardware_profile,
         hardware_count=1,
-        driver_version=settings.worker_driver_version,
-        runtime_version=settings.worker_runtime_version,
+        driver_version=TEST_HARDWARE.driver_version,
+        runtime_version=TEST_HARDWARE.runtime_version,
         torch_version=None,
         torch_npu_version=None,
         triton_version=None,
-        toolchain_version=settings.worker_toolchain_version,
+        toolchain_version=TEST_HARDWARE.toolchain_version,
     )
     return EvaluationResult(
         correctness=make_correctness_success(),

@@ -17,7 +17,6 @@ from ascend_op_eval.api.contract import (
     EvaluationRequest,
     ExecutionEnvironment,
 )
-from ascend_op_eval.config import Settings
 from ascend_op_eval.control.models import AlgorithmVersions, PinnedProvenance
 from ascend_op_eval.evaluators.base import (
     EngineCheckResult,
@@ -27,6 +26,7 @@ from ascend_op_eval.evaluators.base import (
 )
 from ascend_op_eval.evaluators.evaluation import EvaluationEvaluator
 from ascend_op_eval.runtimes.execution_environment import build_execution_environment
+from conftest import TEST_HARDWARE
 
 FIXTURES = Path(__file__).parent / "fixtures" / "engine"
 
@@ -78,17 +78,15 @@ ALGORITHMS = AlgorithmVersions(
 )
 
 ENVIRONMENT = ExecutionEnvironment(
-    hardware_model="Ascend910",
-    hardware_profile="hw_7c213277860cc8b9b4e30be52956a7d8",
+    hardware_model=TEST_HARDWARE.hardware_model,
+    hardware_profile=TEST_HARDWARE.hardware_profile,
     hardware_count=1,
-    driver_version="26.0.rc1",
-    runtime_version="CANN-9.1.1",
-    torch_version="2.1.0",
-    torch_npu_version="2.1.0.post3",
-    triton_version="3.0.0",
-    toolchain_version=(
-        "CANN 9.1.1 / python 3.10 / torch 2.9.0 / torch_npu 2.9.0.post8 / triton_ascend 3.2.0"
-    ),
+    driver_version=TEST_HARDWARE.driver_version,
+    runtime_version=TEST_HARDWARE.runtime_version,
+    torch_version="2.10.0+cpu",
+    torch_npu_version="2.10.0.post4",
+    triton_version="3.6.0",
+    toolchain_version=TEST_HARDWARE.toolchain_version,
 )
 
 
@@ -492,23 +490,17 @@ def test_trial_is_never_grade_eligible(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_build_execution_environment_uses_attested_settings():
-    settings = Settings(
-        worker_hardware_model="Ascend910B4",
-        worker_driver_version="25.0.0",
-        worker_runtime_version="8.1.RC1",
-        worker_toolchain_version="CANN 8.1.RC1",
-    )
-    env = build_execution_environment(settings)
-    assert env.hardware_model == "Ascend910B4"
+def test_build_execution_environment_uses_observed_hardware():
+    env = build_execution_environment(TEST_HARDWARE)
+    assert env.hardware_model == TEST_HARDWARE.hardware_model
     assert env.hardware_count == 1  # each worker process exposes exactly one card
-    assert env.driver_version == "25.0.0"
-    assert env.runtime_version == "8.1.RC1"
-    assert env.toolchain_version == "CANN 8.1.RC1"
+    assert env.driver_version == TEST_HARDWARE.driver_version
+    assert env.runtime_version == TEST_HARDWARE.runtime_version
+    assert env.toolchain_version == TEST_HARDWARE.toolchain_version
 
 
 def test_build_execution_environment_reads_optional_versions_in_process():
-    env = build_execution_environment(Settings())
+    env = build_execution_environment(TEST_HARDWARE)
 
     def expected(distribution):
         try:
@@ -518,11 +510,11 @@ def test_build_execution_environment_reads_optional_versions_in_process():
 
     assert env.torch_version == expected("torch")
     assert env.torch_npu_version == expected("torch-npu")
-    assert env.triton_version == (expected("triton") or expected("triton_ascend"))
+    assert env.triton_version == expected("triton_ascend")
 
 
 def test_execution_environment_never_carries_host_or_card_identity():
-    env = build_execution_environment(Settings())
+    env = build_execution_environment(TEST_HARDWARE)
     assert set(env.model_dump()) == {
         "hardware_model",
         "hardware_profile",

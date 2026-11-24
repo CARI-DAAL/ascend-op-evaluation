@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from ascend_op_eval.api.contract import EvaluationResource
 from ascend_op_eval.execution.worker import Worker
-from conftest import make_caller, make_completed_result
+from conftest import TEST_HARDWARE, make_caller, make_completed_result
 from test_api import (
     algorithms,
     build_app,
@@ -34,7 +34,8 @@ def app(tmp_path, release_catalog_files):
 def run_worker_once(app):
     worker = Worker(
         app.store, CompletingEvaluator(app.settings), device_id=0,
-        settings=app.settings, clock=app.clock, sleep=lambda _s: None,
+        settings=app.settings, clock=app.clock, hardware=TEST_HARDWARE,
+        sleep=lambda _s: None,
     )
     assert worker.run_once() is True
 
@@ -139,7 +140,7 @@ def _identity(app):
     from ascend_op_eval.control.models import WorkerIdentity, new_worker_id
 
     return WorkerIdentity(new_worker_id(), app.settings.evaluator_build,
-                          algorithms(app.settings), app.settings.worker_hardware_profile)
+                          algorithms(app.settings), TEST_HARDWARE.hardware_profile)
 
 
 def _trial_caller():

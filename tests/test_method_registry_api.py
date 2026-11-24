@@ -4,6 +4,7 @@ import base64
 
 import pytest
 from ascend_op_eval.control.models import WorkerIdentity, new_worker_id
+from conftest import TEST_HARDWARE
 from test_api import TRIAL_TOKEN_2, algorithms, build_app, seed_worker, trial_headers
 
 pytestmark = pytest.mark.anyio
@@ -222,7 +223,7 @@ async def test_running_cancel_waits_for_cleanup_then_fences_old_attempt(tmp_path
         worker = WorkerIdentity(
             new_worker_id(),
             app.settings.evaluator_build,
-            algorithms(app.settings), app.settings.worker_hardware_profile,
+            algorithms(app.settings), TEST_HARDWARE.hardware_profile,
             execution_class="cpu",
         )
         lease = app.store.claim_next(worker)
@@ -307,7 +308,7 @@ async def test_cancelled_lost_worker_is_not_requeued(tmp_path):
         worker = WorkerIdentity(
             new_worker_id(),
             app.settings.evaluator_build,
-            algorithms(app.settings), app.settings.worker_hardware_profile,
+            algorithms(app.settings), TEST_HARDWARE.hardware_profile,
             execution_class="cpu",
         )
         lease = app.store.claim_next(worker)
@@ -336,7 +337,7 @@ async def test_method_artifacts_are_attempt_bound_across_recovery(tmp_path):
         worker = WorkerIdentity(
             new_worker_id(),
             app.settings.evaluator_build,
-            algorithms(app.settings), app.settings.worker_hardware_profile,
+            algorithms(app.settings), TEST_HARDWARE.hardware_profile,
             execution_class="cpu",
         )
         first = app.store.claim_next(worker)

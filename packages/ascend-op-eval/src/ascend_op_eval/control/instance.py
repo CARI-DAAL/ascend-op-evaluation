@@ -61,8 +61,16 @@ class EvaluationInstance:
             request.purpose == "trial"
             and caller.caller_id in self.settings.rollout_caller_ids
         )
-        hardware_profile = request.hardware_profile or self.settings.worker_hardware_profile
-        if hardware_profile not in self.settings.qualified_worker_hardware_profiles:
+        active_profiles = self.store.active_hardware_profiles()
+        profile_ids = {profile.hardware_profile for profile in active_profiles}
+        if request.hardware_profile is not None:
+            hardware_profile = request.hardware_profile
+        elif len(active_profiles) == 1:
+            hardware_profile = next(iter(active_profiles)).hardware_profile
+        else:
+            # No silent fallback: callers must select one of the discovered IDs.
+            raise UnsupportedHardwareProfileError()
+        if hardware_profile not in profile_ids:
             raise UnsupportedHardwareProfileError()
         command = CreateResourceCommand(
             evaluation_id=new_evaluation_id(),
@@ -106,9 +114,13 @@ class EvaluationInstance:
         return self.store.get_progress_visible(evaluation_id, caller)
 
     def is_ready(self) -> bool:
-        """Require fresh CPU and NPU capacity for every qualified pool."""
+        """Require fresh CPU and NPU capacity for every observed pool."""
         try:
-            for hardware_profile in sorted(self.settings.qualified_worker_hardware_profiles):
+            profiles = self.store.active_hardware_profiles()
+            if not profiles:
+                return False
+            for profile in profiles:
+                hardware_profile = profile.hardware_profile
                 self._require_ready("cpu", hardware_profile)
                 self._require_ready("npu", hardware_profile)
         except (InstanceNotReadyError, QueueUnavailableError):

@@ -2,7 +2,7 @@
 import pytest
 from ascend_op_eval.api.contract import EvaluationProgress
 from ascend_op_eval.control.models import WorkerIdentity, new_worker_id
-from conftest import make_correctness_success
+from conftest import TEST_HARDWARE, make_correctness_success
 from test_api import (
     TRIAL_TOKEN_2,
     algorithms,
@@ -30,7 +30,7 @@ async def test_progress_http_exposes_check_before_resource_finishes(
             new_worker_id(),
             app.settings.evaluator_build,
             algorithms(app.settings),
-            app.settings.worker_hardware_profile,
+            TEST_HARDWARE.hardware_profile,
         ))
         assert app.store.set_active_check(lease, "correctness")
         assert app.store.save_check_outcome(lease, "correctness", make_correctness_success())

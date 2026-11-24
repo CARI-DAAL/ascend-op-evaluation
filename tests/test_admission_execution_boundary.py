@@ -1,7 +1,7 @@
 """Cached verdicts never bypass durable admission and leased execution."""
 import pytest
 from ascend_op_eval.execution import verdict_cache
-from conftest import make_caller, ready_key
+from conftest import TEST_HARDWARE, make_caller, ready_key
 from test_api import build_app, internal_request, post, request_payload, seed_worker
 
 pytestmark = pytest.mark.anyio
@@ -20,7 +20,7 @@ async def test_cached_verdict_still_admits_queued_work(tmp_path, release_catalog
         "triton_ascend_impl", app.settings.cann_fingerprint,
     )
     cache_prefix = (
-        f"{app.settings.redis_prefix}:{app.settings.worker_hardware_profile}"
+        f"{app.settings.redis_prefix}:{TEST_HARDWARE.hardware_profile}"
     )
     verdict_cache.VerdictCache(app.store._r, prefix=cache_prefix).put(
         digest, "compile_error", 60,
@@ -98,7 +98,7 @@ async def test_v21_terminal_http_bodies_validate_against_published_schema(
     app.store.create_or_replay(command)
     lease = app.store.claim_next(
         WorkerIdentity(new_worker_id(), app.settings.evaluator_build,
-                       algorithms(app.settings), app.settings.worker_hardware_profile)
+                       algorithms(app.settings), TEST_HARDWARE.hardware_profile)
     )
     app.store.commit_terminal(lease, "completed",
                               make_completed_result(app.settings))

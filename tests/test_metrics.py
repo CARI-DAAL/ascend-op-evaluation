@@ -1,6 +1,7 @@
 """Bounded Redis metrics: allowlist enforcement, cardinality, instrumentation."""
 import pytest
 from ascend_op_eval.control.metrics import RedisMetrics
+from conftest import TEST_HARDWARE
 from test_api import build_app, post, seed_worker, trial_headers
 
 pytestmark = pytest.mark.anyio
@@ -206,7 +207,7 @@ async def test_terminal_dimensions_are_instrumented(app, make_command):
     )
     lease = app.store.claim_next(
         WorkerIdentity(new_worker_id(), app.settings.evaluator_build,
-                       algorithms(app.settings), app.settings.worker_hardware_profile)
+                       algorithms(app.settings), TEST_HARDWARE.hardware_profile)
     )
     app.store.commit_terminal(lease, "completed", make_completed_result(app.settings))
     body = app.app.state.context.instance.metrics.render_openmetrics().decode()
@@ -220,7 +221,7 @@ def test_worker_dimensions_are_instrumented(app):
     from test_api import algorithms
 
     identity = WorkerIdentity(new_worker_id(), app.settings.evaluator_build,
-                              algorithms(app.settings), app.settings.worker_hardware_profile)
+                              algorithms(app.settings), TEST_HARDWARE.hardware_profile)
     app.store.heartbeat(identity)
     app.store.note_fenced_write()
     body = app.app.state.context.instance.metrics.render_openmetrics().decode()

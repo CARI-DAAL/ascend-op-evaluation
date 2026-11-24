@@ -3,7 +3,7 @@
 import pytest
 import redis
 from ascend_op_eval.control import broker
-from conftest import make_caller, make_completed_result
+from conftest import TEST_HARDWARE, make_caller, make_completed_result
 from test_api import algorithms, build_app, post, seed_worker, trial_headers
 
 pytestmark = pytest.mark.anyio
@@ -82,7 +82,7 @@ async def test_crash_before_terminal_commit_keeps_resource_running(app):
 
     lease = app.store.claim_next(
         WorkerIdentity(new_worker_id(), app.settings.evaluator_build,
-                       algorithms(app.settings), app.settings.worker_hardware_profile)
+                       algorithms(app.settings), TEST_HARDWARE.hardware_profile)
     )
     broker._commit_pre_exec = _crash
     with pytest.raises(_Crash):
@@ -96,7 +96,7 @@ async def test_crash_before_terminal_commit_keeps_resource_running(app):
     broker._commit_pre_exec = broker._no_op_failpoint
     lease2 = app.store.claim_next(
         WorkerIdentity(new_worker_id(), app.settings.evaluator_build,
-                       algorithms(app.settings), app.settings.worker_hardware_profile)
+                       algorithms(app.settings), TEST_HARDWARE.hardware_profile)
     )
     assert app.store.commit_terminal(
         lease2, "completed", make_completed_result(app.settings)
@@ -115,7 +115,7 @@ async def test_crash_after_terminal_commit_is_recoverable_not_lost(app):
 
     lease = app.store.claim_next(
         WorkerIdentity(new_worker_id(), app.settings.evaluator_build,
-                       algorithms(app.settings), app.settings.worker_hardware_profile)
+                       algorithms(app.settings), TEST_HARDWARE.hardware_profile)
     )
     broker._commit_post_exec = _crash
     with pytest.raises(_Crash):
@@ -205,7 +205,7 @@ def _identity(app):
     from ascend_op_eval.control.models import WorkerIdentity, new_worker_id
 
     return WorkerIdentity(new_worker_id(), app.settings.evaluator_build,
-                          algorithms(app.settings), app.settings.worker_hardware_profile)
+                          algorithms(app.settings), TEST_HARDWARE.hardware_profile)
 
 
 def _sync_create(app, make_command):

@@ -1,4 +1,6 @@
 """Caller and purpose policy select quota and scheduling through submission."""
+from dataclasses import replace
+
 from ascend_op_eval.control.instance import EvaluationInstance
 from conftest import make_caller, make_grade_caller, make_grade_request, make_request
 
@@ -10,6 +12,7 @@ def test_declared_rollout_caller_uses_bulk_queue(settings, store, make_worker):
     )
     worker = make_worker()
     store.heartbeat(worker)
+    store.heartbeat(replace(make_worker(), execution_class="cpu"))
     rollout = instance.submit(
         make_request(), make_caller("rl-1"), session_id="s1", idempotency_key="k1",
     )
@@ -30,6 +33,7 @@ def test_historical_grade_is_claimed_before_new_rollout(
     )
     worker = make_worker()
     store.heartbeat(worker)
+    store.heartbeat(replace(make_worker(), execution_class="cpu"))
     rollout = instance.submit(
         make_request(purpose="rollout"), make_caller(), session_id="s1", idempotency_key="k1",
     )

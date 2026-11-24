@@ -8,7 +8,7 @@ from ascend_op_eval.config import Settings
 from ascend_op_eval.engine import verify
 from ascend_op_eval.evaluators.base import ScriptOutcome
 from ascend_op_eval.evaluators.verify import VerifyEvaluator
-from conftest import make_request
+from conftest import TEST_HARDWARE, make_request
 
 
 @pytest.mark.parametrize(
@@ -75,17 +75,30 @@ def test_unknown_reference_policy_is_rejected():
 
 def test_policy_binds_admission_and_worker_compatibility(
     settings,
-    store,
+    redis_client,
     clock,
 ):
+    from ascend_op_eval.control.broker import EvaluationStore
     from ascend_op_eval.control.instance import EvaluationInstance
     from ascend_op_eval.execution.worker import Worker
     from conftest import make_caller
 
     strict = settings.model_copy(update={"reference_device_policy": "npu-strict"})
-    old_worker = Worker(store, None, device_id=3, settings=settings, clock=clock)
-    new_worker = Worker(store, None, device_id=3, settings=strict, clock=clock)
+    store = EvaluationStore(redis_client, strict, clock=clock)
+    old_worker = Worker(
+        store, None, device_id=3, settings=settings, clock=clock,
+        hardware=TEST_HARDWARE,
+    )
+    new_worker = Worker(
+        store, None, device_id=3, settings=strict, clock=clock,
+        hardware=TEST_HARDWARE,
+    )
+    cpu_worker = Worker(
+        store, None, device_id=None, settings=strict, clock=clock,
+        hardware=TEST_HARDWARE,
+    )
     store.heartbeat(new_worker.identity)
+    store.heartbeat(cpu_worker.identity)
     instance = EvaluationInstance(
         settings=strict,
         store=store,

@@ -6,6 +6,7 @@ import signal
 from functools import partial
 
 from ascend_op_eval.config import Settings, command_environment
+from ascend_op_eval.deployment import HardwareProfileDescriptor
 from ascend_op_eval.entrypoints.storage import InstanceStorage
 from ascend_op_eval.evaluators.base import run_script
 from ascend_op_eval.evaluators.benchmark import BenchmarkEvaluator
@@ -17,7 +18,9 @@ from ascend_op_eval.execution.baseline_cache import BaselineCache
 from ascend_op_eval.execution.process_title import set_process_title as _set_process_title
 from ascend_op_eval.execution.verdict_cache import VerdictCache
 from ascend_op_eval.execution.worker import Worker
-from ascend_op_eval.execution.worker_environment import verify_worker_environment
+from ascend_op_eval.execution.worker_environment import (
+    discover_worker_environment,
+)
 from ascend_op_eval.versioning import startup_identity
 
 logger = logging.getLogger(__name__)
@@ -34,15 +37,21 @@ def set_process_title() -> None:
     _set_process_title(_PROCESS_TITLE, detail="ascend-eval worker idle")
 
 
-def build_worker(card: int | None, settings: Settings | None = None) -> Worker:
+def build_worker(
+    card: int | None,
+    settings: Settings | None = None,
+    *,
+    hardware: HardwareProfileDescriptor,
+) -> Worker:
     settings = settings or Settings.from_env()
+    hardware = HardwareProfileDescriptor.model_validate(hardware.model_dump())
     os.environ["ASCEND_RT_VISIBLE_DEVICES"] = "" if card is None else str(card)
     storage = InstanceStorage.connect(settings)
     baseline_cache = BaselineCache(
         storage.advisory,
         prefix=settings.redis_prefix,
         namespace=(
-            f"{settings.baseline_cache_namespace}:{settings.worker_hardware_profile}"
+            f"{settings.baseline_cache_namespace}:{hardware.hardware_profile}"
         ),
     )
     runner = partial(run_script, environment=command_environment(settings))
@@ -60,9 +69,10 @@ def build_worker(card: int | None, settings: Settings | None = None) -> Worker:
     )
     return Worker(
         storage.store, evaluator, device_id=card, settings=settings, metrics=storage.metrics,
+        hardware=hardware,
         verdict_cache=VerdictCache(
             storage.advisory,
-            prefix=f"{settings.redis_prefix}:{settings.worker_hardware_profile}",
+            prefix=f"{settings.redis_prefix}:{hardware.hardware_profile}",
         ),
         script_runner=runner,
     )
@@ -116,15 +126,14 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    # Formal worker startup: verify the release and this process's actual
-    # hardware/toolchain identity before connecting to storage or claiming work.
+    # Formal worker startup: verify the release and discover this process's
+    # actual hardware/toolchain identity before storage or work is claimed.
     settings = Settings.from_env()
     startup_identity(settings)
-    verify_worker_environment(settings, args.card)
-    worker = build_worker(args.card, settings)
-    logger.info(
-        "worker hardware profile %s", worker.settings.worker_hardware_profile,
-    )
+    hardware = discover_worker_environment(args.card)
+    worker = build_worker(args.card, settings, hardware=hardware)
+    logger.info("worker hardware profile %s", worker.hardware_profile)
+    logger.info("worker hardware descriptor %s", hardware.model_dump_json())
     if args.card is not None:
         hold_device(worker.settings, args.card)
     stop = _install_signal_handlers()

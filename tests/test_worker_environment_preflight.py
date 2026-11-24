@@ -1,98 +1,70 @@
-"""Worker startup must prove the deployment-attested stack before serving."""
+"""Worker startup observes the complete host environment before serving."""
 
 import os
 
 import pytest
-from ascend_op_eval.config import Settings
 from ascend_op_eval.execution import worker_environment
 from ascend_op_eval.execution.worker_environment import (
     HardwarePreflightError,
     ObservedWorkerStack,
-    verify_worker_environment,
+    discover_worker_environment,
 )
 
 
-def test_matching_npu_worker_stack_passes_preflight():
-    settings = Settings(
-        worker_hardware_model="Ascend910B1",
-        worker_driver_version="26.1.1",
-        worker_runtime_version="CANN-9.2.0",
-        worker_toolchain_version=(
-            "CANN 9.2.0 / python 3.12.13 / torch 2.10.0+cpu / "
-            "torch_npu 2.10.0.post4 / triton_ascend 3.6.0"
-        ),
-    )
-    observed = ObservedWorkerStack(
-        hardware_model="Ascend 910B1",
-        driver_version="26.1.1",
-        runtime_version="9.2.0",
-        python_version="3.12.13",
-        torch_version="2.10.0+cpu",
-        torch_npu_version="2.10.0.post4",
-        triton_ascend_version="3.6.0",
-    )
-
-    verify_worker_environment(settings, card=0, observe=lambda _: observed)
+def _observed(**overrides):
+    payload = {
+        "hardware_model": "Ascend 910B1",
+        "driver_version": "26.1.1",
+        "runtime_version": "9.2.0",
+        "python_version": "3.12.13",
+        "torch_version": "2.10.0+cpu",
+        "torch_npu_version": "2.10.0.post4",
+        "triton_ascend_version": "3.6.0",
+    }
+    payload.update(overrides)
+    return ObservedWorkerStack(**payload)
 
 
-def test_npu_worker_preflight_reports_every_mismatch_and_missing_identity():
-    settings = Settings(
-        worker_hardware_model="Ascend910B1",
-        worker_driver_version="26.1.1",
-        worker_runtime_version="CANN-9.2.0",
-        worker_toolchain_version=(
-            "CANN 9.2.0 / python 3.12.13 / torch 2.10.0+cpu / "
-            "torch_npu 2.10.0.post4 / triton_ascend 3.6.0"
-        ),
-    )
-    observed = ObservedWorkerStack(
-        hardware_model=None,
-        driver_version=None,
-        runtime_version="9.1.0",
-        python_version="3.11.12",
-        torch_version="2.9.0",
-        torch_npu_version="2.9.0.post8",
-        triton_ascend_version="3.2.0",
-    )
-
-    with pytest.raises(HardwarePreflightError, match="hardware_model.*driver_version"):
-        verify_worker_environment(settings, card=3, observe=lambda _: observed)
+@pytest.mark.parametrize(
+    "field",
+    (
+        "hardware_model", "driver_version", "runtime_version", "python_version",
+        "torch_version", "torch_npu_version", "triton_ascend_version",
+    ),
+)
+def test_discovery_fails_closed_for_every_missing_identity(field):
+    with pytest.raises(HardwarePreflightError, match=field):
+        discover_worker_environment(
+            card=0, observe=lambda _: _observed(**{field: None}),
+        )
 
 
-def test_cpu_worker_checks_runtime_and_toolchain_without_guessing_hardware():
-    settings = Settings(
-        worker_hardware_model="unknown-on-this-host",
-        worker_driver_version="unknown-on-this-host",
-        worker_runtime_version="CANN-9.2.0",
-        worker_toolchain_version=(
-            "CANN 9.2.0 / python 3.12.13 / torch 2.10.0+cpu / "
-            "torch_npu 2.10.0.post4 / triton_ascend 3.6.0"
-        ),
-    )
-    observed = ObservedWorkerStack(
-        hardware_model=None,
-        driver_version=None,
-        runtime_version="9.2.0",
-        python_version="3.12.13",
-        torch_version="2.10.0+cpu",
-        torch_npu_version="2.10.0.post4",
-        triton_ascend_version="3.6.0",
-    )
-
-    verify_worker_environment(settings, card=None, observe=lambda _: observed)
-
-
-def test_observer_reads_selected_card_and_cann_inventory(tmp_path, monkeypatch):
+def _install_fake_vendor_tools(
+    monkeypatch, tmp_path, driver_versions=None, compute_models=None,
+):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
+    versions = driver_versions or {"4": "26.1.1", "7": "26.1.1"}
+    models = compute_models or ["Ascend 910B1", "Ascend 910B1"]
+    board_cases = "".join(
+        f'    {card}) printf "Software Version : {version}\\n" ;;\n'
+        for card, version in versions.items()
+    )
+    compute_rows = "".join(
+        f'  printf "{card} 0 4 {model}\\n"\n'
+        for card, model in zip((4, 7), models, strict=True)
+    )
     (bin_dir / "npu-smi").write_text(
         "#!/bin/sh\n"
         'if [ "$1" = "info" ] && [ "$2" = "-m" ]; then\n'
         '  printf "NPU ID Chip ID Chip Logic ID Chip Name\\n"\n'
-        '  printf "4 0 4 Ascend 910B1\\n"\n'
+        f"{compute_rows}"
         '  printf "4 1 - Mcu\\n"\n'
+        '  printf "7 1 - Mcu\\n"\n'
         'elif [ "$1" = "info" ] && [ "$2" = "-t" ] && [ "$3" = "board" ]; then\n'
-        '  printf "Software Version : 26.1.1\\n"\n'
+        '  case "$5" in\n'
+        f"{board_cases}"
+        "  esac\n"
         "else\n"
         '  exit 9\n'
         "fi\n",
@@ -119,40 +91,58 @@ def test_observer_reads_selected_card_and_cann_inventory(tmp_path, monkeypatch):
         }[name],
     )
 
-    observed = worker_environment.observe_worker_stack(4)
 
-    assert observed == ObservedWorkerStack(
-        hardware_model="Ascend 910B1",
-        driver_version="26.1.1",
-        runtime_version="9.2.0",
-        python_version="3.12.13",
-        torch_version="2.10.0+cpu",
-        torch_npu_version="2.10.0.post4",
-        triton_ascend_version="3.6.0",
+def test_cpu_observer_requires_homogeneous_host_drivers(monkeypatch, tmp_path):
+    _install_fake_vendor_tools(
+        monkeypatch,
+        tmp_path,
+        driver_versions={"4": "26.1.1", "7": "26.1.2"},
+    )
+
+    with pytest.raises(
+        HardwarePreflightError, match="one homogeneous driver/software version"
+    ):
+        discover_worker_environment(None)
+
+
+def test_cpu_observer_preserves_exact_host_model_identity(monkeypatch, tmp_path):
+    _install_fake_vendor_tools(
+        monkeypatch,
+        tmp_path,
+        compute_models=["Ascend 910B1", "Ascend910B1"],
+    )
+
+    with pytest.raises(
+        HardwarePreflightError, match="one homogeneous compute-chip model"
+    ):
+        discover_worker_environment(None)
+
+
+def test_observer_reads_selected_card_and_cann_inventory(tmp_path, monkeypatch):
+    _install_fake_vendor_tools(monkeypatch, tmp_path)
+
+    profile = discover_worker_environment(7)
+
+    assert profile.hardware_model == "Ascend 910B1"
+    assert profile.driver_version == "26.1.1"
+    assert profile.runtime_version == "CANN-9.2.0"
+    assert profile.toolchain_version == (
+        "CANN 9.2.0 / python 3.12.13 / torch 2.10.0+cpu / "
+        "torch_npu 2.10.0.post4 / triton_ascend 3.6.0"
     )
 
 
-def test_cpu_observer_does_not_invoke_npu_smi(tmp_path, monkeypatch):
-    bin_dir = tmp_path / "bin"
+def test_cpu_observer_reads_host_hardware_and_fails_without_vendor_tools(
+    monkeypatch, tmp_path,
+):
+    bin_dir = tmp_path / "unavailable-bin"
     bin_dir.mkdir()
     (bin_dir / "npu-smi").write_text("#!/bin/sh\nexit 9\n", encoding="utf-8")
     (bin_dir / "npu-smi").chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ.get('PATH', '')}")
-    monkeypatch.delenv("ASCEND_HOME_PATH", raising=False)
-    monkeypatch.delenv("CANN_SET_ENV_PATH", raising=False)
-    monkeypatch.setattr(worker_environment, "_cann_version", lambda: "9.2.0")
-    monkeypatch.setattr(worker_environment.platform, "python_version", lambda: "3.12.13")
+    monkeypatch.setenv("PATH", str(bin_dir))
     monkeypatch.setattr(
-        worker_environment.importlib.metadata,
-        "version",
-        lambda name: {
-            "torch": "2.10.0+cpu",
-            "torch_npu": "2.10.0.post4",
-            "triton_ascend": "3.6.0",
-        }[name],
+        worker_environment, "_cann_version", lambda: "9.2.0",
     )
 
-    observed = worker_environment.observe_worker_stack(None)
-
-    assert observed.hardware_model is None
-    assert observed.driver_version is None
+    with pytest.raises(HardwarePreflightError, match="npu-smi failed"):
+        discover_worker_environment(None)

@@ -14,18 +14,18 @@ things:
 
 1. **Service release**: the service version, evaluator build and release
    verification reported by `GET /version`.
-2. **Hardware profiles**: complete worker-stack declarations whose derived IDs
-   partition admission, queues, caches and reusable evidence.
+2. **Hardware profiles**: complete stacks observed by fresh CPU and NPU workers;
+   their derived IDs partition admission, queues, caches and reusable evidence.
 3. **Listeners**: the HTTP and optional HTTPS bind points owned by this API
    process.
 4. **Capabilities**: release-level API capabilities plus the method-runtime
    capabilities this deployment declares.
 
 `GET /deployment` reports the last three with the release/build identity after
-ordinary capability authentication. It is a declaration, not a health claim:
-`GET /readyz` independently requires fresh CPU and NPU workers for every
-qualified profile. `/version` remains process-local release identity and does
-not expose deployment configuration. Benchmark, adapter and task-version
+ordinary capability authentication. It is a discovery snapshot, not a capacity
+promise: `GET /readyz` independently checks fresh compatible workers.
+`/version` remains process-local release identity and does not expose
+deployment configuration. Benchmark, adapter and task-version
 selection belongs to callers; the service only verifies and executes on the
 profile they select.
 
@@ -45,67 +45,41 @@ and use the [process launcher](../../deploy/launch.sh) to start CPU workers and 
 
 ## Hardware profiles and worker pools
 
-The four `ASCEND_OP_EVAL_WORKER_*` inventory settings are a deployment
-attestation, not operator-selected labels. The service derives an immutable
-`hardware_profile` from the exact hardware model, driver version, runtime
-version and toolchain version. Admission pins that profile, ready queues are
-partitioned by it, workers must heartbeat with it to claim work, and terminal
-NPU results publish it in `provenance.execution_environment`. CPU-only compile
-results retain `execution_environment: null`; they establish no reusable
-correctness evidence and cannot become grade-eligible evidence.
+There are no `ASCEND_OP_EVAL_WORKER_*` inventory settings. Before connecting to
+Redis, every worker observes the environment that will actually execute work:
+the selected NPU through `npu-smi` (CPU workers observe the host's homogeneous
+NPU inventory), the effective CANN installation, and the Python,
+Torch/torch_npu/Triton distributions in its process. Any required identity that
+is absent or incomplete fails startup. The worker derives an immutable
+`hardware_profile` from those exact observations and heartbeats the complete
+descriptor, not just the hash.
 
-Worker startup proves that attestation before connecting to Redis. An NPU worker
-checks the selected card through `npu-smi`, reads the effective CANN inventory,
-and compares the installed Python/Torch/torch_npu/Triton versions. A CPU worker
-checks its executable CANN/toolchain identity but cannot attest a physical NPU,
-so it does not guess one. Any missing or differing identity fails startup; the
-worker never falls back to another hardware profile.
+Admission pins that profile, ready queues are partitioned by it, workers must
+heartbeat it to claim work, and terminal NPU results publish it in
+`provenance.execution_environment`. CPU-only compile results retain
+`execution_environment: null`; they establish no reusable correctness evidence
+and cannot become grade-eligible evidence. Correctness evidence, timing
+baselines and syntax/import verdict-cache keys are also not shared across
+profiles.
 
-Use one evaluation service for 910B, 910C and other qualified Ascend stacks.
-Run a worker pool for each hardware profile against the same Redis prefix when
-mixed capacity is required; each pool receives only work admitted for its
-exact stack. CPU workers use the same deployment profile as NPU workers:
-compile/precheck remains part of that deployment's attested runtime, and no
-separate synthetic CPU profile is introduced. Correctness evidence and timing
-baselines are not shared across profiles. Syntax/import verdict-cache keys are
-also partitioned by profile.
-An additional pool is a worker-only deployment on its own hardware host. It
-uses the central Redis URL and prefix, the same verified evaluator build and
-algorithm settings, and its own four worker-inventory values; it must not
-start a competing API or Redis process.
+Use one evaluation service for 910B, 910C and other observed Ascend stacks. Run
+a worker-only deployment on each hardware host against the central Redis URL
+and prefix, with the same verified evaluator build and algorithm settings; do
+not start a competing API or Redis process. A profile becomes discoverable and
+admissible only after fresh CPU and NPU workers have published it. This keeps
+compile/precheck and NPU execution in one complete stack and avoids turning a
+half-started host into a selectable profile.
 
-The deployment-derived profile of the API host's worker inventory is always
-qualified and remains the default when a request omits `hardware_profile`. To
-serve additional pools through the same durable instance, set a JSON list of
-complete descriptors. The declared ID must equal the ID derived from the four
-stack fields; startup rejects a mismatch instead of guessing which field is
-wrong:
-
-```bash
-ASCEND_OP_EVAL_ADDITIONAL_WORKER_HARDWARE_PROFILES='[
-  {
-    "hardware_profile": "hw_…",
-    "hardware_model": "Ascend910C",
-    "driver_version": "26.1.1",
-    "runtime_version": "CANN-9.2.0",
-    "toolchain_version": "CANN 9.2.0 / python 3.12.13 / torch 2.10.0+cpu / torch_npu 2.10.0.post4 / triton_ascend 3.6.0"
-  }
-]'
-```
-
-Each worker logs its derived profile at startup, and `/deployment` publishes the
-complete local and additional descriptors so an operator can compare profiles
-field by field. Keep worker inventory and descriptor review together: a
-descriptor only grants admission, while a fresh compatible worker heartbeat
-establishes capacity.
-Explicit request profiles that are not in that qualified set are rejected. A
-request that omits the field is admitted to the API host's default profile.
-Idempotent replay compares both canonical request bytes and the admitted
-profile, so the same caller/key cannot be replayed onto a different pool.
-Completed NPU evidence is refused if its worker environment omits the profile
-or publishes one different from admission.
-`/readyz` requires fresh compatible CPU and NPU workers for every qualified
-profile; a single unavailable pool therefore makes the whole service not ready.
+Each worker logs its observed descriptor at startup, and `/deployment` exposes
+the profiles currently published by complete fresh worker pools. Callers can
+compare hardware model, driver, CANN runtime and toolchain fields character by
+character and use the derived ID as the routing token. Explicit request
+profiles that no complete pool published are rejected. Omitting the field is
+allowed only when exactly one complete profile is active; with zero or multiple
+profiles, the caller must choose. Idempotent replay compares both canonical
+request bytes and the admitted profile, so the same caller/key cannot replay
+onto a different pool. Completed NPU evidence is refused if its worker
+environment omits the profile or publishes one different from admission.
 
 Do not deploy new binaries over queued or running v2.1 work that lacks
 `hardware_profile`. Drain old active work before the rollout, or stop admission
@@ -146,7 +120,7 @@ location; point `ASCEND_OP_EVAL_ENV_FILE` at that absolute path:
 | `ASCEND_OP_EVAL_API_HOST` | This host's private IPv4 address; API port is `11907` |
 | `ASCEND_OP_EVAL_IMAGE`, `ASCEND_OP_EVAL_EVALUATOR_BUILD` | Immutable image reference and its matching `sha256:…` digest |
 | `ASCEND_OP_EVAL_RELEASE_MANIFEST_HOST` | Manifest generated and bound for that exact image, mounted read-only |
-| `CANN_HOST`, `ASCEND_OP_EVAL_WORKER_*` | Host toolkit path and actual hardware/toolchain inventory |
+| `CANN_HOST` | Host toolkit path; workers observe and report the actual hardware/toolchain stack |
 | `ASCEND_OP_EVAL_CARDS` | Unique physical card IDs, e.g. `0` or `0,1,3` |
 | `ASCEND_OP_EVAL_CAPABILITY_SECRET_PATH` | Caller registry JSON, permissions no broader than `0600` |
 

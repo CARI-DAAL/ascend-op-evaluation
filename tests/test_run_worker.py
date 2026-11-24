@@ -5,11 +5,12 @@ from unittest import mock
 import pytest
 import redis
 from ascend_op_eval.entrypoints import run_worker
+from conftest import TEST_HARDWARE
 
 
 def test_cpu_cli_never_holds_an_npu(monkeypatch):
     worker = SimpleNamespace(
-        settings=SimpleNamespace(worker_hardware_profile="hw_" + "1" * 32),
+        hardware_profile=TEST_HARDWARE.hardware_profile,
         serve_forever=mock.Mock(),
     )
     build = mock.Mock(return_value=worker)
@@ -18,42 +19,60 @@ def test_cpu_cli_never_holds_an_npu(monkeypatch):
     monkeypatch.setattr(run_worker, "hold_device", mock.Mock(side_effect=AssertionError))
     monkeypatch.setattr(run_worker, "set_process_title", lambda: None)
     monkeypatch.setattr(run_worker, "_install_signal_handlers", lambda: "stop")
-    verify = mock.Mock()
-    monkeypatch.setattr(run_worker, "verify_worker_environment", verify)
+    discover = mock.Mock(return_value=TEST_HARDWARE)
+    monkeypatch.setattr(run_worker, "discover_worker_environment", discover)
     run_worker.main()
     build.assert_called_once()
     assert build.call_args.args[0] is None
-    verify.assert_called_once()
-    assert verify.call_args.args[1] is None
+    discover.assert_called_once_with(None)
+    assert build.call_args.kwargs["hardware"] is TEST_HARDWARE
     worker.serve_forever.assert_called_once_with(stop_event="stop")
 
 
 def test_worker_cli_verifies_environment_before_connecting_to_storage(monkeypatch):
-    settings = SimpleNamespace(worker_hardware_profile="hw_" + "2" * 32)
+    settings = SimpleNamespace()
     worker = SimpleNamespace(
         settings=settings,
+        hardware_profile=TEST_HARDWARE.hardware_profile,
         serve_forever=mock.Mock(),
     )
     events = []
     build = mock.Mock(return_value=worker)
-    build.side_effect = lambda *args: (events.append("build"), worker)[1]
-    verify = mock.Mock(side_effect=lambda *_: events.append("verify"))
+    build.side_effect = lambda *args, **kwargs: (events.append("build"), worker)[1]
+    discover = mock.Mock(side_effect=lambda _: (events.append("discover"), TEST_HARDWARE)[1])
     startup = mock.Mock(side_effect=lambda _: events.append("release"))
     monkeypatch.setattr("sys.argv", ["run_worker.py", "--card", "5"])
     settings_type = mock.Mock(from_env=mock.Mock(return_value=settings))
     monkeypatch.setattr(run_worker, "Settings", settings_type)
     monkeypatch.setattr(run_worker, "startup_identity", startup)
-    monkeypatch.setattr(run_worker, "verify_worker_environment", verify)
+    monkeypatch.setattr(run_worker, "discover_worker_environment", discover)
     monkeypatch.setattr(run_worker, "build_worker", build)
     monkeypatch.setattr(run_worker, "hold_device", mock.Mock())
     monkeypatch.setattr(run_worker, "set_process_title", lambda: None)
     monkeypatch.setattr(run_worker, "_install_signal_handlers", lambda: "stop")
     run_worker.main()
-    assert events == ["release", "verify", "build"]
+    assert events == ["release", "discover", "build"]
     startup.assert_called_once_with(settings)
-    verify.assert_called_once_with(settings, 5)
-    build.assert_called_once_with(5, settings)
+    discover.assert_called_once_with(5)
+    build.assert_called_once_with(5, settings, hardware=TEST_HARDWARE)
     worker.serve_forever.assert_called_once_with(stop_event="stop")
+
+
+def test_worker_assembly_rejects_a_descriptor_that_does_not_derive_to_itself(
+    monkeypatch,
+):
+    from ascend_op_eval.config import Settings
+    from ascend_op_eval.entrypoints import storage
+
+    forged = TEST_HARDWARE.model_copy(update={
+        "hardware_profile": "hw_" + "9" * 32,
+        "driver_version": "99.9.9",
+    })
+    connect = mock.Mock(side_effect=AssertionError("storage must not be connected"))
+    monkeypatch.setattr(storage.InstanceStorage, "connect", connect)
+
+    with pytest.raises(ValueError, match="does not derive"):
+        run_worker.build_worker(0, Settings(), hardware=forged)
 
 
 @pytest.mark.parametrize("options", [[], ["--cpu", "--card", "0"], ["--card", "-1"]])
@@ -67,6 +86,7 @@ def test_worker_cli_requires_exactly_one_valid_execution_resource(monkeypatch, o
 def test_worker_assembles_independent_dependencies_and_shared_runner(monkeypatch, tmp_path):
     import fakeredis
     from ascend_op_eval.config import Settings
+    from ascend_op_eval.deployment import derive_hardware_profile
 
     settings = Settings(
         redis_url="redis://localhost:6380/2", redis_prefix="test-owner",
@@ -77,9 +97,21 @@ def test_worker_assembles_independent_dependencies_and_shared_runner(monkeypatch
     redis_factory = mock.Mock(side_effect=[durable, advisory, durable, advisory])
     monkeypatch.setattr(redis.Redis, "from_url", redis_factory)
     monkeypatch.setenv("TRITON_EVAL_REFERENCE_DEVICE_POLICY", "cpu-first")
-    worker = run_worker.build_worker(3, settings)
+    worker = run_worker.build_worker(3, settings, hardware=TEST_HARDWARE)
+    other_fields = {
+        "hardware_model": "Ascend910C",
+        "driver_version": "26.2.0",
+    }
+    other_profile = TEST_HARDWARE.model_copy(update={
+        **other_fields,
+        "hardware_profile": derive_hardware_profile(
+            **other_fields,
+            runtime_version=TEST_HARDWARE.runtime_version,
+            toolchain_version=TEST_HARDWARE.toolchain_version,
+        ),
+    })
     other_hardware = run_worker.build_worker(
-        4, settings.model_copy(update={"worker_hardware_model": "Ascend910C"})
+        4, settings, hardware=other_profile,
     )
     assert redis_factory.call_args_list[0] == mock.call(settings.redis_url, decode_responses=False)
     cache_options = redis_factory.call_args_list[1].kwargs
@@ -103,7 +135,7 @@ def test_worker_assembles_independent_dependencies_and_shared_runner(monkeypatch
     assert not durable.exists(key)
     worker.verdict_cache.put("candidate", "compile_error", 60)
     verdict_key = (
-        f"test-owner:{settings.worker_hardware_profile}:verdict:candidate"
+        f"test-owner:{TEST_HARDWARE.hardware_profile}:verdict:candidate"
     )
     assert advisory.exists(verdict_key)
     assert not durable.exists(verdict_key)

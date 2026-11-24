@@ -1,19 +1,17 @@
 """Worker-side execution environment for provenance (design section 4.5).
 
 The environment describes the *actual worker*, never the API process: the
-hardware/driver/runtime/toolchain fields are deployment-attested ``Settings``
-values, ``hardware_count`` is fixed to 1 because each worker process exposes
-exactly one card, and package versions are read inside the worker process.
-Distribution metadata is preferred; source-only Triton installations can supply
-their runtime module's version. It never includes hostname, card serial numbers,
+hardware/driver/runtime/toolchain fields come from startup observation,
+``hardware_count`` is fixed to 1 because each worker process exposes exactly one
+card, and package versions are read from the exact required distributions
+inside the worker process. It never includes hostname, card serial numbers,
 source code, or request inputs.
 """
 
-import importlib
 import importlib.metadata
 
 from ascend_op_eval.api.contract import ExecutionEnvironment
-from ascend_op_eval.config import Settings
+from ascend_op_eval.deployment import HardwareProfileDescriptor
 
 
 def is_complete_execution_environment(environment: ExecutionEnvironment | None) -> bool:
@@ -31,36 +29,20 @@ def is_complete_execution_environment(environment: ExecutionEnvironment | None) 
     )
 
 
-def _optional_version(distribution: str) -> str | None:
-    try:
-        return importlib.metadata.version(distribution)
-    except importlib.metadata.PackageNotFoundError:
-        return None
+def _required_version(distribution: str) -> str:
+    return importlib.metadata.version(distribution)
 
 
-def _triton_version() -> str | None:
-    """Use installed metadata, falling back to the source runtime's own version."""
-    version = _optional_version("triton") or _optional_version("triton_ascend")
-    if version:
-        return version
-    try:
-        version = vars(importlib.import_module("triton")).get("__version__")
-    except Exception:  # Optional identity discovery must not break fresh evaluations.
-        return None
-    # Missing or malformed runtime identity remains unknown; it cannot authorize reuse.
-    return version.strip() if isinstance(version, str) and version.strip() else None
-
-
-def build_execution_environment(settings: Settings) -> ExecutionEnvironment:
-    """Assemble the worker environment from attested settings plus local packages."""
+def build_execution_environment(hardware: HardwareProfileDescriptor) -> ExecutionEnvironment:
+    """Assemble the worker environment from observed identity and packages."""
     return ExecutionEnvironment(
-        hardware_model=settings.worker_hardware_model,
-        hardware_profile=settings.worker_hardware_profile,
+        hardware_model=hardware.hardware_model,
+        hardware_profile=hardware.hardware_profile,
         hardware_count=1,
-        driver_version=settings.worker_driver_version,
-        runtime_version=settings.worker_runtime_version,
-        torch_version=_optional_version("torch"),
-        torch_npu_version=_optional_version("torch-npu"),
-        triton_version=_triton_version(),
-        toolchain_version=settings.worker_toolchain_version,
+        driver_version=hardware.driver_version,
+        runtime_version=hardware.runtime_version,
+        torch_version=_required_version("torch"),
+        torch_npu_version=_required_version("torch_npu"),
+        triton_version=_required_version("triton_ascend"),
+        toolchain_version=hardware.toolchain_version,
     )

@@ -286,10 +286,6 @@ def test_same_compose_supports_single_or_multiple_cards(cards):
         ("cpu_workers", "2", 2),
         ("precheck_budget_seconds", "20", 20),
         ("cann_fingerprint", "site-cann-2026", "site-cann-2026"),
-        ("worker_hardware_model", "SiteAscendModel", "SiteAscendModel"),
-        ("worker_driver_version", "site-driver-v3", "site-driver-v3"),
-        ("worker_runtime_version", "site-runtime-v2", "site-runtime-v2"),
-        ("worker_toolchain_version", "Site CANN build", "Site CANN build"),
     ],
 )
 def test_runtime_options_survive_compose_preflight_and_settings_parsing(

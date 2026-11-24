@@ -31,6 +31,7 @@ from ascend_op_eval.control.models import (
     CreateResourceCommand,
     new_evaluation_id,
 )
+from conftest import TEST_HARDWARE
 from test_worker import StubEvaluator, build_worker
 
 POLICY_SHA = "3d9198dfcaa68f81442f09a43c8aac88dd77de62c601eb561b7731b44dfe9d02"
@@ -126,7 +127,7 @@ def _npu_strict_command(settings, caller=None):
         idempotency_key="key-1",
         admission=admission,
         evaluator_build=settings.evaluator_build,
-        hardware_profile=settings.worker_hardware_profile,
+        hardware_profile=TEST_HARDWARE.hardware_profile,
         algorithms=AlgorithmVersions(
             correctness=settings.effective_correctness_algorithm_version,
             decoy=settings.decoy_algorithm_version,

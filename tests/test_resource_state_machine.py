@@ -16,6 +16,7 @@ from ascend_op_eval.api.contract import ExecutionEnvironment
 from ascend_op_eval.control.broker import MAX_ATTEMPTS
 from ascend_op_eval.serialization import sha256_hex
 from conftest import (
+    TEST_HARDWARE,
     make_caller,
     make_completed_result,
     make_correctness_success,
@@ -93,15 +94,15 @@ def test_completed_npu_results_require_the_pinned_hardware_profile(
 ):
     command, lease = _create_and_claim(store, make_command, make_worker, clock)
     environment = ExecutionEnvironment(
-        hardware_model=settings.worker_hardware_model,
-        hardware_profile=settings.worker_hardware_profile,
+        hardware_model=TEST_HARDWARE.hardware_model,
+        hardware_profile=TEST_HARDWARE.hardware_profile,
         hardware_count=1,
-        driver_version=settings.worker_driver_version,
-        runtime_version=settings.worker_runtime_version,
+        driver_version=TEST_HARDWARE.driver_version,
+        runtime_version=TEST_HARDWARE.runtime_version,
         torch_version=None,
         torch_npu_version=None,
         triton_version=None,
-        toolchain_version=settings.worker_toolchain_version,
+        toolchain_version=TEST_HARDWARE.toolchain_version,
     )
     complete = make_completed_result(settings).model_copy(update={
         "provenance": make_completed_result(settings).provenance.model_copy(

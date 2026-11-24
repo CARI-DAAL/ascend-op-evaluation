@@ -76,7 +76,7 @@ class HttpSubmission:
             raise errors.invalid_request_schema(str(error)) from None
         except UnsupportedHardwareProfileError:
             raise errors.invalid_request_schema(
-                "hardware_profile is not qualified by this service"
+                "hardware_profile is not published by this service"
             ) from None
         except InstanceNotReadyError:
             raise errors.not_ready() from None

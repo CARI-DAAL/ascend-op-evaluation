@@ -1,6 +1,7 @@
 """Contract v2.1: complete v2.1-only resource interface."""
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,7 @@ from ascend_op_eval.control.instance import EvaluationInstance
 from ascend_op_eval.runtimes.execution_environment import (
     is_complete_execution_environment,
 )
-from conftest import make_caller, make_completed_result, make_request, ready_key
+from conftest import TEST_HARDWARE, make_caller, make_completed_result, make_request, ready_key
 
 
 def published_v21_resource_validator():
@@ -243,6 +244,7 @@ def test_rollout_purpose_resolves_rollout_traffic_class(
         settings=settings, store=store,
     )
     store.heartbeat(make_worker())
+    store.heartbeat(replace(make_worker(), execution_class="cpu"))
     outcome = instance.submit(
         make_request(purpose="rollout"), make_caller(), session_id="s1", idempotency_key="k1",
     )
@@ -303,7 +305,8 @@ async def test_leased_compile_http_body_validates_against_published_schema(
             benchmark=BenchmarkEvaluator(settings.engine_dir),
             profile=ProfileEvaluator(settings.engine_dir),
         ),
-        device_id=None, settings=settings, clock=app.clock, verdict_cache=cache,
+        device_id=None, settings=settings, clock=app.clock, hardware=TEST_HARDWARE,
+        verdict_cache=cache,
     )
     validator = published_v21_resource_validator()
     async with app.http as client:

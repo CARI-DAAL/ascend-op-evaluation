@@ -6,7 +6,7 @@ import pytest
 from ascend_op_eval.api.contract import EvaluationResource
 from ascend_op_eval.api.routes import wait_until_terminal
 from ascend_op_eval.control.models import WorkerIdentity, new_worker_id
-from conftest import make_completed_result
+from conftest import TEST_HARDWARE, make_completed_result
 from test_api import algorithms, post, request_payload, seed_worker, trial_headers
 
 pytestmark = pytest.mark.anyio
@@ -28,7 +28,7 @@ def _http_trial_caller():
 def claim_and_complete(app):
     lease = app.store.claim_next(
         WorkerIdentity(new_worker_id(), app.settings.evaluator_build,
-                       algorithms(app.settings), app.settings.worker_hardware_profile)
+                       algorithms(app.settings), TEST_HARDWARE.hardware_profile)
     )
     assert lease is not None
     assert app.store.commit_terminal(
@@ -74,7 +74,7 @@ async def test_wait_expiry_returns_the_observed_running_revision(app, monkeypatc
         new_worker_id(),
         app.settings.evaluator_build,
         algorithms(app.settings),
-        app.settings.worker_hardware_profile,
+        TEST_HARDWARE.hardware_profile,
     )
 
     def claim_before_read(evaluation_id, caller):

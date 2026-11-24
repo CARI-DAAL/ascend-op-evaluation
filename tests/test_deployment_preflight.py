@@ -305,7 +305,6 @@ def test_explicit_local_database_and_unique_card_list_are_allowed(tmp_path):
     ("ASCEND_OP_EVAL_CARD_RECOVERY_MAX_STEP", "4"),
     ("ASCEND_OP_EVAL_ROLLOUT_CALLER_IDS", "not-json"),
     ("ASCEND_OP_EVAL_CARD_AFFINITY_AVOIDANCE", "not-a-bool"),
-    ("ASCEND_OP_EVAL_WORKER_DRIVER_VERSION", ""),
     ("ASCEND_OP_EVAL_CANARY_INTERVAL_SECONDS", "-1"),
     ("ASCEND_OP_EVAL_SESSION_MAX_INFLIGHT", "0"),
     ("ASCEND_OP_EVAL_CPU_WORKERS", "-1"),

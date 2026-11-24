@@ -9,7 +9,13 @@ from ascend_op_eval.config import Settings
 from ascend_op_eval.control.broker import EvaluationStore, StorageError, _digest_text
 from ascend_op_eval.control.models import new_evaluation_id, new_worker_id
 from ascend_op_eval.serialization import sha256_hex
-from conftest import make_caller, make_completed_result, make_request, ready_key
+from conftest import (
+    TEST_HARDWARE,
+    make_caller,
+    make_completed_result,
+    make_request,
+    ready_key,
+)
 
 
 def _key(settings, suffix):
@@ -67,7 +73,7 @@ def test_resource_hash_stores_exact_canonical_bytes_and_metadata(
     assert stored[b"reference_digest"] == command.admission.reference_digest.encode()
     assert stored[b"requested_checks"] == b'["correctness"]'
     assert stored[b"evaluator_build"] == settings.evaluator_build.encode()
-    assert stored[b"hardware_profile"] == settings.worker_hardware_profile.encode()
+    assert stored[b"hardware_profile"] == TEST_HARDWARE.hardware_profile.encode()
     assert stored[b"correctness_algorithm"] == settings.correctness_algorithm_version.encode()
     assert stored[b"decoy_algorithm"] == settings.decoy_algorithm_version.encode()
     assert stored[b"benchmark_algorithm"] == settings.benchmark_algorithm_version.encode()

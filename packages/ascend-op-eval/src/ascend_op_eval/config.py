@@ -6,11 +6,6 @@ from typing import Literal
 from pydantic import Field, TypeAdapter, model_validator
 from pydantic_settings import BaseSettings, EnvSettingsSource, SettingsConfigDict
 
-from ascend_op_eval.deployment import (
-    HardwareProfileDeclaration,
-    HardwareProfileDescriptor,
-    derive_hardware_profile,
-)
 from ascend_op_eval.versioning import (
     BUILD_PATTERN,
     ZERO_BUILD,
@@ -161,22 +156,6 @@ class Settings(BaseSettings):
     precheck_budget_seconds: int = Field(default=60, gt=0)
     cann_fingerprint: str = Field(default="", pattern=r"^[A-Za-z0-9._:-]{0,128}$")
 
-    # --- deployment-attested worker environment ---
-    worker_hardware_model: str = Field(default="Ascend910", min_length=1)
-    worker_driver_version: str = Field(default="26.0.rc1", min_length=1)
-    worker_runtime_version: str = Field(default="CANN-9.1.1", min_length=1)
-    worker_toolchain_version: str = Field(
-        default=(
-            "CANN 9.1.1 / python 3.10 / torch 2.9.0 / torch_npu 2.9.0.post8 / triton_ascend 3.2.0"
-        ),
-        min_length=1,
-    )
-    # Additional qualified pools sharing this durable instance. The local
-    # deployment-derived profile remains the default for omitted requests.
-    additional_worker_hardware_profiles: list[HardwareProfileDeclaration] = Field(
-        default_factory=list
-    )
-
     # --- evaluator provenance pinned at admission ---
     # The build-identity format is defined once, by the version module.
     evaluator_build: str = Field(default=ZERO_BUILD, pattern=BUILD_PATTERN.pattern)
@@ -204,46 +183,6 @@ class Settings(BaseSettings):
     release_mode: Literal["dev", "release"] = "dev"
     release_manifest: Path | None = None
 
-    @property
-    def worker_hardware_profile(self) -> str:
-        """Stable identity for the deployment-attested hardware stack."""
-        return derive_hardware_profile(
-            hardware_model=self.worker_hardware_model,
-            driver_version=self.worker_driver_version,
-            runtime_version=self.worker_runtime_version,
-            toolchain_version=self.worker_toolchain_version,
-        )
-
-    @property
-    def worker_hardware_profiles(self) -> list[HardwareProfileDescriptor]:
-        """Every profile this deployment may pin, with its complete stack."""
-
-        return [
-            HardwareProfileDescriptor(
-                hardware_profile=self.worker_hardware_profile,
-                hardware_model=self.worker_hardware_model,
-                driver_version=self.worker_driver_version,
-                runtime_version=self.worker_runtime_version,
-                toolchain_version=self.worker_toolchain_version,
-                default=True,
-            ),
-            *(
-                HardwareProfileDescriptor.model_validate({
-                    **profile.model_dump(),
-                    "default": False,
-                })
-                for profile in self.additional_worker_hardware_profiles
-            ),
-        ]
-
-    @property
-    def qualified_worker_hardware_profiles(self) -> frozenset[str]:
-        """Profiles one admission service may pin, including its local pool."""
-        return frozenset((
-            self.worker_hardware_profile,
-            *(profile.hardware_profile for profile in self.additional_worker_hardware_profiles),
-        ))
-
     def correctness_algorithm_for(self, policy: str) -> str:
         """Correctness protocol identity under an explicit reference policy.
 
@@ -268,16 +207,6 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _durable_core_windows(self):
-        profile_ids = [self.worker_hardware_profile]
-        for declaration in self.additional_worker_hardware_profiles:
-            if declaration.hardware_profile != declaration.derived_hardware_profile:
-                raise ValueError(
-                    f"hardware profile {declaration.hardware_profile} "
-                    "does not match its declared stack"
-                )
-            profile_ids.append(declaration.hardware_profile)
-        if len(profile_ids) != len(set(profile_ids)):
-            raise ValueError("qualified hardware profiles must be unique")
         sandbox_values = (self.engine_sandbox_config, self.engine_sandbox_sha256)
         if any(value is not None for value in sandbox_values) and not all(
             value is not None for value in sandbox_values

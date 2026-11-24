@@ -16,7 +16,7 @@ from ascend_op_eval.evaluators.verify import VerifyEvaluator
 from ascend_op_eval.execution.verdict_cache import VerdictCache
 from ascend_op_eval.execution.worker import FencedProgress
 from ascend_op_eval.operator_input import OperatorRequest, to_evaluation_request
-from conftest import FakeClock
+from conftest import TEST_HARDWARE, FakeClock
 from test_api import (
     build_app,
     make_test_settings,
@@ -288,7 +288,7 @@ async def test_replacement_does_not_retain_previous_attempt_compile_evidence(
                 app.settings.benchmark_algorithm_version,
                 app.settings.profiler_algorithm_version,
             ),
-            app.settings.worker_hardware_profile,
+            TEST_HARDWARE.hardware_profile,
         )
         lease = app.store.claim_next(identity)
         progress = FencedProgress(app.store, lease)

@@ -1,9 +1,9 @@
-"""Fail-closed checks for a worker's deployment-attested hardware profile.
+"""Fail-closed discovery of a worker's actual hardware profile.
 
-The durable profile is derived from operator inventory settings.  This module
-gives NPU workers a startup proof that those settings describe the selected
-card and the runtime actually loaded in this process.  CPU workers prove the
-runtime/toolchain they can execute, but do not invent hardware or driver facts.
+The durable profile is derived only from identities this process can observe:
+the selected card (or the host cards for a CPU worker), the installed CANN
+inventory, and the Python packages that will execute work. Missing facts are
+startup failures; there is no declaration to compare and no fallback profile.
 """
 
 from __future__ import annotations
@@ -17,9 +17,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from ascend_op_eval.deployment import HardwareProfileDescriptor, derive_hardware_profile
+
 
 class HardwarePreflightError(RuntimeError):
-    """The worker cannot prove the deployment-attested stack."""
+    """The worker cannot observe its complete hardware and toolchain stack."""
 
 
 @dataclass(frozen=True)
@@ -37,102 +39,60 @@ class ObservedWorkerStack:
 
 WorkerStackObserver = Callable[[int | None], ObservedWorkerStack]
 
-_TOOLCHAIN_PATTERN = re.compile(
-    r"^\s*CANN\s+(?P<cann>[A-Za-z0-9+._-]+)\s*/\s*"
-    r"python\s+(?P<python>[A-Za-z0-9+._-]+)\s*/\s*"
-    r"torch\s+(?P<torch>[A-Za-z0-9+._-]+)\s*/\s*"
-    r"torch_npu\s+(?P<torch_npu>[A-Za-z0-9+._-]+)\s*/\s*"
-    r"triton_ascend\s+(?P<triton_ascend>[A-Za-z0-9+._-]+)\s*$"
-)
 
-
-def _normalise_model(value: str | None) -> str | None:
-    if value is None or not value.strip():
-        return None
-    return re.sub(r"\s+", "", value).casefold()
-
-
-def _normalise_runtime(value: str | None) -> str | None:
-    if value is None or not value.strip():
-        return None
-    normalized = value.strip().casefold()
-    return re.sub(r"^cann(?:[ -])?", "", normalized)
-
-
-def _declared_toolchain(value: str) -> dict[str, str]:
-    match = _TOOLCHAIN_PATTERN.fullmatch(value)
-    if match is None:
-        raise HardwarePreflightError(
-            "worker_toolchain_version must use the fixed CANN/python/torch/"
-            "torch_npu/triton_ascend identity format"
-        )
-    return match.groupdict()
-
-
-def verify_worker_environment(
-    settings,
+def discover_worker_environment(
     card: int | None,
     observe: WorkerStackObserver | None = None,
-) -> None:
-    """Refuse startup when attested and observable worker identity differ.
+) -> HardwareProfileDescriptor:
+    """Observe the complete worker stack and derive its routing identity.
 
-    ``card is None`` is a CPU worker.  It shares the profile's toolchain and
-    CANN identity, but cannot attest a physical NPU; missing hardware fields
-    are therefore accepted only on that execution class.  No unsupported stack
-    is silently redirected to another profile.
+    CPU workers run in the same deployment environment and therefore observe
+    host NPU identity as well. They cannot guess a hardware model or driver
+    version when the vendor tools are unavailable.
     """
     observed = (observe_worker_stack if observe is None else observe)(card)
-    declared_toolchain = _declared_toolchain(settings.worker_toolchain_version)
-    expected = {
-        "runtime_version": _normalise_runtime(settings.worker_runtime_version),
-        "python_version": declared_toolchain["python"],
-        "torch_version": declared_toolchain["torch"],
-        "torch_npu_version": declared_toolchain["torch_npu"],
-        "triton_ascend_version": declared_toolchain["triton_ascend"],
-    }
-    actual = {
-        "runtime_version": _normalise_runtime(observed.runtime_version),
+    required = {
+        "hardware_model": observed.hardware_model,
+        "driver_version": observed.driver_version,
+        "runtime_version": observed.runtime_version,
         "python_version": observed.python_version,
         "torch_version": observed.torch_version,
         "torch_npu_version": observed.torch_npu_version,
         "triton_ascend_version": observed.triton_ascend_version,
     }
-    if _normalise_runtime(declared_toolchain["cann"]) != expected["runtime_version"]:
+    missing = [name for name, value in required.items() if value is None or not value.strip()]
+    if missing:
         raise HardwarePreflightError(
-            "worker_toolchain_version CANN identity differs from worker_runtime_version"
+            "worker hardware identity is incomplete: " + ", ".join(missing)
         )
-
-    mismatches = [
-        field
-        for field in expected
-        if expected[field] != actual[field]
-    ]
-    if card is not None:
-        expected["hardware_model"] = _normalise_model(settings.worker_hardware_model)
-        expected["driver_version"] = settings.worker_driver_version.strip() or None
-        actual["hardware_model"] = _normalise_model(observed.hardware_model)
-        actual["driver_version"] = (
-            observed.driver_version.strip() or None
-            if observed.driver_version is not None
-            else None
-        )
-        mismatches.extend(
-            field
-            for field in ("hardware_model", "driver_version")
-            if expected[field] != actual[field]
-        )
-    if mismatches:
-        raise HardwarePreflightError(
-            "worker environment differs from the deployment-attested profile: "
-            + ", ".join(mismatches)
-        )
+    cann_version = observed.runtime_version.strip()
+    runtime_version = f"CANN-{cann_version}"
+    toolchain_version = (
+        f"CANN {cann_version} / "
+        f"python {observed.python_version} / torch {observed.torch_version} / "
+        f"torch_npu {observed.torch_npu_version} / "
+        f"triton_ascend {observed.triton_ascend_version}"
+    )
+    return HardwareProfileDescriptor(
+        hardware_profile=derive_hardware_profile(
+            hardware_model=observed.hardware_model.strip(),
+            driver_version=observed.driver_version.strip(),
+            runtime_version=runtime_version,
+            toolchain_version=toolchain_version,
+        ),
+        hardware_model=observed.hardware_model.strip(),
+        driver_version=observed.driver_version.strip(),
+        runtime_version=runtime_version,
+        toolchain_version=toolchain_version,
+        default=False,
+    )
 
 
 def observe_worker_stack(card: int | None) -> ObservedWorkerStack:
     """Read the local vendor/toolchain identity without fallback or guessing."""
     return ObservedWorkerStack(
-        hardware_model=None if card is None else _selected_card_model(card),
-        driver_version=None if card is None else _selected_card_driver(card),
+        hardware_model=_selected_card_model(card),
+        driver_version=_selected_card_driver(card),
         runtime_version=_cann_version(),
         python_version=platform.python_version(),
         torch_version=_distribution_version("torch"),
@@ -163,16 +123,17 @@ def _run_npu_smi(*arguments: str) -> str:
     return completed.stdout
 
 
-def _selected_card_model(card: int) -> str:
-    output = _run_npu_smi("-m")
-    candidates: list[str] = []
-    for line in output.splitlines():
-        fields = line.split()
-        if len(fields) < 4 or fields[0] != str(card):
-            continue
-        name = " ".join(fields[3:])
-        if name.casefold() != "mcu":
-            candidates.append(name)
+def _selected_card_model(card: int | None) -> str:
+    cards = _compute_cards()
+    if card is None:
+        names = [name for _, name in cards]
+        if len(set(names)) != 1:
+            raise HardwarePreflightError(
+                "npu-smi did not return one homogeneous compute-chip model"
+            )
+        # CPU workers need one host identity, not one card per compute chip.
+        return names[0]
+    candidates = [name for card_id, name in cards if card_id == card]
     if len(candidates) != 1:
         raise HardwarePreflightError(
             f"npu-smi did not return exactly one compute chip for card {card}"
@@ -180,7 +141,18 @@ def _selected_card_model(card: int) -> str:
     return candidates[0]
 
 
-def _selected_card_driver(card: int) -> str:
+def _selected_card_driver(card: int | None) -> str:
+    if card is None:
+        versions = [_card_driver(card_id) for card_id, _ in _compute_cards()]
+        if len(set(versions)) != 1:
+            raise HardwarePreflightError(
+                "npu-smi did not return one homogeneous driver/software version"
+            )
+        return versions[0]
+    return _card_driver(card)
+
+
+def _card_driver(card: int) -> str:
     output = _run_npu_smi("-t", "board", "-i", str(card))
     match = re.search(
         r"^\s*Software Version\s*:\s*([^\s]+)\s*$",
@@ -192,6 +164,22 @@ def _selected_card_driver(card: int) -> str:
             f"npu-smi did not expose a driver/software version for card {card}"
         )
     return match.group(1)
+
+
+def _compute_cards() -> list[tuple[int, str]]:
+    output = _run_npu_smi("-m")
+    cards: list[tuple[int, str]] = []
+    for line in output.splitlines():
+        fields = line.split()
+        if len(fields) >= 4 and fields[0] != "NPU":
+            try:
+                card = int(fields[0])
+            except ValueError:
+                continue
+            name = " ".join(fields[3:])
+            if name.casefold() != "mcu":
+                cards.append((card, name))
+    return cards
 
 
 def _cann_root() -> Path:

@@ -49,9 +49,8 @@ Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 HardwareProfile = Annotated[str, Field(pattern=HARDWARE_PROFILE_PATTERN)]
 
 HARDWARE_PROFILE_DESCRIPTION = (
-    "Qualified worker-pool identity. Omit it to use the service's local "
-    "profile; an explicit profile must be qualified by deployment "
-    "configuration."
+    "Routing identity derived from a worker's observed hardware and toolchain. "
+    "Omit it only when the service has discovered exactly one profile."
 )
 
 FiniteOrSentinel = float | Literal["inf", "-inf", "nan"]

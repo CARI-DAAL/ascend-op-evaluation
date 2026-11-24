@@ -200,8 +200,9 @@ def get_deployment(
 ) -> DeploymentInfo:
     """Report deployment identity to any authenticated caller.
 
-    This is declared configuration, not worker readiness: callers still route
-    work to a profile and wait for `/readyz` independently.
+    Hardware profiles are discovered from fresh worker observations. This is
+    identity discovery, not worker readiness; callers still wait for
+    ``/readyz`` independently.
     """
     settings = context.instance.settings
     listeners = [DeploymentListener(
@@ -218,7 +219,7 @@ def get_deployment(
         listeners=listeners,
         capabilities=list(versioning.CAPABILITIES),
         method_capabilities=list(settings.method_capabilities),
-        hardware_profiles=list(settings.worker_hardware_profiles),
+        hardware_profiles=context.instance.store.active_hardware_profiles(),
     )
 
 
